@@ -72,6 +72,7 @@ export type ActivationCode =
   | 'BLOCKED'
   | 'EXPIRED'
   | 'HWID_MISMATCH'
+  | 'RATE_LIMITED'
   | 'NETWORK';
 
 export interface ActivateRequest {

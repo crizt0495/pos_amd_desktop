@@ -40,7 +40,14 @@ function handle(channel, fn) {
 
 function registerIpc() {
   /* ---------------------------- sistem ---------------------------- */
-  handle('get-hwid', () => getHwid());
+  // raw (UUID motherboard mentah) TIDAK dikirim ke renderer — hanya dipakai
+  // internal main process saat aktivasi (lihat license.js).
+  handle('get-hwid', async () => {
+    const full = await getHwid();
+    if (!full || !full.ok) return full;
+    const { raw, ...rest } = full;
+    return rest;
+  });
   handle('app-info', () => ({
     ok: true,
     version: appVersion(),

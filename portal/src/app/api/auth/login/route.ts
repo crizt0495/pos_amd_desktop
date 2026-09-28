@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { MAX_LOGIN, clientIpFromRequest, consume, rateLimitKey } from '@/lib/rate-limit';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
 
@@ -63,6 +64,13 @@ export async function POST(req: Request) {
     url.searchParams.set('error', message);
     return NextResponse.redirect(url, { status: 303 });
   };
+
+  // Batasi percobaan login per IP (anti brute-force password).
+  // Dipanggil setelah `fail` terdefinisi supaya klien form tetap dapat redirect.
+  const limit = consume(rateLimitKey(clientIpFromRequest(req), 'login'), MAX_LOGIN);
+  if (!limit.ok) {
+    return fail('Terlalu banyak percobaan login. Coba lagi nanti.', 429);
+  }
 
   if (!username || !password) {
     return fail('Username dan password wajib diisi.', 422);

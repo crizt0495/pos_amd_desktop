@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
+import { MAX_ACTIVATE, clientIpFromRequest, consume, rateLimitKey } from '@/lib/rate-limit';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { normalizeSerialKey } from '@/lib/serial';
 import type { ActivationCode } from '@/types';
@@ -47,6 +48,7 @@ const STATUS: Record<ActivationCode, number> = {
   BLOCKED: 403,
   EXPIRED: 403,
   HWID_MISMATCH: 403,
+  RATE_LIMITED: 429,
   NETWORK: 500,
 };
 
@@ -61,6 +63,20 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: Request) {
+  // Batasi percobaan aktivasi per IP (anti brute-force / tebak serial key).
+  const limit = consume(rateLimitKey(clientIpFromRequest(req), 'activate'), MAX_ACTIVATE);
+  if (!limit.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        success: false,
+        code: 'RATE_LIMITED',
+        message: 'Terlalu banyak percobaan aktivasi dari perangkat ini. Coba lagi nanti.',
+      },
+      { status: 429, headers: CORS },
+    );
+  }
+
   if (!hasServiceRole()) {
     return NextResponse.json(
       {

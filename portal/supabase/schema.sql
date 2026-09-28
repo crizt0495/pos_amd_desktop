@@ -296,6 +296,10 @@ begin
   )
   returning * into v_license;
 
+  -- tandai update berikut sebagai internal (definer) supaya guard trigger
+  -- trg_partners_guard_sensitive mengizinkan perubahan kolom kuota/komisi.
+  perform set_config('app.bypass_partner_guard', '1', true);
+
   update public.partners
      set license_quota = license_quota - 1,
          total_terjual = total_terjual + 1,
@@ -465,7 +469,12 @@ drop policy if exists "licenses_delete_own" on public.licenses;
 -- ---------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on all tables in schema public to service_role;
-grant select, update on public.partners to authenticated;
+-- kolom yang boleh di-UPDATE oleh user toko (via RLS + sesi login) HANYA ini.
+-- Kolom sensitif (kuota, total terjual, komisi, status, user_id, email,
+-- username) TIDAK boleh diubah klien — topup kuota hanya via SQL editor admin.
+revoke update on public.partners from authenticated;
+grant select on public.partners to authenticated;
+grant update (nama_toko, no_hp, alamat, logo_url) on public.partners to authenticated;
 grant select on public.licenses to authenticated;
 grant execute on function public.current_partner_id() to anon, authenticated, service_role;
 grant execute on function public.generate_license(text, text, text, text, text, text) to authenticated, service_role;
@@ -473,6 +482,35 @@ grant execute on function public.activate_license(text, text, text, text) to ser
 grant execute on function public.tier_rate_of(integer) to anon, authenticated, service_role;
 grant execute on function public.tier_name_of(integer) to anon, authenticated, service_role;
 grant execute on function public.base_commission_of(text) to anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 9b. Garda kolom sensitif partners (pertahanan kedua, di atas hak kolom)
+--     Setiap UPDATE partners lewat klien akan dicek: kolom kuota/komisi/status
+--     tidak boleh berubah kecuali pemanggil internal menandai GUC
+--     `app.bypass_partner_guard` = '1' (dipakai RPC generate_license).
+-- ---------------------------------------------------------------------------
+create or replace function public.guard_partner_sensitive_columns()
+returns trigger language plpgsql as $$
+begin
+  if current_setting('app.bypass_partner_guard', true) = '1' then
+    return new;
+  end if;
+
+  if new.license_quota is distinct from old.license_quota
+     or new.total_terjual is distinct from old.total_terjual
+     or new.komisi_total  is distinct from old.komisi_total
+     or new.status        is distinct from old.status
+     or new.user_id       is distinct from old.user_id then
+    raise exception 'GARDA: kolom sensitif toko tidak boleh diubah lewat klien.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_partners_guard_sensitive on public.partners;
+create trigger trg_partners_guard_sensitive before update on public.partners
+  for each row execute function public.guard_partner_sensitive_columns();
 
 -- ---------------------------------------------------------------------------
 -- 10. Storage bucket untuk logo toko
