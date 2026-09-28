@@ -27,6 +27,21 @@ const PAYMENT_LABELS: { key: PaymentMethod; label: string }[] = [
   { key: 'credit', label: 'Kredit' },
 ];
 
+/**
+ * Gaya kasir klasik — spec:
+ *  - bg putih / teks hitam / font-mono
+ *  - TANPA rounded, semua elemen border-2 border-black
+ *  - Total Box setinggi 72px
+ */
+const CLS_INPUT =
+  'h-9 w-full border-2 border-black bg-white px-2.5 text-[13px] font-mono text-black outline-none placeholder:text-black/40';
+const CLS_BTN =
+  'inline-flex items-center justify-center gap-2 border-2 border-black bg-white px-3 py-2 text-[13px] font-bold text-black hover:bg-black hover:text-white disabled:pointer-events-none disabled:opacity-40';
+const CLS_BTN_SOLID =
+  'inline-flex items-center justify-center gap-2 border-2 border-black bg-black px-3 py-2 text-[13px] font-bold text-white hover:bg-white hover:text-black disabled:pointer-events-none disabled:opacity-40';
+const CLS_QTY_BTN =
+  'grid h-6 w-6 place-items-center border-2 border-black bg-white text-black hover:bg-black hover:text-white';
+
 /** Pembulatan uang tunai ke ribuan terdekat. */
 function bulatUang(n: number): number {
   if (n <= 0) return 0;
@@ -219,15 +234,15 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
   );
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 bg-white font-mono text-black">
       {/* --------------------------- katalog --------------------------- */}
       <section className="flex min-w-0 flex-1 flex-col">
-        <form onSubmit={onScanSubmit} className="flex gap-2 border-b border-zinc-200 bg-white p-3">
+        <form onSubmit={onScanSubmit} className="flex gap-2 border-b-2 border-black bg-white p-3">
           <div className="relative flex-1">
-            <ScanBarcode className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+            <ScanBarcode className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-black/50" />
             <input
               ref={searchRef}
-              className="input h-10 pl-8 text-[13px]"
+              className={`${CLS_INPUT} h-10 pl-8`}
               placeholder="Scan barcode atau cari nama produk, lalu Enter..."
               value={query}
               onChange={(e) => onSearchChange(e.target.value)}
@@ -236,19 +251,19 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
               spellCheck={false}
             />
           </div>
-          <button type="submit" className="btn-primary h-10 px-4">
+          <button type="submit" className={`${CLS_BTN_SOLID} h-10 shrink-0 px-4`}>
             <Search className="h-4 w-4" /> Cari
           </button>
         </form>
 
-        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-200 bg-white px-3 py-2">
+        <div className="flex gap-1.5 overflow-x-auto border-b-2 border-black bg-white px-3 py-2">
           {['Semua', ...categories].map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => setCategory(c)}
-              className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-                category === c ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+              className={`shrink-0 border-2 border-black px-3 py-1 text-[12px] font-bold transition-none ${
+                category === c ? 'bg-black text-white' : 'bg-white text-black hover:bg-black hover:text-white'
               }`}
             >
               {c}
@@ -256,13 +271,13 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
           {loading ? (
-            <p className="py-10 text-center text-[13px] text-zinc-400">Memuat produk...</p>
+            <p className="py-10 text-center text-[13px] text-black/50">Memuat produk...</p>
           ) : visible.length === 0 ? (
             <div className="py-16 text-center">
-              <ShoppingCart className="mx-auto h-8 w-8 text-zinc-300" />
-              <p className="mt-2 text-[13px] text-zinc-500">
+              <ShoppingCart className="mx-auto h-8 w-8 text-black/30" />
+              <p className="mt-2 text-[13px] text-black/60">
                 {query ? `Produk "${query}" tidak ditemukan.` : 'Belum ada produk.'}
               </p>
             </div>
@@ -276,14 +291,12 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
                     type="button"
                     disabled={habis}
                     onClick={() => addProduct(p)}
-                    className="card flex flex-col items-start gap-1 p-2.5 text-left transition hover:border-zinc-900 disabled:opacity-45"
+                    className="flex flex-col items-start gap-1 border-2 border-black bg-white p-2.5 text-left text-black hover:bg-black hover:text-white disabled:opacity-40"
                   >
-                    <span className="line-clamp-2 text-[12.5px] font-semibold leading-tight text-zinc-800">
-                      {p.name}
-                    </span>
-                    <span className="tnum text-[13px] font-bold text-zinc-900">{rupiah(p.price)}</span>
+                    <span className="line-clamp-2 text-[12.5px] font-bold leading-tight">{p.name}</span>
+                    <span className="text-[13px] font-bold tabular-nums">{rupiah(p.price)}</span>
                     <span
-                      className={`tnum text-[10.5px] ${habis ? 'text-red-500' : 'text-zinc-400'}`}
+                      className={`text-[10.5px] ${habis ? 'font-bold text-red-600' : 'text-black/60'}`}
                       title="Stok"
                     >
                       {habis ? 'Stok habis' : `Stok ${p.stock} ${p.unit}`}
@@ -297,18 +310,22 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
       </section>
 
       {/* --------------------------- keranjang -------------------------- */}
-      <section className="flex w-[368px] shrink-0 flex-col border-l border-zinc-200 bg-white">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-3.5 py-2.5">
-          <h2 className="flex items-center gap-2 text-[13px] font-bold text-zinc-800">
+      <section className="flex w-[368px] shrink-0 flex-col border-l-2 border-black bg-white">
+        <div className="flex items-center justify-between border-b-2 border-black px-3.5 py-2.5">
+          <h2 className="flex items-center gap-2 text-[13px] font-bold">
             <ShoppingCart className="h-4 w-4" /> Keranjang
             {cart.length ? (
-              <span className="rounded-full bg-zinc-900 px-1.5 py-0.5 text-[10.5px] text-white">
+              <span className="border-2 border-black bg-black px-1.5 py-0.5 text-[10.5px] font-bold text-white">
                 {totals.itemCount}
               </span>
             ) : null}
           </h2>
           {cart.length ? (
-            <button type="button" className="btn-ghost px-1.5 py-1 text-[11.5px]" onClick={clearCart}>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 border-2 border-black bg-white px-1.5 py-1 text-[11.5px] font-bold text-black hover:bg-black hover:text-white"
+              onClick={clearCart}
+            >
               <Trash2 className="h-3.5 w-3.5" /> Kosongkan
             </button>
           ) : null}
@@ -316,46 +333,38 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!cart.length ? (
-            <p className="px-4 py-10 text-center text-[12.5px] text-zinc-400">
+            <p className="px-4 py-10 text-center text-[12.5px] text-black/60">
               Keranjang kosong.
               <br />
               Scan barcode atau klik produk.
             </p>
           ) : (
-            <ul className="divide-y divide-zinc-100">
+            <ul className="divide-y-2 divide-black">
               {cart.map((line, i) => (
                 <li key={`${line.product_id ?? line.name}-${i}`} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[12.5px] font-semibold text-zinc-800">{line.name}</p>
-                    <p className="tnum text-[11px] text-zinc-500">
+                    <p className="truncate text-[12.5px] font-bold">{line.name}</p>
+                    <p className="text-[11px] text-black/70 tabular-nums">
                       {rupiah(line.price)} x {line.qty} ={' '}
-                      <b className="text-zinc-700">{rupiah((line.price - line.discount) * line.qty)}</b>
+                      <b className="text-black">{rupiah((line.price - line.discount) * line.qty)}</b>
                     </p>
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      className="grid h-6 w-6 place-items-center rounded-md border border-zinc-200 text-zinc-600 transition hover:bg-zinc-50"
-                      onClick={() => changeQty(i, -1)}
-                    >
+                    <button type="button" className={CLS_QTY_BTN} onClick={() => changeQty(i, -1)}>
                       <Minus className="h-3 w-3" />
                     </button>
                     <input
-                      className="tnum h-6 w-10 rounded-md border border-zinc-200 text-center text-[12px] font-semibold outline-none focus:border-zinc-900"
+                      className="h-6 w-10 border-2 border-black bg-white text-center text-[12px] font-bold text-black outline-none tabular-nums"
                       value={line.qty}
                       onChange={(e) => setCart((prev) => setQty(prev, i, Number(e.target.value) || 1))}
                     />
-                    <button
-                      type="button"
-                      className="grid h-6 w-6 place-items-center rounded-md border border-zinc-200 text-zinc-600 transition hover:bg-zinc-50"
-                      onClick={() => changeQty(i, 1)}
-                    >
+                    <button type="button" className={CLS_QTY_BTN} onClick={() => changeQty(i, 1)}>
                       <Plus className="h-3 w-3" />
                     </button>
                     <button
                       type="button"
-                      className="grid h-6 w-6 place-items-center rounded-md text-zinc-300 transition hover:bg-red-50 hover:text-red-600"
+                      className="grid h-6 w-6 place-items-center border-2 border-black bg-white text-black hover:bg-red-600 hover:text-white"
                       onClick={() => removeLine(i)}
                       aria-label="Hapus item"
                     >
@@ -369,10 +378,10 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
         </div>
 
         {/* ---------------------------- ringkasan --------------------------- */}
-        <div className="space-y-2 border-t border-zinc-200 bg-zinc-50 p-3">
+        <div className="space-y-2 border-t-2 border-black bg-white p-3">
           <div className="flex items-center gap-2">
             <select
-              className="input h-8 w-[92px] text-[12px]"
+              className="h-8 border-2 border-black bg-white px-1 text-[12px] font-mono font-bold text-black outline-none"
               value={discountType}
               onChange={(e) => {
                 setDiscountType(e.target.value as DiscountType);
@@ -385,7 +394,7 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
             </select>
             {discountType !== 'none' ? (
               <input
-                className="input tnum h-8 flex-1 text-[12px]"
+                className={`${CLS_INPUT} h-8 flex-1 tabular-nums`}
                 type="number"
                 min={0}
                 value={discountValue || ''}
@@ -400,9 +409,11 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
             {totals.discountAmount > 0 ? (
               <Row label="Diskon" value={`- ${rupiah(totals.discountAmount)}`} tone="red" />
             ) : null}
-            <div className="flex items-center justify-between border-t border-dashed border-zinc-300 pt-1.5">
-              <dt className="text-[13px] font-bold text-zinc-700">TOTAL</dt>
-              <dd className="tnum text-[19px] font-bold text-zinc-900">{rupiah(totals.total)}</dd>
+
+            {/* Total Box — 72px, kotak keras sesuai spec */}
+            <div className="flex h-[72px] items-center justify-between border-2 border-black bg-black px-3 text-white">
+              <dt className="text-[16px] font-bold tracking-[0.2em]">TOTAL</dt>
+              <dd className="text-[30px] font-bold tabular-nums">{rupiah(totals.total)}</dd>
             </div>
           </dl>
 
@@ -412,10 +423,10 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
                 key={p.key}
                 type="button"
                 onClick={() => setPaymentMethod(p.key)}
-                className={`rounded-md px-2 py-1 text-[11.5px] font-semibold transition ${
+                className={`border-2 border-black px-2 py-1 text-[11.5px] font-bold transition-none ${
                   paymentMethod === p.key
-                    ? 'bg-zinc-900 text-white'
-                    : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
+                    ? 'bg-black text-white'
+                    : 'bg-white text-black hover:bg-black hover:text-white'
                 }`}
               >
                 {p.label}
@@ -426,7 +437,7 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <input
-                className="input tnum h-9 pr-12 text-[13px]"
+                className={`${CLS_INPUT} h-9 pr-12 tabular-nums`}
                 type="number"
                 min={0}
                 value={paidInput}
@@ -434,13 +445,13 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
                 onChange={(e) => setPaidInput(e.target.value)}
                 onFocus={(e) => e.currentTarget.select()}
               />
-              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10.5px] text-zinc-400">
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10.5px] text-black/50">
                 uang
               </span>
             </div>
             <button
               type="button"
-              className="btn-outline h-9 shrink-0 px-2.5 text-[11.5px]"
+              className="inline-flex h-9 shrink-0 items-center border-2 border-black bg-white px-2.5 text-[11.5px] font-bold text-black hover:bg-black hover:text-white"
               onClick={() => setPaidInput(String(bulatUang(totals.total)))}
               title="Bulatkan ke ribuan terdekat"
             >
@@ -449,22 +460,22 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
           </div>
 
           {kurang > 0 ? (
-            <p className="text-[11.5px] font-semibold text-red-600">Kurang: {rupiah(kurang)}</p>
+            <p className="text-[11.5px] font-bold text-red-600">Kurang: {rupiah(kurang)}</p>
           ) : change > 0 ? (
-            <p className="text-[11.5px] font-semibold text-emerald-700">Kembali: {rupiah(change)}</p>
+            <p className="text-[11.5px] font-bold text-black">Kembali: {rupiah(change)}</p>
           ) : null}
 
           <input
-            className="input h-8 text-[12px]"
+            className={CLS_INPUT}
             value={note}
             placeholder="Catatan (opsional)"
             onChange={(e) => setNote(e.target.value)}
           />
 
-          <label className="flex items-center gap-2 text-[11.5px] text-zinc-600">
+          <label className="flex items-center gap-2 text-[11.5px] font-bold text-black">
             <input
               type="checkbox"
-              className="h-3.5 w-3.5 accent-zinc-900"
+              className="h-3.5 w-3.5 accent-black"
               checked={autoPrint}
               onChange={(e) => {
                 setAutoPrint(e.target.checked);
@@ -476,7 +487,7 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
 
           <button
             type="button"
-            className="btn-success h-11 w-full text-[14px]"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 border-2 border-black bg-black text-[14px] font-bold text-white hover:bg-white hover:text-black disabled:pointer-events-none disabled:opacity-40"
             onClick={() => void bayar()}
             disabled={!cart.length || saving || kurang > 0}
           >
@@ -495,21 +506,22 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
       <Modal
         open={Boolean(success)}
         title="Transaksi Berhasil"
+        flat
         onClose={() => setSuccess(null)}
         footer={
           <>
-            <button type="button" className="btn-outline" onClick={() => setSuccess(null)}>
+            <button type="button" className={CLS_BTN} onClick={() => setSuccess(null)}>
               Selesai
             </button>
-            <button type="button" className="btn-primary" onClick={() => void cetakUlang()}>
+            <button type="button" className={CLS_BTN_SOLID} onClick={() => void cetakUlang()}>
               <Printer className="h-4 w-4" /> Cetak Struk
             </button>
           </>
         }
       >
         {success ? (
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-emerald-800">
+          <div className="space-y-2.5 font-mono text-black">
+            <div className="flex items-center gap-2 border-2 border-black bg-white p-3">
               <CheckCircle2 className="h-5 w-5 shrink-0" />
               <div>
                 <p className="text-[13px] font-bold">{success.receipt.invoiceNo}</p>
@@ -517,28 +529,28 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
               </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-200 p-3 text-center">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Kembalian</p>
-              <p className="tnum text-[26px] font-bold text-zinc-900">{rupiah(success.change)}</p>
+            <div className="border-2 border-black bg-black p-3 text-center text-white">
+              <p className="text-[11px] uppercase tracking-widest">Kembalian</p>
+              <p className="text-[26px] font-bold tabular-nums">{rupiah(success.change)}</p>
             </div>
 
-            <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200">
+            <ul className="divide-y-2 divide-black border-2 border-black bg-white">
               {success.receipt.items.map((it, i) => (
                 <li key={i} className="flex items-center justify-between px-3 py-1.5 text-[12.5px]">
-                  <span className="truncate text-zinc-700">
+                  <span className="truncate">
                     {it.qty} x {it.name}
                   </span>
-                  <span className="tnum shrink-0 font-semibold text-zinc-800">{rupiah(it.subtotal)}</span>
+                  <span className="shrink-0 font-bold tabular-nums">{rupiah(it.subtotal)}</span>
                 </li>
               ))}
-              <li className="flex items-center justify-between bg-zinc-50 px-3 py-2 text-[13px] font-bold">
+              <li className="flex items-center justify-between bg-black px-3 py-2 text-[13px] font-bold text-white">
                 <span>Total</span>
-                <span className="tnum">{rupiah(success.receipt.total)}</span>
+                <span className="tabular-nums">{rupiah(success.receipt.total)}</span>
               </li>
             </ul>
 
             {success.serial ? (
-              <p className="text-center text-[10.5px] text-zinc-400">Lisensi: {success.serial}</p>
+              <p className="text-center text-[10.5px] text-black/50">Lisensi: {success.serial}</p>
             ) : null}
           </div>
         ) : null}
@@ -550,8 +562,8 @@ export default function KasirScreen({ store }: { store: StoreMeta }) {
 function Row({ label, value, tone }: { label: string; value: string; tone?: 'red' }) {
   return (
     <div className="flex items-center justify-between">
-      <dt className="text-zinc-500">{label}</dt>
-      <dd className={`tnum font-semibold ${tone === 'red' ? 'text-red-600' : 'text-zinc-700'}`}>{value}</dd>
+      <dt className="text-black/70">{label}</dt>
+      <dd className={`font-bold tabular-nums ${tone === 'red' ? 'text-red-600' : 'text-black'}`}>{value}</dd>
     </div>
   );
 }
