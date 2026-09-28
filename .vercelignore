@@ -1,10 +1,12 @@
 # File yang TIDAK ikut ter-upload saat deploy ke Vercel
 # (vercel CLI memakai .vercelignore untuk memangkas payload upload)
-node_modules
-desktop/node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.env*.local
 desktop/release
 tools
-.turbo
-.next
 *.log
 .vercel
+.DS_Store
