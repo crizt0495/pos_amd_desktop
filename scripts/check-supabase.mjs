@@ -71,7 +71,7 @@ async function main() {
   }
 
   console.log('\n2. Tabel kasir_*');
-  for (const table of ['kasir_products', 'kasir_transactions', 'kasir_transaction_items', 'kasir_settings']) {
+  for (const table of ['kasir_products', 'kasir_transactions', 'kasir_transaction_items', 'kasir_settings', 'kasir_license_accounts']) {
     const { error } = await sb.from(table).select('*', { count: 'exact', head: true }).limit(1);
     if (error) bad(`Tabel ${table}: ${error.message} (jalankan supabase/schema.sql di SQL Editor)`);
     else ok(`Tabel ${table} ada`);

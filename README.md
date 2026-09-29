@@ -18,7 +18,7 @@ manajemen produk, laporan & pembatalan (void). Di-host di **Vercel**, data di
 ## Stack
 
 - Next.js 14 (App Router) + React 18 + Tailwind CSS
-- Supabase (`@supabase/ssr`) — auth via username/email (sama dengan portal)
+- Supabase (`@supabase/ssr`) — login via **Serial Key** (lisensi dari KasirPro Portal)
 - RLS per akun (`user_id = auth.uid()`); transaksi/laporan lewat RPC PostgreSQL (atomik)
 
 ## Struktur
@@ -34,7 +34,7 @@ src/
     receipt.ts             penyusun struk
     types.ts               domain types
   app/
-    login/                 halaman masuk (username/password + akun demo)
+    login/                 halaman masuk (Serial Key / lisensi dari portal)
     (app)/kasir            layar kasir
     (app)/produk           layar produk
     (app)/laporan          layar laporan
@@ -60,7 +60,9 @@ npm run dev                  # http://localhost:3001
 npm run check:supabase
 ```
 
-Akun `demo` (portal) langsung bisa dipakai — data kasir otomatis per akun.
+Login POS memakai **Serial Key** (format `KPRO-XXXX-XXXX-XXXX`) yang dibuat di KasirPro
+Portal (halaman *Aktivasi*). Satu key = satu perangkat/browser (dicatat oleh RPC
+`activate_license`). Key demo `KPRO-DEMO-AAAA-0001` selalu bisa masuk tanpa kunci perangkat.
 Saat daftar produk masih kosong, aplikasi memasukkan 3 produk contoh.
 
 ## Deploy ke Vercel

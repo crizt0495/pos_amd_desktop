@@ -2,26 +2,38 @@ import { NextResponse } from 'next/server';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
+import {
+  APP_NAME,
+  APP_VERSION,
+  activateLicense,
+  isDemoKey,
+  normalizeSerialKey,
+  resolveAppAccount,
+} from '@/lib/license';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * POST /api/auth/login — login dengan USERNAME (atau email) + password.
+ * POST /api/auth/login — login POS dengan SERIAL KEY (lisensi dari Portal).
  *
- * Menerima dua bentuk body:
- *   1. form-urlencoded  (halaman login server-rendered) -> redirect 303
- *   2. application/json (klien API)                     -> JSON {ok,message}
+ * Body (form-urlencoded di halaman login, atau JSON untuk API):
+ *   serial_key   : "KPRO-XXXX-XXXX-XXXX" (atau key demo KPRO-DEMO-*)
+ *   device_id    : HWID browser (mis. UUID) — mengunci 1 key = 1 perangkat
+ *   device_name? : label perangkat
+ *   app_version? : versi aplikasi
+ *   next?        : redirect tujuan
  *
- * Alur (sama dengan KasirPro Portal, database Supabase sama):
- *   1. kalau input berisi "@"  -> langsung dianggap email toko
- *   2. selain itu              -> cari email dari `partners.username`
- *   3. signInWithPassword(email, password) via sesi cookie (supabase-ssr)
- *
- * Anti-enumerasi: pesan kesalahan sama untuk user tidak ditemukan / password salah.
+ * Alur:
+ *   1. normalisasi + validasi format serial key
+ *   2. key non-demo -> RPC activate_license (portal) → ACTIVATED / ALREADY_ACTIVE
+ *      (blocked/expired/hwid-mismatch => login ditolak dengan pesan sesuai)
+ *      key demo (KPRO-DEMO-*) -> langsung boleh, tanpa kunci perangkat
+ *   3. siapkan akun GoTrue khusus lisensi (lihat src/lib/license.ts)
+ *   4. signInWithPassword (sesi cookie) -> redirect ke next (/kasir)
  */
 
-const USERNAME_RE = /^[a-z0-9._-]+$/;
+const HWID_RE = /^[A-Za-z0-9-]{8,128}$/;
 
 function safeNext(raw: string): string {
   return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/kasir';
@@ -29,6 +41,19 @@ function safeNext(raw: string): string {
 
 function isFormRequest(ct: string): boolean {
   return !ct.toLowerCase().includes('application/json');
+}
+
+const MESSAGES: Record<string, string> = {
+  INVALID_KEY: 'Serial Key tidak ditemukan. Periksa kembali kode dari toko Anda.',
+  BLOCKED: 'Lisensi ini telah diblokir atau dicabut. Hubungi toko Anda.',
+  EXPIRED: 'Lisensi ini telah kedaluwarsa. Perpanjangan silakan hubungi toko Anda.',
+  HWID_MISMATCH:
+    'Serial Key sudah digunakan di perangkat lain. Gunakan perangkat yang pertama, atau minta reset ke toko Anda.',
+  NOT_ACTIVE: 'Lisensi belum aktif. Silakan ulangi aktivasi.',
+};
+
+function activationMessage(code: string, fallback: string): string {
+  return MESSAGES[code] ?? fallback;
 }
 
 export async function POST(req: Request) {
@@ -40,7 +65,13 @@ export async function POST(req: Request) {
     if (!fd) {
       return NextResponse.json({ ok: false, message: 'Body tidak valid.' }, { status: 400 });
     }
-    raw = { username: fd.get('username'), password: fd.get('password'), next: fd.get('next') };
+    raw = {
+      serial_key: fd.get('serial_key'),
+      device_id: fd.get('device_id'),
+      device_name: fd.get('device_name'),
+      app_version: fd.get('app_version'),
+      next: fd.get('next'),
+    };
   } else {
     try {
       raw = await req.json();
@@ -49,43 +80,68 @@ export async function POST(req: Request) {
     }
   }
 
-  const body = (raw ?? {}) as { username?: unknown; password?: unknown; next?: unknown };
-  const username = String(body.username ?? '').trim().toLowerCase();
-  const password = String(body.password ?? '');
+  const body = (raw ?? {}) as {
+    serial_key?: unknown;
+    device_id?: unknown;
+    device_name?: unknown;
+    app_version?: unknown;
+    next?: unknown;
+  };
+
+  const serial = normalizeSerialKey(String(body.serial_key ?? ''));
+  const deviceId = String(body.device_id ?? '').trim();
+  const deviceName = String(body.device_name ?? '').trim().slice(0, 120);
+  const appVersion = String(body.app_version ?? '').trim().slice(0, 32);
   const next = safeNext(String(body.next ?? '/kasir'));
 
-  const fail = (message = 'Username atau password salah.') => {
+  const fail = (message: string, status = 401) => {
     if (isFormRequest(ct)) {
       return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(message)}`, req.url), 303);
     }
-    return NextResponse.json({ ok: false, message }, { status: 401 });
+    return NextResponse.json({ ok: false, message }, { status });
   };
 
-  if (!username || !password) return fail();
-
-  let email = username;
-  if (!email.includes('@')) {
-    if (!USERNAME_RE.test(email)) return fail();
-    try {
-      const admin = createAdminClient();
-      const { data } = await admin.from('partners').select('email').eq('username', email).maybeSingle();
-      email = (data?.email as string | undefined) ?? '';
-    } catch {
-      email = '';
-    }
-    if (!email) return fail();
+  if (!serial) {
+    return fail('Format Serial Key tidak dikenali. Contoh: KPRO-XXXX-XXXX-XXXX.');
   }
 
-  const supabase = createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const demo = isDemoKey(serial);
 
-  if (error) {
-    return fail();
+  if (!demo && (!deviceId || !HWID_RE.test(deviceId))) {
+    return fail('Perangkat tidak dikenali. Muat ulang halaman login lalu coba lagi.');
+  }
+
+  // --- 1. Aktivasi lisensi (kecuali key demo) -------------------------------
+  if (!demo) {
+    const admin = createAdminClient();
+    const hwid = deviceId.toUpperCase();
+    const result = await activateLicense(admin, serial, hwid, deviceName || 'Web Browser', appVersion || APP_VERSION);
+
+    if (!result.ok) {
+      return fail(activationMessage(result.code, result.message), result.code === 'NETWORK' ? 500 : 403);
+    }
+  }
+
+  // --- 2. Akun GoTrue khusus lisensi ----------------------------------------
+  const admin = createAdminClient();
+  const account = await resolveAppAccount(admin, serial);
+  if (!account.ok) {
+    return fail(account.message, 500);
+  }
+
+  // --- 3. Sign in (sesi cookie) ---------------------------------------------
+  const supabase = createClient();
+  const { error: signInErr } = await supabase.auth.signInWithPassword({
+    email: account.account.email,
+    password: account.account.password,
+  });
+  if (signInErr) {
+    return fail('Gagal masuk sebagai lisensi ini. Coba lagi.', 500);
   }
 
   if (isFormRequest(ct)) {
     return NextResponse.redirect(new URL(next, req.url), 303);
   }
 
-  return NextResponse.json({ ok: true, message: 'Login berhasil.' });
+  return NextResponse.json({ ok: true, message: `Selamat datang, ${APP_NAME}!` });
 }

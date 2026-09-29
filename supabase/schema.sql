@@ -452,3 +452,33 @@ $$;
 -- select id, '8992760223014', 'Susu Ultra 250ml', 'Minuman', 8000, 6500, 24, 6, 'pcs' from auth.users where email = 'toko@contoh.com'
 -- union all
 -- select id, '8999999030001', 'Air Mineral 600ml', 'Minuman', 4000, 3000, 48, 12, 'btl' from auth.users where email = 'toko@contoh.com';
+
+-- ----------------------------------------------------------------------------
+-- 5. AKUN LOGIN PER LISENSI (dipakai POS web / pos_amd_desktop)
+--
+-- Login POS memakai Serial Key (lisensi) dari Portal, bukan username/password.
+-- Server (service role) mencatat akun GoTrue per lisensi di tabel ini supaya
+-- sesi & RLS tetap per user (auth.uid()). Tabel diakses HANYA oleh service_role;
+-- anon/authenticated diblokir penuh (tanpa RLS policy apa pun).
+-- ----------------------------------------------------------------------------
+create table if not exists public.kasir_license_accounts (
+  serial_key   text        primary key,
+  app_email    text        not null,
+  app_password text        not null,
+  created_at   timestamptz not null default now()
+);
+
+alter table public.kasir_license_accounts enable row level security;
+
+revoke all on table public.kasir_license_accounts from anon, authenticated;
+grant select, insert, update on table public.kasir_license_accounts to service_role;
+
+-- Serial Key DEMO khusus POS web (KPRO-DEMO-* selalu boleh masuk, tanpa kunci
+-- perangkat). Dibuat bila partner demo (username 'demo') tersedia; idempotent.
+insert into public.licenses (
+  serial_key, partner_id, status, paket_type, license_type, pembeli_nama
+)
+select 'KPRO-DEMO-AAAA-0001', p.id, 'unused', 'bundle', 'sekali', 'Demo POS Web'
+from public.partners p
+where p.username = 'demo'
+on conflict (serial_key) do nothing;
