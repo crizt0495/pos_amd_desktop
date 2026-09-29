@@ -318,6 +318,37 @@
     @apply rounded border border-[#cdd8e6] bg-white outline-none transition
       focus:border-[#1b5fa8] focus:shadow-[0_0_0_2px_rgba(27,95,168,0.14)];
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Tombol: conjure anti-klik-ganda & status valid                       */
+  /* ------------------------------------------------------------------ */
+
+  /* Tombol yang sedang diproses / tidak valid: tak bisa diklik, tampilan redup. */
+  button:disabled {
+    pointer-events: none;
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Penanda sedang diproses, dipakai spinner di dalam tombol. */
+  button[data-loading='true'] {
+    position: relative;
+  }
+
+  /* Input yang gagal validasi. */
+  .input-invalid {
+    @apply !border-[#e03131] focus:!border-[#e03131] focus:!shadow-[0_0_0_2px_rgba(224,49,49,0.15)];
+  }
+
+  /* Teks bantu error di bawah field. */
+  .field-error {
+    @apply mt-1 flex items-center gap-1 text-[11px] font-semibold text-[#c92a2a];
+  }
+
+  /* Peringatan (tidak memblokir penyimpanan). */
+  .field-warn {
+    @apply mt-1 flex items-center gap-1 text-[11px] font-semibold text-[#a35b00];
+  }
 }
 
 /* ---------------------------- autocomplete ---------------------------- */

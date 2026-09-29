@@ -38,6 +38,15 @@ function msg(e: unknown): string {
 const num = (v: unknown): number => Number(v ?? 0);
 
 function mapProduct(r: Record<string, unknown>): Product {
+  // Sumber varian: kolom `variants` (baru). `satuan_list` versi lama hanya
+  // berisi nama satuan, jadi dipakai sebagai fallback agar produk lama yang
+  // belum punya `variants` tetap bisa ditampilkan.
+  const variants = normalisasiVarian(r.variants);
+  const legacyUnits = Array.isArray(r.satuan_list) ? (r.satuan_list as unknown[]).map(String) : [];
+  const satuanList = variants.length
+    ? variants.map((v) => v.satuan)
+    : legacyUnits.filter(Boolean);
+
   return {
     ...(r as unknown as Omit<Product, 'price' | 'cost' | 'stock' | 'min_stock' | 'is_active' | 'satuanList' | 'variants'>),
     price: num(r.price),
@@ -45,8 +54,8 @@ function mapProduct(r: Record<string, unknown>): Product {
     stock: num(r.stock),
     min_stock: num(r.min_stock),
     is_active: Boolean(r.is_active),
-    satuanList: Array.isArray(r.satuan_list) ? (r.satuan_list as unknown[]).map(String) : [],
-    variants: normalisasiVarian(r.variants),
+    satuanList,
+    variants,
   };
 }
 
@@ -170,9 +179,13 @@ export const productsApi = {
         min_stock: num(data.min_stock ?? 0),
         unit: String(data.unit ?? 'pcs').trim() || 'pcs',
         is_active: data.is_active === false ? false : true,
-        ...(Array.isArray(data.satuanList) ? { satuan_list: data.satuanList.map(String) } : {}),
         ...(data.variants !== undefined
-          ? { variants: normalisasiVarian(data.variants) as unknown as Record<string, unknown>[] }
+          ? {
+              // `variants` kolom jsonb; `satuan_list` ikut ditulis sebagai
+              // daftar nama satuan supaya kolom lama tetap konsisten.
+              variants: normalisasiVarian(data.variants) as unknown as Record<string, unknown>[],
+              satuan_list: normalisasiVarian(data.variants).map((v) => v.satuan),
+            }
           : {}),
       };
       if (!row.name) return { ok: false, error: 'Nama produk wajib diisi.' };
@@ -199,8 +212,11 @@ export const productsApi = {
       if (data.min_stock !== undefined) patch.min_stock = num(data.min_stock);
       if (data.unit !== undefined) patch.unit = String(data.unit).trim() || 'pcs';
       if (data.is_active !== undefined) patch.is_active = Boolean(data.is_active);
-      if (data.satuanList !== undefined) patch.satuan_list = data.satuanList.map(String);
-      if (data.variants !== undefined) patch.variants = normalisasiVarian(data.variants);
+      if (data.variants !== undefined) {
+        const varian = normalisasiVarian(data.variants);
+        patch.variants = varian;
+        patch.satuan_list = varian.map((v) => v.satuan);
+      }
       patch.updated_at = new Date().toISOString();
 
       const { data: updated, error } = await createClient()

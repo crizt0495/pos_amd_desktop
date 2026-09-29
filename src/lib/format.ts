@@ -72,22 +72,40 @@ export function isoHariLalu(n: number): string {
 
 /* ------------------------------- keranjang ------------------------------ */
 
-/** Normalisasi daftar varian dari jsonb database. */
+/** Normalisasi daftar varian dari jsonb database.
+ *
+ *  Menoleransi data versi lama (`harga_pokok`) dan data yang belum lengkap,
+ *  serta membuang baris yang tidak punya nama satuan.
+ */
 export function normalisasiVarian(v: unknown): ProductVariant[] {
   if (!Array.isArray(v)) return [];
-  return v
-    .map((raw) => {
-      const o = (raw ?? {}) as Record<string, unknown>;
+
+  // Bentuk lama: array of object (v1, `harga_pokok`) atau array of string
+  // (kolom `satuan_list` versi paling awal).
+  const objs = v.map((raw) => {
+    if (typeof raw === 'string') {
+      const s = raw.trim();
+      return s ? { satuan: s } : null;
+    }
+    return (raw ?? {}) as Record<string, unknown>;
+  });
+
+  return objs
+    .map((o) => {
+      if (!o) return null;
       const satuan = String(o.satuan ?? '').trim();
       if (!satuan) return null;
       const hargaJual = Number(o.harga_jual);
-      const hargaPokok = Number(o.harga_pokok);
+      // `harga_pokok` = nama kolom versi v1; `harga_beli` = nama sekarang.
+      const hargaBeli = Number(o.harga_beli ?? o.harga_pokok);
       const konversi = Number(o.konversi);
+      const barcode = String(o.barcode ?? '').trim();
       return {
         satuan,
         harga_jual: Number.isFinite(hargaJual) ? hargaJual : 0,
-        harga_pokok: Number.isFinite(hargaPokok) ? hargaPokok : 0,
+        harga_beli: Number.isFinite(hargaBeli) ? hargaBeli : 0,
         konversi: Number.isFinite(konversi) && konversi > 0 ? konversi : 1,
+        ...(barcode ? { barcode } : {}),
       } satisfies ProductVariant;
     })
     .filter((v): v is ProductVariant => v !== null);
@@ -102,6 +120,22 @@ export function cariVarian(
   const key = String(satuan ?? '').trim().toLowerCase();
   if (!key) return null;
   return variants.find((v) => v.satuan.trim().toLowerCase() === key) ?? null;
+}
+
+/** Produk yang punya varian dengan barcode satuan ini (bukan barcode utama). */
+export function cariProdukByBarcodeVarian(
+  products: { id: string; barcode: string | null; variants: ProductVariant[] }[],
+  barcode: string,
+): string | null {
+  const key = String(barcode ?? '').trim().toLowerCase();
+  if (!key) return null;
+  for (const p of products) {
+    const v = normalisasiVarian(p.variants).find(
+      (x) => String(x.barcode ?? '').trim().toLowerCase() === key,
+    );
+    if (v) return p.id;
+  }
+  return null;
 }
 
 /** Daftar satuan yang bisa dipilih pada satu produk (baris keranjang).
@@ -140,7 +174,7 @@ export function satuanOptions(p: {
   return hasil.length ? hasil : ['Pcs'];
 }
 
-/** Harga jual/pokok untuk satu satuan; jatuh ke harga produk bila tanpa varian. */
+/** Harga jual/modal untuk satu satuan; jatuh ke harga produk bila tanpa varian. */
 export function hargaSatuan(
   p: { price: number; cost: number },
   variants: ProductVariant[] | null | undefined,
@@ -149,8 +183,88 @@ export function hargaSatuan(
   const v = cariVarian(variants, satuan);
   return {
     price: v ? v.harga_jual : p.price,
-    cost: v ? v.harga_pokok : p.cost,
+    cost: v ? v.harga_beli : p.cost,
   };
+}
+
+/* --------------------------- validasi varian --------------------------- */
+
+export type VarianBaris = {
+  satuan: string;
+  harga_beli: string;
+  harga_jual: string;
+  konversi: string;
+  barcode: string;
+};
+
+export type VarianError = {
+  /** Indeks baris yang bermasalah; -1 = masalah umum. */
+  index: number;
+  pesan: string;
+};
+
+/** Nama satuan kembar (case-insensitive)? Kembalikan nama yang kembar. */
+export function satuanKembar(baris: { satuan: string }[]): string | null {
+  const lihat = new Set<string>();
+  for (const b of baris) {
+    const k = String(b.satuan ?? '').trim().toLowerCase();
+    if (!k) continue;
+    if (lihat.has(k)) return b.satuan.trim();
+    lihat.add(k);
+  }
+  return null;
+}
+
+/** Baris varian yang tidak bisa disimpan, dengan pesan per baris. */
+export function validasiVarian(baris: VarianBaris[]): VarianError[] {
+  const err: VarianError[] = [];
+  const isi = baris.filter((b) => b.satuan.trim());
+
+  if (isi.length === 0) {
+    err.push({ index: -1, pesan: 'Minimal 1 satuan harus diisi.' });
+    return err;
+  }
+
+  const kembar = satuanKembar(isi);
+  if (kembar) err.push({ index: -1, pesan: `Satuan "${kembar}" dipakai lebih dari sekali.` });
+
+  baris.forEach((b, i) => {
+    if (!b.satuan.trim()) return; // baris kosong diabaikan, bukan error
+    const jual = parseRupiah(b.harga_jual);
+    const beli = parseRupiah(b.harga_beli);
+    const konv = Number(b.konversi);
+    if (jual <= 0) err.push({ index: i, pesan: 'Harga jual harus lebih dari 0.' });
+    if (beli <= 0) err.push({ index: i, pesan: 'Harga modal harus lebih dari 0.' });
+    if (!Number.isFinite(konv) || konv <= 0) {
+      err.push({ index: i, pesan: 'Konversi harus lebih dari 0.' });
+    }
+  });
+
+  return err;
+}
+
+/** Varian yang dijual di bawah harga modal (peringatan kuning, bukan blocker). */
+export function varianRugi(baris: VarianBaris[]): VarianBaris[] {
+  return baris.filter(
+    (b) => b.satuan.trim() && parseRupiah(b.harga_jual) > 0 && parseRupiah(b.harga_jual) < parseRupiah(b.harga_beli),
+  );
+}
+
+/** Baris varian -> objek siap simpan (angka bersih, tanpa baris kosong). */
+export function varianKeJson(baris: VarianBaris[]): ProductVariant[] {
+  return baris
+    .filter((b) => b.satuan.trim())
+    .map((b, i) => {
+      const barcode = b.barcode.trim();
+      return {
+        satuan: b.satuan.trim(),
+        harga_beli: parseRupiah(b.harga_beli),
+        harga_jual: parseRupiah(b.harga_jual),
+        // Baris pertama selalu satuan dasar, apa pun yang diketik.
+        konversi: i === 0 ? 1 : Math.max(1, Number(b.konversi) || 1),
+        ...(barcode ? { barcode } : {}),
+      } satisfies ProductVariant;
+    });
 }
 
 /** Jumlah satu baris: qty x H. Jual - Potongan (flat per baris, minimal 0). */

@@ -4,8 +4,8 @@ import * as React from 'react';
 import {
   AlertTriangle,
   Boxes,
+  Loader2,
   Minus,
-  Package,
   Pencil,
   Plus,
   RefreshCw,
@@ -14,58 +14,54 @@ import {
 } from 'lucide-react';
 
 import { productsApi } from '@/lib/api';
-import { rupiah } from '@/lib/format';
+import { normalisasiVarian, varianKeJson, validasiVarian, type VarianBaris } from '@/lib/format';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { normalisasiVarian } from '@/lib/format';
-import type { Product, ProductInput, ProductVariant } from '@/lib/types';
-
-type VarianForm = {
-  satuan: string;
-  harga_jual: string;
-  harga_pokok: string;
-  konversi: string;
-};
+import { SatuanVarianTable } from '@/components/SatuanVarianTable';
+import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
+import { rupiah } from '@/lib/format';
+import type { Product, ProductInput } from '@/lib/types';
 
 type FormState = {
   barcode: string;
   name: string;
   category: string;
-  price: string;
-  cost: string;
   stock: string;
   min_stock: string;
-  unit: string;
-  varian: VarianForm[];
+  varian: VarianBaris[];
 };
 
 const EMPTY: FormState = {
   barcode: '',
   name: '',
   category: 'Umum',
-  price: '',
-  cost: '',
   stock: '',
   min_stock: '',
-  unit: 'pcs',
-  varian: [],
+  varian: [{ satuan: '', harga_beli: '', harga_jual: '', konversi: '1', barcode: '' }],
 };
 
-const EMPTY_VARIAN: VarianForm = { satuan: '', harga_jual: '', harga_pokok: '', konversi: '1' };
+/** Baris satuan baru: konversi default 1, harga dikosongkan. */
+const BARIS_BARU: VarianBaris = { satuan: '', harga_beli: '', harga_jual: '', konversi: '1', barcode: '' };
 
-/** Varian -> string form; baris tanpa nama satuan diabaikan. */
-const varianKeForm = (list: ProductVariant[]): VarianForm[] =>
-  list.map((v) => ({
-    satuan: v.satuan,
-    harga_jual: String(v.harga_jual),
-    harga_pokok: String(v.harga_pokok),
-    konversi: String(v.konversi),
+/** Varian -> baris form. Baris satuan dasar (konversi 1) selalu jadi baris 1. */
+const varianKeBaris = (v: ReturnType<typeof normalisasiVarian>): VarianBaris[] => {
+  if (!v.length) return [{ ...BARIS_BARU }];
+  return v.map((x, i) => ({
+    satuan: x.satuan,
+    harga_beli: String(x.harga_beli),
+    harga_jual: String(x.harga_jual),
+    konversi: i === 0 ? '1' : String(x.konversi),
+    barcode: x.barcode ?? '',
   }));
-
-const UNITS = ['pcs', 'box', 'btl', 'kg', 'gram', 'lusin', 'pak', 'sachet'];
+};
 
 export default function ProdukScreen() {
   const toast = useToast();
+  const simpan = useButtonGuard();
+  const stok = useClickCooldown(700);
+  const bukaHapus = useClickCooldown(1500);
+  // Kunci tombol UI ringan (buka modal, muat ulang) agar tak terpicu dua kali.
+  const ui = useClickCooldown(1500);
 
   const [products, setProducts] = React.useState<Product[]>([]);
   const [search, setSearch] = React.useState('');
@@ -75,9 +71,15 @@ export default function ProdukScreen() {
   const [editing, setEditing] = React.useState<Product | null>(null);
   const [form, setForm] = React.useState<FormState>(EMPTY);
   const [open, setOpen] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
   const [removing, setRemoving] = React.useState<Product | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  const [hapusBusy, setHapusBusy] = React.useState(false);
+
+  /* ------------------------- kategori baru ---------------------------- */
+  const [kategoriList, setKategoriList] = React.useState<string[]>([]);
+  const [kategoriModal, setKategoriModal] = React.useState(false);
+  const [kategoriBaru, setKategoriBaru] = React.useState('');
+  const kategori = useButtonGuard();
+  const kategoriBusy = kategori.busy;
 
   const load = React.useCallback(
     async (q = '', includeInactive = false) => {
@@ -97,10 +99,18 @@ export default function ProdukScreen() {
     })();
   }, [load, showInactive]);
 
+  // Ambil daftar kategori dari produk yang sudah ada (dropdown + modal baru).
+  React.useEffect(() => {
+    void (async () => {
+      const res = await productsApi.categories();
+      if (res.ok) setKategoriList(res.data);
+    })();
+  }, []);
+
   /* ------------------------------ form CRUD ---------------------------- */
   function openTambah() {
     setEditing(null);
-    setForm(EMPTY);
+    setForm({ ...EMPTY, varian: [{ ...BARIS_BARU }] });
     setOpen(true);
   }
 
@@ -110,147 +120,158 @@ export default function ProdukScreen() {
       barcode: p.barcode ?? '',
       name: p.name,
       category: p.category,
-      price: String(p.price),
-      cost: String(p.cost),
       stock: String(p.stock),
       min_stock: String(p.min_stock),
-      unit: p.unit,
-      varian: varianKeForm(p.variants ?? []),
+      varian: varianKeBaris(p.variants ?? []),
     });
     setOpen(true);
   }
 
   /* --------------------------- editor varian ------------------------- */
   function tambahVarianBaris() {
-    setForm((prev) => ({ ...prev, varian: [...prev.varian, { ...EMPTY_VARIAN }] }));
+    setForm((prev) => ({ ...prev, varian: [...prev.varian, { ...BARIS_BARU }] }));
   }
 
-  function ubahVarian(i: number, patch: Partial<VarianForm>) {
-    setForm((prev) => {
-      const varian = [...prev.varian];
-      const cur = varian[i];
-      if (!cur) return prev;
-      varian[i] = { ...cur, ...patch };
-      return { ...prev, varian };
-    });
+  /** Simpan kategori baru (hanya di memori — kategori hidup dari kolom produk). */
+  function simpanKategoriBaru() {
+    const nama = kategoriBaru.trim();
+    if (!nama) return;
+    setKategoriList((prev) => (prev.some((k) => k.toLowerCase() === nama.toLowerCase()) ? prev : [...prev, nama].sort()));
+    setForm((prev) => ({ ...prev, category: nama }));
+    setKategoriBaru('');
+    setKategoriModal(false);
   }
 
-  function hapusVarian(i: number) {
-    setForm((prev) => ({ ...prev, varian: prev.varian.filter((_, x) => x !== i) }));
-  }
-
-  /** Baris varian pertama belum diisi -> isi otomatis dari harga produk. */
-  function isiVarianOtomatis() {
-    setForm((prev) => {
-      if (prev.varian.length || !Number(prev.price)) return prev;
-      return {
-        ...prev,
-        varian: [
-          {
-            satuan: 'Pcs',
-            harga_jual: prev.price,
-            harga_pokok: prev.cost,
-            konversi: '1',
-          },
-        ],
-      };
-    });
-  }
-
-  async function simpan() {
-    if (!form.name.trim()) {
-      toast.error('Nama produk wajib diisi');
+  /** Tombol Simpan kategori: terkunci 1,5 detik supaya tak dobel terkirim. */
+  function klikSimpanKategori() {
+    if (kategoriBusy) {
+      toast.info('Mohon tunggu…', 'Kategori sedang disimpan.');
       return;
     }
-    const price = Number(form.price) || 0;
-    const cost = Number(form.cost) || 0;
-    const stock = Number(form.stock) || 0;
-    const minStock = Number(form.min_stock) || 0;
-
-    if (price < 0 || cost < 0 || stock < 0) {
-      toast.error('Harga dan stok tidak boleh negatif');
-      return;
-    }
-
-    // Varian: buang baris kosong / tidak valid, dan tolak nama satuan kembar.
-    const varian = normalisasiVarian(
-      form.varian
-        .filter((v) => v.satuan.trim())
-        .map((v) => ({
-          satuan: v.satuan.trim(),
-          harga_jual: Number(v.harga_jual) || 0,
-          harga_pokok: Number(v.harga_pokok) || 0,
-          konversi: Number(v.konversi) || 1,
-        })),
+    void kategori.guard(
+      () => {
+        simpanKategoriBaru();
+        return true;
+      },
+      {
+        cooldownMs: 1200,
+        pesanTunggu: 'Kategori sedang disimpan…',
+        onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
+      },
     );
-    const duplikat = varian.find(
-      (v, i) => varian.findIndex((x) => x.satuan.toLowerCase() === v.satuan.toLowerCase()) !== i,
-    );
-    if (duplikat) {
-      toast.error('Satuan varian kembar', `"${duplikat.satuan}" dipakai lebih dari sekali.`);
-      return;
-    }
-    if (varian.some((v) => v.harga_jual < 0 || v.harga_pokok < 0 || v.konversi <= 0)) {
-      toast.error('Varian tidak valid', 'Harga harus >= 0 dan konversi harus lebih dari 0.');
-      return;
-    }
+  }
+
+  /* ----------------------------- validasi ------------------------------ */
+  const varianErrors = React.useMemo(() => validasiVarian(form.varian), [form.varian]);
+  const namaError = form.name.trim().length > 0 && form.name.trim().length < 3
+    ? 'Nama minimal 3 karakter.'
+    : '';
+  const stokError =
+    form.stock !== '' && (!Number.isFinite(Number(form.stock)) || Number(form.stock) < 0)
+      ? 'Stok tidak boleh negatif.'
+      : '';
+  const minStokError =
+    form.min_stock !== '' && (!Number.isFinite(Number(form.min_stock)) || Number(form.min_stock) < 0)
+      ? 'Stok minimum tidak boleh negatif.'
+      : '';
+
+  const isFormValid = React.useMemo(() => {
+    if (form.name.trim().length < 3) return false;
+    if (varianErrors.length > 0) return false;
+    if (stokError || minStokError) return false;
+    return true;
+  }, [form.name, varianErrors, stokError, minStokError]);
+
+  /* ------------------------------ simpan ------------------------------- */
+  async function aksiSimpan() {
+    if (!isFormValid) return;
+
+    const varian = varianKeJson(form.varian);
+    const dasar = varian[0];
+    if (!dasar) return;
+
+    // Baris satuan dasar otomatis memakai barcode utama bila barcode satuan kosong.
+    if (!dasar.barcode && form.barcode.trim()) dasar.barcode = form.barcode.trim();
 
     const payload: ProductInput = {
       barcode: form.barcode.trim() || null,
       name: form.name.trim(),
       category: form.category.trim() || 'Umum',
-      price,
-      cost,
-      stock,
-      min_stock: minStock,
-      unit: form.unit.trim() || 'pcs',
+      price: dasar.harga_jual,
+      cost: dasar.harga_beli,
+      stock: Number(form.stock) || 0,
+      min_stock: Number(form.min_stock) || 0,
+      unit: dasar.satuan,
       variants: varian,
-      satuanList: varian.length ? varian.map((v) => v.satuan) : undefined,
     };
 
-    setSaving(true);
-    try {
-      const res = editing
-        ? await productsApi.update(editing.id, payload)
-        : await productsApi.create(payload);
+    const res = editing
+      ? await productsApi.update(editing.id, payload)
+      : await productsApi.create(payload);
 
-      if (!res.ok) {
-        toast.error('Gagal menyimpan produk', res.error);
-        return;
-      }
-
-      toast.ok(editing ? 'Produk diperbarui' : 'Produk ditambahkan', res.data.name);
-      setOpen(false);
-      await load(search, showInactive);
-    } finally {
-      setSaving(false);
+    if (!res.ok) {
+      toast.error('Gagal menyimpan produk', res.error);
+      return;
     }
+
+    toast.ok(editing ? 'Produk diperbarui' : 'Produk ditambahkan', res.data.name);
+    setOpen(false);
+    await load(search, showInactive);
   }
 
-  async function hapus() {
+  function simpanProduk() {
+    if (!isFormValid) {
+      toast.error('Form belum lengkap', 'Isi nama produk dan minimal 1 satuan dengan harga yang benar.');
+      return;
+    }
+    void simpan.guard(aksiSimpan, {
+      cooldownMs: 800,
+      pesanTunggu: 'Simpan sedang diproses…',
+      onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
+    });
+  }
+
+  /** Konfirmasi hapus: tolak klik ganda, satu klik = satu DELETE. */
+  function klikHapus() {
     if (!removing) return;
-    setBusy(true);
-    try {
-      const res = await productsApi.remove(removing.id);
-      if (!res.ok) {
-        toast.error('Gagal menghapus produk', res.error);
-        return;
-      }
-      toast.ok('Produk dihapus', removing.name);
-      setRemoving(null);
-      await load(search, showInactive);
-    } finally {
-      setBusy(false);
+    if (hapusBusy) {
+      toast.info('Mohon tunggu…', 'Penghapusan sedang diproses.');
+      return;
     }
+    setHapusBusy(true);
+    void (async () => {
+      try {
+        const res = await productsApi.remove(removing.id);
+        if (!res.ok) {
+          toast.error('Gagal menghapus produk', res.error);
+          return;
+        }
+        toast.ok('Produk dihapus', removing.name);
+        setRemoving(null);
+        await load(search, showInactive);
+      } finally {
+        setHapusBusy(false);
+      }
+    })();
   }
 
-  async function ubahStok(p: Product, delta: number) {
+  /** Tambah/kurangi stok cepat; dikunci singkat agar tak terkirim beruntun. */
+  function ubahStok(p: Product, delta: number) {
+    stok.run(() => void kirimStok(p, delta), `stok-${p.id}-${delta > 0 ? 'naik' : 'turun'}`);
+  }
+
+  async function kirimStok(p: Product, delta: number) {
     const res = await productsApi.adjustStock(p.id, delta);
     if (!res.ok) {
       toast.error('Gagal mengubah stok', res.error);
       return;
     }
     setProducts((prev) => prev.map((x) => (x.id === p.id ? res.data : x)));
+  }
+
+  /** Buka konfirmasi hapus; klik ganda pada tombol Hapus tidak membuka 2 modal. */
+  function bukaKonfirmasiHapus(p: Product) {
+    bukaHapus.run(() => setRemoving(p), `hapus-${p.id}`);
   }
 
   const lowStock = products.filter((p) => p.is_active && p.stock <= p.min_stock);
@@ -260,20 +281,33 @@ export default function ProdukScreen() {
       {/* ------------------------- SUB-RIBBON ------------------------- */}
       <div className="sub-ribbon">
         <span className="rb-label">Master Data · Data Barang</span>
-        <button type="button" className="rb-btn-primary" onClick={openTambah}>
+        <button
+          type="button"
+          className="rb-btn-primary"
+          onClick={() => ui.run(openTambah, 'produk-tambah')}
+          disabled={ui.locked('produk-tambah')}
+        >
           <Plus className="h-3.5 w-3.5" /> Tambah Barang
         </button>
         <span className="rb-sep" />
-        <button type="button" className="rb-btn" onClick={() => void load(search, showInactive)}>
+        <button
+          type="button"
+          className="rb-btn"
+          onClick={() => ui.run(() => void load(search, showInactive), 'produk-muat')}
+          disabled={ui.locked('produk-muat')}
+        >
           <RefreshCw className="h-3.5 w-3.5" /> Muat Ulang
         </button>
         <button
           type="button"
           className="rb-btn"
-          onClick={() => {
-            setSearch('');
-            void load('', showInactive);
-          }}
+          onClick={() =>
+            ui.run(() => {
+              setSearch('');
+              void load('', showInactive);
+            }, 'produk-bersihkan')
+          }
+          disabled={ui.locked('produk-bersihkan')}
         >
           <Search className="h-3.5 w-3.5" /> Bersihkan
         </button>
@@ -379,7 +413,8 @@ export default function ProdukScreen() {
                           <button
                             type="button"
                             className="grid h-6 w-6 place-items-center rounded border border-[#cdd8e6] text-[#5b6b80] transition hover:border-[#1b5fa8] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]"
-                            onClick={() => void ubahStok(p, -1)}
+                            onClick={() => ubahStok(p, -1)}
+                            disabled={stok.locked(`stok-${p.id}-turun`) || p.stock <= 0}
                             aria-label="Kurangi stok"
                           >
                             <Minus className="h-3 w-3" />
@@ -392,7 +427,8 @@ export default function ProdukScreen() {
                           <button
                             type="button"
                             className="grid h-6 w-6 place-items-center rounded border border-[#cdd8e6] text-[#5b6b80] transition hover:border-[#1b5fa8] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]"
-                            onClick={() => void ubahStok(p, 1)}
+                            onClick={() => ubahStok(p, 1)}
+                            disabled={stok.locked(`stok-${p.id}-naik`)}
                             aria-label="Tambah stok"
                           >
                             <Plus className="h-3 w-3" />
@@ -404,14 +440,16 @@ export default function ProdukScreen() {
                           <button
                             type="button"
                             className="btn-outline px-2 py-1 text-[11.5px]"
-                            onClick={() => openEdit(p)}
+                            onClick={() => ui.run(() => openEdit(p), `ubah-${p.id}`)}
+                            disabled={ui.locked(`ubah-${p.id}`)}
                           >
                             <Pencil className="h-3.5 w-3.5" /> Ubah
                           </button>
                           <button
                             type="button"
                             className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
-                            onClick={() => setRemoving(p)}
+                            onClick={() => bukaKonfirmasiHapus(p)}
+                            aria-label={`Hapus ${p.name}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -430,225 +468,209 @@ export default function ProdukScreen() {
       <Modal
         open={open}
         title={editing ? 'Ubah Produk' : 'Tambah Produk'}
-        onClose={() => setOpen(false)}
-        width="max-w-lg"
+        onClose={() => !simpan.busy && setOpen(false)}
+        width="max-w-3xl"
         footer={
           <>
-            <button type="button" className="btn-outline" onClick={() => setOpen(false)}>
+            <button type="button" className="btn-outline" onClick={() => setOpen(false)} disabled={simpan.busy}>
               Batal
             </button>
-            <button type="button" className="btn-primary" onClick={() => void simpan()} disabled={saving}>
-              {saving ? 'Menyimpan...' : 'Simpan'}
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={simpanProduk}
+              disabled={!isFormValid || simpan.busy}
+              data-loading={simpan.busy}
+            >
+              {simpan.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {simpan.busy ? 'Menyimpan…' : 'Simpan'}
             </button>
           </>
         }
       >
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className="label" htmlFor="p-name">
-              Nama Produk *
-            </label>
-            <input
-              id="p-name"
-              className="input"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="Contoh: Indomie Goreng"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-barcode">
-              Barcode
-            </label>
-            <input
-              id="p-barcode"
-              className="input font-mono"
-              value={form.barcode}
-              onChange={(e) => setForm({ ...form, barcode: e.target.value })}
-              placeholder="8991002101015"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-category">
-              Kategori
-            </label>
-            <input
-              id="p-category"
-              className="input"
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="Makanan"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-price">
-              Harga Jual (Rp) *
-            </label>
-            <input
-              id="p-price"
-              className="input tnum"
-              type="number"
-              min={0}
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-              placeholder="3500"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-cost">
-              Harga Modal (Rp)
-            </label>
-            <input
-              id="p-cost"
-              className="input tnum"
-              type="number"
-              min={0}
-              value={form.cost}
-              onChange={(e) => setForm({ ...form, cost: e.target.value })}
-              placeholder="3000"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-stock">
-              Stok
-            </label>
-            <input
-              id="p-stock"
-              className="input tnum"
-              type="number"
-              min={0}
-              value={form.stock}
-              onChange={(e) => setForm({ ...form, stock: e.target.value })}
-              placeholder="0"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="p-min">
-              Stok Minimum
-            </label>
-            <input
-              id="p-min"
-              className="input tnum"
-              type="number"
-              min={0}
-              value={form.min_stock}
-              onChange={(e) => setForm({ ...form, min_stock: e.target.value })}
-              placeholder="0"
-            />
-          </div>
-
-          <div className="col-span-2">
-            <label className="label" htmlFor="p-unit">
-              Satuan
-            </label>
-            <select
-              id="p-unit"
-              className="input"
-              value={form.unit}
-              onChange={(e) => setForm({ ...form, unit: e.target.value })}
-            >
-              {UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {editing ? (
-            <div className="col-span-2 flex items-center gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#4a5b70]">
-              <Package className="h-3.5 w-3.5 shrink-0" />
-              <span>
-                Stok saat ini {editing.stock} {editing.unit}. Transaksi yang sudah tersimpan tidak ikut
-                berubah.
-              </span>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (simpan.busy) {
+              toast.info('Mohon tunggu…', 'Simpan sedang diproses.');
+              return;
+            }
+            simpanProduk();
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="label" htmlFor="p-name">
+                Nama Produk *
+              </label>
+              <input
+                id="p-name"
+                className={`input ${namaError ? 'input-invalid' : ''}`}
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Contoh: Air Mineral 600ml"
+                aria-invalid={Boolean(namaError)}
+              />
+              {namaError ? (
+                <p className="field-error">
+                  <AlertTriangle className="h-3 w-3" /> {namaError}
+                </p>
+              ) : null}
             </div>
-          ) : null}
-        </div>
 
-        {/* ====================== VARIAN SATUAN (iPOS) ==================== */}
-        <div className="mt-3 border-t border-[#e2e8f0] pt-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Package className="h-3.5 w-3.5 text-[#1b5fa8]" />
-            <p className="text-[12.5px] font-bold text-[#1b3a5c]">Varian Satuan</p>
-            <button type="button" className="rb-btn ml-auto" onClick={tambahVarianBaris}>
-              <Plus className="h-3.5 w-3.5" />
-              Tambah Varian
-            </button>
-          </div>
+            <div>
+              <label className="label" htmlFor="p-barcode">
+                Barcode Utama
+              </label>
+              <input
+                id="p-barcode"
+                className="input font-mono"
+                value={form.barcode}
+                onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+                placeholder="8999999030001"
+              />
+              <p className="mt-1 text-[10.5px] text-[#9fb0c4]">Dipakai untuk satuan dasar.</p>
+            </div>
 
-          <p className="mb-2 rounded bg-[#f6f9fd] p-2 text-[11.5px] text-[#5b6b80]">
-            Saat kasir mengubah kolom <b>Satuan</b>, <b>H. Jual</b> dan <b>H. Pokok</b> otomatis ikut
-            berubah sesuai varian di bawah. Kosongkan bila semua satuan memakai harga produk yang sama.
-          </p>
-
-          {form.varian.length === 0 ? (
-            <button
-              type="button"
-              onClick={isiVarianOtomatis}
-              disabled={!Number(form.price)}
-              className="w-full rounded border border-dashed border-[#cdd8e6] py-2.5 text-[12px] font-semibold text-[#7a8ba0] transition hover:border-[#1b5fa8] hover:text-[#1b5fa8] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {Number(form.price)
-                ? '+ Tambahkan satuan dasar dari harga produk'
-                : 'Isi Harga Jual dulu untuk membuat satuan dasar'}
-            </button>
-          ) : (
-            <div className="space-y-1.5">
-              {form.varian.map((v, i) => (
-                <div key={`varian-${i}`} className="flex items-center gap-1.5">
-                  <input
-                    className="input h-9 flex-1"
-                    placeholder="Satuan (mis. Dus/6)"
-                    value={v.satuan}
-                    onChange={(e) => ubahVarian(i, { satuan: e.target.value })}
-                  />
-                  <input
-                    className="input tnum h-9 w-[112px] text-right"
-                    placeholder="H. Jual"
-                    inputMode="numeric"
-                    value={v.harga_jual}
-                    onChange={(e) => ubahVarian(i, { harga_jual: e.target.value })}
-                  />
-                  <input
-                    className="input tnum h-9 w-[112px] text-right"
-                    placeholder="H. Pokok"
-                    inputMode="numeric"
-                    value={v.harga_pokok}
-                    onChange={(e) => ubahVarian(i, { harga_pokok: e.target.value })}
-                  />
-                  <input
-                    className="input tnum h-9 w-[74px] text-right"
-                    placeholder="Konv."
-                    inputMode="numeric"
-                    value={v.konversi}
-                    onChange={(e) => ubahVarian(i, { konversi: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => hapusVarian(i)}
-                    title="Hapus varian"
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[#e9b3b3] bg-white text-[#c92a2a] transition hover:bg-[#fff5f5]"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-
-              <div className="flex items-center gap-1.5 pr-[34px] text-[11px] text-[#9fb0c4]">
-                <span className="w-[112px] shrink-0 text-center">Harga Jual</span>
-                <span className="w-[112px] shrink-0 text-center">Harga Pokok</span>
-                <span className="w-[74px] shrink-0 text-center">Konversi</span>
+            <div>
+              <label className="label" htmlFor="p-category">
+                Kategori
+              </label>
+              <div className="flex gap-1.5">
+                <select
+                  id="p-category"
+                  className="input"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                >
+                  {!kategoriList.includes(form.category) ? (
+                    <option value={form.category}>{form.category || 'Umum'}</option>
+                  ) : null}
+                  {kategoriList.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => ui.run(() => setKategoriModal(true), 'kategori-tambah')}
+                  disabled={ui.locked('kategori-tambah')}
+                  title="Tambah kategori baru"
+                  aria-label="Tambah kategori baru"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
+                >
+                  +
+                </button>
               </div>
             </div>
-          )}
-        </div>
+
+            <div>
+              <label className="label" htmlFor="p-stock">
+                Stok
+              </label>
+              <input
+                id="p-stock"
+                className={`input tnum ${stokError ? 'input-invalid' : ''}`}
+                type="number"
+                min={0}
+                value={form.stock}
+                onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                placeholder="0"
+              />
+              {stokError ? (
+                <p className="field-error">
+                  <AlertTriangle className="h-3 w-3" /> {stokError}
+                </p>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="label" htmlFor="p-min">
+                Stok Minimum
+              </label>
+              <input
+                id="p-min"
+                className={`input tnum ${minStokError ? 'input-invalid' : ''}`}
+                type="number"
+                min={0}
+                value={form.min_stock}
+                onChange={(e) => setForm({ ...form, min_stock: e.target.value })}
+                placeholder="0"
+              />
+              {minStokError ? (
+                <p className="field-error">
+                  <AlertTriangle className="h-3 w-3" /> {minStokError}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {/* ==================== TABEL VARIAN SATUAN ==================== */}
+          <SatuanVarianTable
+            baris={form.varian}
+            onChange={(next) => setForm((prev) => ({ ...prev, varian: next }))}
+            onTambah={tambahVarianBaris}
+            errors={varianErrors}
+          />
+
+          {editing ? (
+            <p className="mt-3 rounded-md bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#4a5b70]">
+              Stok saat ini {editing.stock} {editing.unit}. Transaksi yang sudah tersimpan tidak ikut
+              berubah.
+            </p>
+          ) : null}
+        </form>
+      </Modal>
+
+      {/* ---------------------- modal kategori baru ---------------------- */}
+      <Modal
+        open={kategoriModal}
+        title="Kategori Baru"
+        onClose={() => setKategoriModal(false)}
+        width="max-w-xs"
+        footer={
+          <>
+            <button type="button" className="btn-outline" onClick={() => setKategoriModal(false)}>
+              Batal
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={klikSimpanKategori}
+              disabled={!kategoriBaru.trim() || kategoriBusy}
+              data-loading={kategoriBusy}
+            >
+              {kategoriBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {kategoriBusy ? 'Menyimpan…' : 'Simpan'}
+            </button>
+          </>
+        }
+      >
+        <label className="label" htmlFor="kategori-baru">
+          Nama Kategori
+        </label>
+        <input
+          id="kategori-baru"
+          className="input"
+          value={kategoriBaru}
+          onChange={(e) => setKategoriBaru(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (kategoriBusy) {
+              toast.info('Mohon tunggu…', 'Kategori sedang disimpan.');
+              return;
+            }
+            klikSimpanKategori();
+          }}
+          placeholder="mis. Minuman"
+          autoFocus
+        />
+        <p className="mt-1.5 text-[11px] text-[#9fb0c4]">
+          Kategori dipakai untuk mengelompokkan produk. Muncul otomatis setelah ada produk yang
+          memakainya.
+        </p>
       </Modal>
 
       {/* -------------------------- konfirmasi hapus --------------------- */}
@@ -659,11 +681,23 @@ export default function ProdukScreen() {
         width="max-w-sm"
         footer={
           <>
-            <button type="button" className="btn-outline" onClick={() => setRemoving(null)}>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setRemoving(null)}
+              disabled={hapusBusy}
+            >
               Batal
             </button>
-            <button type="button" className="btn-danger" onClick={() => void hapus()} disabled={busy}>
-              {busy ? 'Menghapus...' : 'Ya, Hapus'}
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={klikHapus}
+              disabled={hapusBusy}
+              data-loading={hapusBusy}
+            >
+              {hapusBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {hapusBusy ? 'Menghapus…' : 'Ya, Hapus'}
             </button>
           </>
         }

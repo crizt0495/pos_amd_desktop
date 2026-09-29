@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, KeyRound, Loader2, LogIn, Sparkles } from 'lucide-react';
 
+import { useButtonGuard } from '@/lib/useButtonGuard';
+
 function generateDeviceId(): string {
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -41,45 +43,68 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
   const [serial, setSerial] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const guard = useButtonGuard(1500);
+  const submitting = guard.busy;
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setDeviceId(readOrCreateDeviceId());
   }, []);
 
+  const serialBersih = serial.trim().toUpperCase();
+  // Serial key minimal 3 karakter; tombol Masuk disabled sebelum itu.
+  const serialValid = serialBersih.length >= 3;
+  const serialPendek = serial.trim().length > 0 && !serialValid;
+
   async function doLogin(key: string) {
-    if (submitting) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          serial_key: key,
-          device_id: deviceId || generateDeviceId(),
-          device_name: (typeof navigator !== 'undefined' ? navigator.userAgent : 'Web Browser').slice(0, 120),
-          app_version: '2.0.0',
-          next,
-        }),
-      });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (res.ok && json.ok) {
-        window.location.assign(next);
-        return;
-      }
-      setError(json.message ?? 'Login gagal. Coba lagi.');
-    } catch {
-      setError('Tidak bisa menghubungi server. Periksa koneksi internet.');
-    } finally {
-      setSubmitting(false);
+    if (!key) {
+      setError('Serial Key wajib diisi.');
+      return;
     }
+    // `guard` menolak klik kedua selama cooldown 1,5 detik.
+    void guard.guard(
+      async () => {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serial_key: key,
+            device_id: deviceId || generateDeviceId(),
+            device_name: (
+              typeof navigator !== 'undefined' ? navigator.userAgent : 'Web Browser'
+            ).slice(0, 120),
+            app_version: '2.0.0',
+            next,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+        if (res.ok && json.ok) {
+          window.location.assign(next);
+          return;
+        }
+        setError(json.message ?? 'Login gagal. Coba lagi.');
+      },
+      {
+        cooldownMs: 1500,
+        pesanTunggu: 'Lisensi sedang diperiksa…',
+        // Gagal jaringan tidak boleh membuat form terkunci selamanya.
+        onBlocked: (pesan) => setError(pesan),
+        onError: () => setError('Tidak bisa menghubungi server. Periksa koneksi internet.'),
+      },
+    );
   }
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    void doLogin(serial.trim());
+    if (submitting) {
+      setError('Mohon tunggu… lisensi sedang diperiksa.');
+      return;
+    }
+    if (!serialValid) {
+      setError('Serial Key minimal 3 karakter.');
+      return;
+    }
+    void doLogin(serialBersih);
   }
 
   return (
@@ -100,19 +125,37 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
                 ref={inputRef}
                 id="serial_key"
                 name="serial_key"
-                className="input h-10 pl-8 font-mono uppercase tracking-wide"
+                className={`input h-10 pl-8 font-mono uppercase tracking-wide ${
+                  serialPendek ? 'input-invalid' : ''
+                }`}
                 placeholder="KPRO-XXXX-XXXX-XXXX"
                 value={serial}
-                onChange={(e) => setSerial(e.target.value)}
+                onChange={(e) => {
+                  setSerial(e.target.value);
+                  setError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && submitting) {
+                    e.preventDefault();
+                    setError('Mohon tunggu… lisensi sedang diperiksa.');
+                  }
+                }}
+                aria-invalid={serialPendek}
                 required
                 autoComplete="off"
                 autoCapitalize="characters"
                 spellCheck={false}
               />
             </div>
-            <p className="mt-1 text-[11px] text-zinc-400">
-              Serial Key dibuat oleh toko Anda di <b>KasirPro Portal → Aktivasi</b>.
-            </p>
+            {serialPendek ? (
+              <p className="field-error">
+                <AlertCircle className="h-3 w-3" /> Serial Key minimal 3 karakter.
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-zinc-400">
+                Serial Key dibuat oleh toko Anda di <b>KasirPro Portal → Aktivasi</b>.
+              </p>
+            )}
           </div>
 
           {error ? (
@@ -122,7 +165,12 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
             </p>
           ) : null}
 
-          <button type="submit" disabled={submitting} className="btn-primary h-10 w-full text-[14px]">
+          <button
+            type="submit"
+            disabled={!serialValid || submitting}
+            data-loading={submitting}
+            className="btn-primary h-10 w-full text-[14px]"
+          >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
             {submitting ? 'Memeriksa lisensi…' : 'Masuk'}
           </button>
@@ -140,6 +188,7 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
         <button
           type="button"
           disabled={submitting}
+          data-loading={submitting}
           onClick={() => void doLogin(demoKey)}
           className="btn-outline mt-2 h-8 w-full text-[12px]"
         >

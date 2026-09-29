@@ -10,6 +10,7 @@ import {
   FilePlus2,
   Landmark,
   List,
+  Loader2,
   Pencil,
   Printer,
   QrCode,
@@ -20,12 +21,15 @@ import {
 
 import { customersApi, nextInvoicePreview, productsApi, settingsApi, transactionsApi } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
+import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
+  cariProdukByBarcodeVarian,
   cariVarian,
   gabungKeranjang,
   hitungKembali,
   hitungTotal,
   jumlahBaris,
+  normalisasiVarian,
   parseRupiah,
   rupiah,
   satuanOptions,
@@ -100,6 +104,11 @@ function RbBtn({
 export default function KasirScreen() {
   const toast = useToast();
   const cart = useCart();
+  // Kunci tombol Bayar/Simpan agar satu klik = satu transaksi.
+  const bayarGuard = useButtonGuard();
+  const pendingGuard = useButtonGuard();
+  // Kunci tombol UI (buka modal, pindah fokus, cetak) 1,5 detik tanpa spinner.
+  const ui = useClickCooldown(1500);
   const { lines, setLines, itemQty, setItemQty, customer, setCustomer } = cart;
   const { sales, setSales, keterangan, setKeterangan } = cart;
 
@@ -117,6 +126,16 @@ export default function KasirScreen() {
 
   /* ------------------------------ item entry -------------------------- */
   const [products, setProducts] = React.useState<Product[]>([]);
+  const [produkDimuat, setProdukDimuat] = React.useState(false);
+  /** Resolver penanda daftar produk sudah selesai dimuat. */
+  const produkSiapRef = React.useRef<(() => void) | null>(null);
+  const produkSiap = React.useCallback(
+    () =>
+      new Promise<void>((selesai) => {
+        produkSiapRef.current = selesai;
+      }),
+    [],
+  );
   const [itemCode, setItemCode] = React.useState('');
   const [activeRow, setActiveRow] = React.useState<number | null>(null);
   const [zone, setZone] = React.useState<'header' | 'detail'>('header');
@@ -180,6 +199,9 @@ export default function KasirScreen() {
       setStore(storeRes);
       setCashier(storeRes.cashier || 'Kasir');
       if (pRes.ok) setProducts(pRes.data);
+      setProdukDimuat(true);
+      produkSiapRef.current?.();
+      produkSiapRef.current = null;
       if (cRes.ok && cRes.data.length) setCustomers(cRes.data);
       setInvoiceNo(invRes);
     })();
@@ -234,22 +256,33 @@ export default function KasirScreen() {
     setMethod('cash');
   }
 
-  /** Masukkan satu produk ke keranjang. */
-  function masukkanProduk(p: Product, qty?: number) {
+  /**
+   * Masukkan satu produk ke keranjang.
+   * `satuanAwal` dipakai saat barcode yang dipindai milik satuan non-dasar
+   * (mis. barcode Dus) supaya baris langsung memakai harga varian itu.
+   */
+  function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
     const units = satuanOptions(p);
+    const varian = normalisasiVarian(p.variants);
+    const v0 = satuanAwal ? cariVarian(varian, satuanAwal) : varian[0];
+    const satuan = satuanAwal && units.some((u) => u.toLowerCase() === satuanAwal.toLowerCase())
+      ? satuanAwal
+      : (v0?.satuan ?? units[0] ?? p.unit);
+    const harga = v0 ?? { harga_jual: p.price, harga_beli: p.cost };
     const q = Math.max(1, Math.floor(qty ?? itemQty) || 1);
+
     setLines((prev) =>
       gabungKeranjang(prev, {
         product_id: p.id,
         barcode: p.barcode,
         name: p.name,
-        price: p.price,
-        cost: p.cost,
+        price: harga.harga_jual,
+        cost: harga.harga_beli,
         qty: q,
         discount: 0,
-        unit: units[0] ?? p.unit,
+        unit: satuan,
         satuanList: units,
-        variants: p.variants ?? [],
+        variants: varian,
         stock: p.stock,
       }),
     );
@@ -257,25 +290,36 @@ export default function KasirScreen() {
   }
 
   /** Tambah satu baris dari Kode Item. true = sukses. */
-  async function tambahBaris(): Promise<boolean> {
-    const code = itemCode.trim();
-    if (!code) return false;
+  /** Cari produk berdasarkan kode/barcode/nama. null = tidak ditemukan. */
+  async function cariProduk(code: string): Promise<Product | undefined> {
+    const q = code.trim();
+    if (!q) return undefined;
+    const lower = q.toLowerCase();
 
-    const qty = Math.max(1, Math.floor(Number(itemQty) || 1));
-    const lower = code.toLowerCase();
+    // Daftar produk masih dimuat? Tunggu dulu — tanpa itu barcode satuan
+    // (mis. barcode Dus) tidak akan ketemu karena hanya ada di tabel varian.
+    if (!produkDimuat && products.length === 0) await produkSiap();
 
-    let p: Product | undefined = products.find((x) => (x.barcode ?? '').toLowerCase() === lower);
+    // 1. Barcode produk (paling sering: scanner).
+    let p = products.find((x) => (x.barcode ?? '').toLowerCase() === lower);
 
+    // 2. Barcode satuan dari tabel varian (mis. barcode Dus).
     if (!p) {
-      const byBarcode = await productsApi.findByBarcode(code);
+      const owner = cariProdukByBarcodeVarian(products, q);
+      if (owner) p = products.find((x) => x.id === owner);
+    }
+
+    // 3. Tanya server (produk belum dimuat / barcode satuan).
+    if (!p) {
+      const byBarcode = await productsApi.findByBarcode(q);
       if (byBarcode.ok && byBarcode.data) p = byBarcode.data;
     }
 
+    // 4. Nama persis, lalu nama memuat kata kunci.
     if (!p) {
       const byName = products.filter((x) => x.name.toLowerCase() === lower);
       if (byName.length === 1) p = byName[0];
     }
-
     if (!p) {
       const cocok = products.filter(
         (x) => x.name.toLowerCase().includes(lower) || (x.barcode ?? '').toLowerCase().includes(lower),
@@ -283,12 +327,26 @@ export default function KasirScreen() {
       if (cocok.length === 1) p = cocok[0];
     }
 
+    return p;
+  }
+
+  async function tambahBaris(): Promise<boolean> {
+    const code = itemCode.trim();
+    if (!code) return false;
+
+    const qty = Math.max(1, Math.floor(Number(itemQty) || 1));
+
+    const p = await cariProduk(code);
     if (!p) {
       toast.info('Item tidak ditemukan', `"${code}" tidak ada di master barang. Tekan F10 untuk Cari Barang.`);
       return false;
     }
 
-    masukkanProduk(p, qty);
+    // Barcode yang dipindai boleh milik satuan non-dasar: tetapkan satuan itu.
+    const varianScan = normalisasiVarian(p.variants).find(
+      (v) => (v.barcode ?? '').toLowerCase() === code.toLowerCase(),
+    );
+    masukkanProduk(p, qty, varianScan?.satuan);
     setItemCode('');
     setSaran([]);
     setSaranTampil(false);
@@ -422,7 +480,9 @@ export default function KasirScreen() {
       if (!l) return prev;
       const v = cariVarian(l.variants, satuan);
       const copy = [...prev];
-      copy[i] = v ? { ...l, unit: v.satuan, price: v.harga_jual, cost: v.harga_pokok } : { ...l, unit: satuan };
+      copy[i] = v
+        ? { ...l, unit: v.satuan, price: v.harga_jual, cost: v.harga_beli, barcode: v.barcode || l.barcode }
+        : { ...l, unit: satuan };
       return copy;
     });
   }, []);
@@ -447,18 +507,32 @@ export default function KasirScreen() {
 
   function simpanPendingSekarang() {
     if (!lines.length) return;
-    const p: Pending = {
-      id: `${Date.now()}`,
-      note: pendNote.trim() || `${totals.itemCount} item — ${rupiah(totals.total)}`,
-      at: new Date().toLocaleString('id-ID'),
-      customer,
-      lines,
-    };
-    simpanPending([p, ...pending]);
-    setSavePendOpen(false);
-    setPendNote('');
-    resetForm();
-    toast.ok('Disimpan sebagai pending', p.note);
+    if (pendingGuard.busy) {
+      toast.info('Mohon tunggu…', 'Sedang menyimpan pending.');
+      return;
+    }
+    void pendingGuard.guard(
+      () => {
+        const p: Pending = {
+          id: `${Date.now()}`,
+          note: pendNote.trim() || `${totals.itemCount} item — ${rupiah(totals.total)}`,
+          at: new Date().toLocaleString('id-ID'),
+          customer,
+          lines,
+        };
+        simpanPending([p, ...pending]);
+        setSavePendOpen(false);
+        setPendNote('');
+        resetForm();
+        toast.ok('Disimpan sebagai pending', p.note);
+        return true;
+      },
+      {
+        cooldownMs: 1500,
+        pesanTunggu: 'Sedang menyimpan pending…',
+        onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
+      },
+    );
   }
 
   function lanjutPending(p: Pending) {
@@ -479,8 +553,26 @@ export default function KasirScreen() {
     setMethod('cash');
   }
 
+  /** Tombol Bayar: tolak klik ganda, kurang, dan keranjang kosong. */
+  function klikBayar() {
+    if (!lines.length) return;
+    if (bayarGuard.busy) {
+      toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
+      return;
+    }
+    if (kurang > 0) {
+      toast.error('Pembayaran belum lunas', `Kurang ${rupiah(kurang)}.`);
+      return;
+    }
+    void bayarGuard.guard(bayar, {
+      cooldownMs: 1500,
+      pesanTunggu: 'Transaksi sedang diproses…',
+      onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
+    });
+  }
+
   async function bayar() {
-    if (!lines.length || saving) return;
+    if (!lines.length) return;
     if (kurang > 0) {
       toast.error('Pembayaran belum lunas', `Kurang ${rupiah(kurang)}.`);
       return;
@@ -530,6 +622,9 @@ export default function KasirScreen() {
 
       const pRes = await productsApi.list('');
       if (pRes.ok) setProducts(pRes.data);
+      setProdukDimuat(true);
+      produkSiapRef.current?.();
+      produkSiapRef.current = null;
       setInvoiceNo(await nextInvoicePreview());
     } finally {
       setSaving(false);
@@ -547,13 +642,14 @@ export default function KasirScreen() {
 
   /* ------------------------------ hotkey ------------------------------ */
   /**
-   * `bayar` membaca `lines` / `pay` / `kurang` yang berubah tiap render, tapi
+   * `klikBayar` membaca `lines` / `pay` / `kurang` yang berubah tiap render, tapi
    * listener global sengaja tidak didaftarkan ulang tiap ketikan. Simpan
-   * closure terbaru di ref supaya tombol End selalu memakai data terkini.
+   * closure terbaru di ref supaya tombol End selalu memakai data terkini dan
+   * tetap lewat penjaga klik-ganda yang sama dengan tombolnya.
    */
-  const hotkeyRef = React.useRef({ lines: 0, bayar });
+  const hotkeyRef = React.useRef({ lines: 0, bayar: klikBayar });
   React.useEffect(() => {
-    hotkeyRef.current = { lines: lines.length, bayar };
+    hotkeyRef.current = { lines: lines.length, bayar: klikBayar };
   });
 
   React.useEffect(() => {
@@ -604,7 +700,7 @@ export default function KasirScreen() {
       if (e.key === 'End') {
         if (!hotkeyRef.current.lines) return;
         e.preventDefault();
-        void hotkeyRef.current.bayar();
+        hotkeyRef.current.bayar();
         return;
       }
       if (e.key === 'PageDown' || e.key === 'PageUp') {
@@ -652,52 +748,68 @@ export default function KasirScreen() {
       {/* ========================= SUB-RIBBON ========================== */}
       <div className="sub-ribbon">
         <span className="rb-label">Penjualan Kasir</span>
-        <RbBtn kbd="F9" label="Baru" Icon={FilePlus2} onClick={resetForm} />
+        <RbBtn
+          kbd="F9"
+          label="Baru"
+          Icon={FilePlus2}
+          onClick={() => ui.run(resetForm, 'kasir-baru')}
+          disabled={ui.locked('kasir-baru')}
+        />
         <RbBtn
           kbd="F5"
           label="Perangguh"
           Icon={BookmarkPlus}
-          onClick={() => setSavePendOpen(true)}
-          disabled={!lines.length}
+          onClick={() => ui.run(() => setSavePendOpen(true), 'kasir-f5')}
+          disabled={!lines.length || pendingGuard.busy || ui.locked('kasir-f5')}
         />
         <RbBtn
           kbd="F6"
           label="Daftar Pending"
           Icon={BookOpen}
-          onClick={() => setPendListOpen(true)}
+          onClick={() => ui.run(() => setPendListOpen(true), 'kasir-f6')}
+          disabled={ui.locked('kasir-f6')}
         />
-        <RbBtn kbd="F8" label="Kode Item" Icon={CornerDownLeft} onClick={fokusKode} />
+        <RbBtn
+          kbd="F8"
+          label="Kode Item"
+          Icon={CornerDownLeft}
+          onClick={() => ui.run(fokusKode, 'kasir-f8')}
+          disabled={ui.locked('kasir-f8')}
+        />
         <RbBtn
           kbd="F10"
           label="Cari Barang"
           Icon={List}
-          onClick={() => setListBarangOpen(true)}
+          onClick={() => ui.run(() => setListBarangOpen(true), 'kasir-f10')}
+          disabled={ui.locked('kasir-f10')}
         />
 
         <span className="rb-sep" />
 
         <button
           type="button"
-          onClick={() => void bayar()}
-          disabled={!lines.length || saving}
+          onClick={klikBayar}
+          disabled={!lines.length || bayarGuard.busy || saving}
+          data-loading={bayarGuard.busy}
           className="rb-btn-go"
         >
+          {bayarGuard.busy || saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Bayar
           <span className="kbd !border-white/40 !bg-white/20 !text-white">End</span>
         </button>
         <RbBtn
           label="Cetak"
           Icon={Printer}
-          onClick={() => window.print()}
-          disabled={!success}
+          onClick={() => ui.run(() => window.print(), 'kasir-cetak')}
+          disabled={!success || ui.locked('kasir-cetak')}
         />
         <RbBtn
           kbd="Esc"
           label="Batal"
           Icon={X}
           tone="danger"
-          onClick={() => setCancelOpen(true)}
-          disabled={!lines.length}
+          onClick={() => ui.run(() => setCancelOpen(true), 'kasir-batal')}
+          disabled={!lines.length || ui.locked('kasir-batal')}
         />
 
         <span className="ml-auto hidden shrink-0 items-center gap-2 pr-1 text-[11.5px] text-[#7a8ba0] sm:flex">
@@ -821,8 +933,10 @@ export default function KasirScreen() {
               </select>
               <button
                 type="button"
-                onClick={() => setTambahPlgOpen(true)}
+                onClick={() => ui.run(() => setTambahPlgOpen(true), 'kasir-plg')}
+                disabled={ui.locked('kasir-plg')}
                 title="Tambah pelanggan"
+                aria-label="Tambah pelanggan"
                 className="h-8 w-8 shrink-0 rounded border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
               >
                 +
@@ -963,8 +1077,10 @@ export default function KasirScreen() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => hapusBaris(i)}
+                        onClick={() => ui.run(() => hapusBaris(i), `hapus-baris-${i}`)}
+                        disabled={ui.locked(`hapus-baris-${i}`)}
                         title="Hapus baris"
+                        aria-label={`Hapus baris ${i + 1}`}
                         className="grid h-6 w-6 place-items-center rounded text-[#9fb0c4] transition hover:bg-[#ffe8e8] hover:text-[#e03131]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1057,24 +1173,31 @@ export default function KasirScreen() {
           </div>
 
           <div className="flex gap-1.5">
-            <button type="button" className="rb-btn h-11" onClick={setTunaiOtomatis} disabled={!lines.length}>
+            <button
+              type="button"
+              className="rb-btn h-11"
+              onClick={() => ui.run(setTunaiOtomatis, 'kasir-uang-pas')}
+              disabled={!lines.length || ui.locked('kasir-uang-pas')}
+            >
               Uang Pas
             </button>
             <button
               type="button"
               className="rb-btn h-11"
-              onClick={resetBayar}
-              disabled={totalBayar === 0}
+              onClick={() => ui.run(resetBayar, 'kasir-kosongkan')}
+              disabled={totalBayar === 0 || ui.locked('kasir-kosongkan')}
             >
               Kosongkan
             </button>
             <button
               type="button"
               className="rb-btn-go !h-11 !px-6"
-              onClick={() => void bayar()}
-              disabled={!lines.length || saving || kurang > 0}
+              onClick={klikBayar}
+              disabled={!lines.length || bayarGuard.busy || saving || kurang > 0}
+              data-loading={bayarGuard.busy}
             >
-              {saving ? 'Menyimpan…' : 'Simpan & Bayar'}
+              {bayarGuard.busy || saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {bayarGuard.busy || saving ? 'Menyimpan…' : 'Simpan & Bayar'}
             </button>
           </div>
         </div>
@@ -1103,11 +1226,23 @@ export default function KasirScreen() {
         width="max-w-sm"
         footer={
           <>
-            <button type="button" className="btn-outline" onClick={() => setSavePendOpen(false)}>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setSavePendOpen(false)}
+              disabled={pendingGuard.busy}
+            >
               Batal
             </button>
-            <button type="button" className="btn-primary" onClick={simpanPendingSekarang}>
-              Simpan
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={simpanPendingSekarang}
+              disabled={pendingGuard.busy}
+              data-loading={pendingGuard.busy}
+            >
+              {pendingGuard.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {pendingGuard.busy ? 'Menyimpan…' : 'Simpan'}
             </button>
           </>
         }
@@ -1152,13 +1287,20 @@ export default function KasirScreen() {
                     {p.at} · {p.customer} · {p.lines.length} baris
                   </p>
                 </div>
-                <button type="button" className="rb-btn" onClick={() => lanjutPending(p)}>
+                <button
+                  type="button"
+                  className="rb-btn"
+                  onClick={() => ui.run(() => lanjutPending(p), `pending-lanjut-${p.id}`)}
+                  disabled={ui.locked(`pending-lanjut-${p.id}`)}
+                >
                   Lanjut
                 </button>
                 <button
                   type="button"
-                  onClick={() => hapusPending(p.id)}
+                  onClick={() => ui.run(() => hapusPending(p.id), `pending-hapus-${p.id}`)}
+                  disabled={ui.locked(`pending-hapus-${p.id}`)}
                   title="Hapus pending"
+                  aria-label={`Hapus pending ${p.note}`}
                   className="grid h-8 w-8 place-items-center rounded border border-[#e9b3b3] bg-white text-[#c92a2a] transition hover:bg-[#fff5f5]"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -1184,9 +1326,17 @@ export default function KasirScreen() {
               type="button"
               className="btn-danger"
               onClick={() => {
-                resetForm();
-                setCancelOpen(false);
-                toast.info('Transaksi dibatalkan', 'Keranjang dikosongkan.');
+                // `ui.run` mengembalikan false bila dikunci — jadi pembatalan
+                // tidak bisa terjadi dua kali dari satu klik ganda.
+                if (
+                  !ui.run(() => {
+                    resetForm();
+                    setCancelOpen(false);
+                    toast.info('Transaksi dibatalkan', 'Keranjang dikosongkan.');
+                  }, 'konfirmasi-batal')
+                ) {
+                  toast.info('Mohon tunggu…', 'Tindakan sebelumnya sedang diproses.');
+                }
               }}
             >
               Ya, Batalkan
@@ -1209,7 +1359,12 @@ export default function KasirScreen() {
             <button type="button" className="btn-outline" onClick={() => setSuccess(null)}>
               Selesai
             </button>
-            <button type="button" className="btn-primary" onClick={() => window.print()}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => ui.run(() => window.print(), 'cetak-struk')}
+              disabled={ui.locked('cetak-struk')}
+            >
               <Printer className="h-4 w-4" /> Cetak Struk
             </button>
           </>

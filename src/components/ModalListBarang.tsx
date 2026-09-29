@@ -26,6 +26,15 @@ export function ModalListBarang({
   const [q, setQ] = React.useState('');
   const [cursor, setCursor] = React.useState(0);
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const lockRef = React.useRef(false);
+  const timerRef = React.useRef<number | null>(null);
+
+  React.useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
 
   React.useEffect(() => {
     if (open) {
@@ -57,6 +66,15 @@ export function ModalListBarang({
   }, [hasil.length, cursor]);
 
   function pilih(p: Product) {
+    // Kunci singkat: mencegah klik-ganda tidak sengaja menambah item dua kali,
+    // tapi tetap cukup cepat untuk input beruntun.
+    if (lockRef.current) return;
+    lockRef.current = true;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      lockRef.current = false;
+    }, 500);
+
     onPilih(p);
     // Modal tetap terbuka supaya kasir bisa menambahkan beberapa item beruntun.
     searchRef.current?.focus();

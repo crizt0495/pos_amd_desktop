@@ -1,12 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { Ban, BarChart3, Eye, Printer, RefreshCw, TrendingUp } from 'lucide-react';
+import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp } from 'lucide-react';
 
 import { reportsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
 import { buildReceiptFromTx, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
+import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import { Modal } from '@/components/Modal';
 import { ReceiptView } from '@/components/Receipt';
 import { PAYMENT_METHOD_LABEL } from '@/lib/types';
@@ -51,7 +52,10 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   } | null>(null);
   const [printData, setPrintData] = React.useState<ReceiptData | null>(null);
   const [voiding, setVoiding] = React.useState<Transaction | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  // Kunci pembatalan transaksi agar tak terkirim dua kali.
+  const voidGuard = useButtonGuard();
+  // Kunci tombol ringan (buka detail, cetak, preset) tanpa spinner.
+  const ui = useClickCooldown(1500);
 
   const range = preset === 'all' ? {} : { from, to };
 
@@ -104,41 +108,45 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
     setDetail({ tx: res.data.transaction, items: res.data.items });
   }
 
-  async function cetak(tx: Transaction) {
-    setBusy(true);
-    try {
-      const res = await transactionsApi.get(tx.id);
-      if (!res.ok) {
-        toast.error('Gagal memuat transaksi', res.error);
-        return;
-      }
-      if (!res.data.transaction) {
-        toast.error('Transaksi tidak ditemukan', tx.invoice_no);
-        return;
-      }
-      const store: StoreMeta = await loadStoreMeta(tx.cashier_name || 'KasirPro');
-      const receipt = buildReceiptFromTx(res.data.transaction, res.data.items, store);
-      setPrintData(receipt);
-    } finally {
-      setBusy(false);
+  /** Buka pratinjau struk satu transaksi (dijalankan lewat `ui.run`). */
+  async function bukaCetak(tx: Transaction) {
+    const res = await transactionsApi.get(tx.id);
+    if (!res.ok) {
+      toast.error('Gagal memuat transaksi', res.error);
+      return;
     }
+    if (!res.data.transaction) {
+      toast.error('Transaksi tidak ditemukan', tx.invoice_no);
+      return;
+    }
+    const store: StoreMeta = await loadStoreMeta(tx.cashier_name || 'KasirPro');
+    const receipt = buildReceiptFromTx(res.data.transaction, res.data.items, store);
+    setPrintData(receipt);
   }
 
   async function batalkan(tx: Transaction) {
-    setBusy(true);
-    try {
-      const res = await transactionsApi.void(tx.id);
-      if (!res.ok) {
-        toast.error('Gagal membatalkan transaksi', res.error);
-        return;
-      }
-      toast.ok('Transaksi dibatalkan', 'Stok produk sudah dikembalikan.');
-      setVoiding(null);
-      onVoid?.(tx.invoice_no);
-      await load();
-    } finally {
-      setBusy(false);
+    const res = await transactionsApi.void(tx.id);
+    if (!res.ok) {
+      toast.error('Gagal membatalkan transaksi', res.error);
+      return;
     }
+    toast.ok('Transaksi dibatalkan', 'Stok produk sudah dikembalikan.');
+    setVoiding(null);
+    onVoid?.(tx.invoice_no);
+    await load();
+  }
+
+  /** Pembatalan transaksi: satu klik = satu void (klik ganda ditolak). */
+  function klikBatalkan(tx: Transaction) {
+    if (voidGuard.busy) {
+      toast.info('Mohon tunggu…', 'Transaksi sedang dibatalkan.');
+      return;
+    }
+    void voidGuard.guard(() => batalkan(tx), {
+      cooldownMs: 2000,
+      pesanTunggu: 'Transaksi sedang dibatalkan…',
+      onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
+    });
   }
 
   const omzetMax = Math.max(1, ...daily.map((d) => d.omzet));
@@ -161,7 +169,8 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           <button
             key={p.key}
             type="button"
-            onClick={() => pilihPreset(p)}
+            onClick={() => ui.run(() => pilihPreset(p), `preset-${p.key}`)}
+            disabled={ui.locked(`preset-${p.key}`)}
             className={`rb-btn !h-7 !px-2 !text-[11.5px] ${
               preset === p.key ? '!border-[#1b5fa8] !bg-[#e8f1fa] !text-[#134a85]' : ''
             }`}
@@ -204,7 +213,12 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           />
         </div>
 
-        <button type="button" className="btn-outline h-8 px-3" onClick={() => window.print()}>
+        <button
+          type="button"
+          className="btn-outline h-8 px-3"
+          onClick={() => ui.run(() => window.print(), 'cetak-laporan')}
+          disabled={ui.locked('cetak-laporan')}
+        >
           <Printer className="h-3.5 w-3.5" /> Cetak Laporan
         </button>
       </div>
@@ -351,15 +365,17 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                           <button
                             type="button"
                             className="btn-ghost px-2 py-1 text-[11.5px]"
-                            onClick={() => void lihat(tx)}
+                            onClick={() => ui.run(() => void lihat(tx), `lihat-${tx.id}`)}
+                            disabled={ui.locked(`lihat-${tx.id}`)}
                           >
                             <Eye className="h-3.5 w-3.5" /> Detail
                           </button>
                           <button
                             type="button"
                             className="btn-ghost px-2 py-1 text-[11.5px]"
-                            onClick={() => void cetak(tx)}
-                            disabled={busy || tx.status === 'void'}
+                            onClick={() => ui.run(() => void bukaCetak(tx), `cetak-${tx.id}`)}
+                            disabled={ui.locked(`cetak-${tx.id}`) || voidGuard.busy || tx.status === 'void'}
+                            aria-label={`Cetak struk ${tx.invoice_no}`}
                           >
                             <Printer className="h-3.5 w-3.5" />
                           </button>
@@ -367,7 +383,9 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                             <button
                               type="button"
                               className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
-                              onClick={() => setVoiding(tx)}
+                              onClick={() => ui.run(() => setVoiding(tx), `void-${tx.id}`)}
+                              disabled={ui.locked(`void-${tx.id}`)}
+                              aria-label={`Batalkan transaksi ${tx.invoice_no}`}
                             >
                               <Ban className="h-3.5 w-3.5" />
                             </button>
@@ -442,7 +460,12 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
             <button type="button" className="btn-outline" onClick={() => setPrintData(null)}>
               Tutup
             </button>
-            <button type="button" className="btn-primary" onClick={() => window.print()}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => ui.run(() => window.print(), 'cetak-struk')}
+              disabled={ui.locked('cetak-struk')}
+            >
               <Printer className="h-4 w-4" /> Cetak Struk
             </button>
           </>
@@ -459,11 +482,23 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
         width="max-w-sm"
         footer={
           <>
-            <button type="button" className="btn-outline" onClick={() => setVoiding(null)}>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setVoiding(null)}
+              disabled={voidGuard.busy}
+            >
               Batal
             </button>
-            <button type="button" className="btn-danger" onClick={() => void batalkan(voiding!)} disabled={busy}>
-              {busy ? 'Memproses...' : 'Ya, Batalkan'}
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => voiding && klikBatalkan(voiding)}
+              disabled={voidGuard.busy}
+              data-loading={voidGuard.busy}
+            >
+              {voidGuard.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {voidGuard.busy ? 'Memproses…' : 'Ya, Batalkan'}
             </button>
           </>
         }

@@ -3,13 +3,23 @@
  * Bentuk data ini sesuai kolom tabel supabase/schema.sql.
  */
 
-/** Varian satuan: harga jual/pokok & konversi per satuan (mis. Pcs vs Dus/6). */
+/** Varian satuan: harga jual/pokok & konversi per satuan (mis. Pcs vs Dus/6).
+ *
+ *  Bentuk ini yang disimpan di `kasir_products.variants` dan `satuan_list`
+ *  (jsonb). Baris pertama = satuan dasar (konversi 1) dan dipakai untuk stok.
+ *  `harga_pokok` hanya dibaca sebagai alias lama (v1 memakai nama itu);
+ *  data baru selalu ditulis dengan `harga_beli`.
+ */
 export interface ProductVariant {
   satuan: string;
+  /** Harga beli/modal per satuan ini. */
+  harga_beli: number;
+  /** Harga jual per satuan ini. */
   harga_jual: number;
-  harga_pokok: number;
-  /** Berapa satuan dasar dalam 1 varian ini (Dus/6 = 6). */
+  /** Berapa satuan dasar dalam 1 varian ini (Dus/6 = 6). Baris dasar = 1. */
   konversi: number;
+  /** Barcode khusus satuan ini; kosong = pakai barcode utama produk. */
+  barcode?: string;
 }
 
 export interface Product {
@@ -34,12 +44,15 @@ export type ProductInput = {
   barcode?: string | null;
   name: string;
   category?: string;
+  /** Harga jual satuan dasar. Diisi dari varian baris pertama. */
   price: number;
+  /** Harga modal satuan dasar. Diisi dari varian baris pertama. */
   cost: number;
   stock: number;
   min_stock?: number;
+  /** Satuan dasar. Diisi dari varian baris pertama. */
   unit?: string;
-  satuanList?: string[];
+  /** Daftar varian (dari tabel satuan). */
   variants?: ProductVariant[];
   is_active?: boolean;
 };
