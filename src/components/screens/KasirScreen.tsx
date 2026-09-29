@@ -97,6 +97,10 @@ export default function KasirScreen() {
   const scanRef = React.useRef<HTMLInputElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
+  /* Flash baris saat barang ditambahkan — kasir langsung tahu scan berhasil. */
+  const flashTimer = React.useRef<number | null>(null);
+  const [flashKey, setFlashKey] = React.useState<string | null>(null);
+
   const totals = hitungTotal(cart, 'none', 0);
   const paid = paidInput.trim() === '' ? totals.total : Math.max(0, Number(paidInput) || 0);
   const change = hitungKembali(totals.total, paid);
@@ -154,6 +158,10 @@ export default function KasirScreen() {
           stock: p.stock,
         }),
       );
+      // Kilatkan baris produk ini sesaat sebagai umpan balik scan.
+      setFlashKey(p.id);
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlashKey(null), 800);
       setPaidInput('');
       focusScan();
     },
@@ -200,6 +208,15 @@ export default function KasirScreen() {
     e.preventDefault();
     const code = scanText.trim();
     if (!code) return;
+
+    // Cari di memori dulu (produk sudah dimuat) — instan tanpa nunggu jaringan.
+    const lokal = products.find((p) => (p.barcode ?? '').toLowerCase() === code.toLowerCase());
+    if (lokal) {
+      addProduct(lokal, scanQty);
+      setScanText('');
+      focusScan();
+      return;
+    }
 
     const byBarcode = await productsApi.findByBarcode(code);
     if (byBarcode.ok && byBarcode.data) {
@@ -572,8 +589,12 @@ export default function KasirScreen() {
               const rugi = line.price < line.cost;
               const jumlah = line.price * line.qty;
               const units = line.satuanList.length ? line.satuanList : [line.unit];
+              const kilat = !rugi && line.product_id === flashKey;
               return (
-                <tr key={`${line.product_id ?? line.name}-${i}`} className={rugi ? 'bg-red-100' : 'bg-white'}>
+                <tr
+                  key={`${line.product_id ?? line.name}-${i}`}
+                  className={`transition-colors duration-300 ${rugi ? 'bg-red-100' : kilat ? 'bg-yellow-100' : 'bg-white'}`}
+                >
                   <td className="tnum border-2 border-black px-1 py-1 text-center">{i + 1}</td>
                   <td className="border-2 border-black px-2 py-1">
                     <div className="flex items-start justify-between gap-1">
@@ -601,7 +622,7 @@ export default function KasirScreen() {
                         type="button"
                         aria-label="Kurangi qty"
                         title="Kurangi"
-                        className="h-5 w-5 shrink-0 border-2 border-black bg-gray-100 text-[12px] font-bold leading-none hover:bg-yellow-100"
+                        className="h-6 w-6 shrink-0 border-2 border-black bg-gray-100 text-[13px] font-bold leading-none hover:bg-yellow-100"
                         onClick={() => setLineQty(i, line.qty - 1)}
                       >
                         −
@@ -617,7 +638,7 @@ export default function KasirScreen() {
                         type="button"
                         aria-label="Tambah qty"
                         title="Tambah"
-                        className="h-5 w-5 shrink-0 border-2 border-black bg-gray-100 text-[12px] font-bold leading-none hover:bg-yellow-100"
+                        className="h-6 w-6 shrink-0 border-2 border-black bg-gray-100 text-[13px] font-bold leading-none hover:bg-yellow-100"
                         onClick={() => setLineQty(i, line.qty + 1)}
                       >
                         +
@@ -755,12 +776,12 @@ export default function KasirScreen() {
                         onMouseEnter={() => setSearchActive(i)}
                         onClick={() => p.stock > 0 && pilihDariCari(p)}
                       >
-                        <td className="border-b border-zinc-200 px-2 py-1 font-semibold">{p.name}</td>
-                        <td className="border-b border-zinc-200 px-2 py-1">{p.barcode ?? '-'}</td>
-                        <td className="tnum border-b border-zinc-200 px-2 py-1 text-right">
+                        <td className="border-b border-zinc-200 px-2 py-1.5 font-semibold">{p.name}</td>
+                        <td className="border-b border-zinc-200 px-2 py-1.5">{p.barcode ?? '-'}</td>
+                        <td className="tnum border-b border-zinc-200 px-2 py-1.5 text-right">
                           {p.stock <= 0 ? 'HABIS' : rupiah(p.price)}
                         </td>
-                        <td className="tnum border-b border-zinc-200 px-2 py-1 text-right">
+                        <td className="tnum border-b border-zinc-200 px-2 py-1.5 text-right">
                           {p.stock} {p.unit}
                         </td>
                       </tr>
