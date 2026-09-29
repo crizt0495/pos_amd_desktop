@@ -4,7 +4,7 @@
 --  PUBLIK: aplikasi kasir web. Data milik per user (auth.uid()), RLS aktif.
 --  Bagian:
 --    1. Tabel  : kasir_products, kasir_transactions, kasir_transaction_items,
---                kasir_settings
+--                kasir_settings, kasir_customers
 --    2. RLS    : policies select/insert/update/delete berdasar user_id
 --    3. RPC    : transaksi atomik (create/void) + laporan
 --
@@ -26,10 +26,11 @@ create table if not exists public.kasir_products (
   cost       numeric not null default 0 check (cost >= 0),
   stock      numeric not null default 0,
   min_stock  numeric not null default 0,
-  unit       text not null default 'pcs',
-  is_active  boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  unit        text not null default 'pcs',
+  satuan_list jsonb not null default '[]',
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
 
 create index if not exists kasir_products_user      on public.kasir_products (user_id);
@@ -51,6 +52,7 @@ create table if not exists public.kasir_transactions (
   payment_method  text not null default 'cash',
   note            text,
   cashier_name    text,
+  customer_name   text,
   status          text not null default 'completed',
   created_at      timestamptz not null default now(),
   unique (user_id, invoice_no)
@@ -82,6 +84,21 @@ create table if not exists public.kasir_settings (
   value    jsonb,
   primary key (user_id, key)
 );
+
+-- Migrasi kolom baru untuk database yang sudah terisi (idempotent).
+alter table public.kasir_products     add column if not exists satuan_list   jsonb not null default '[]';
+alter table public.kasir_transactions add column if not exists customer_name text;
+
+-- Pelanggan (dropdown "Pelanggan" di layar Kasir; default "Umum").
+create table if not exists public.kasir_customers (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists kasir_customers_user_name on public.kasir_customers (user_id, lower(name));
+create index if not exists kasir_customers_user on public.kasir_customers (user_id);
 
 -- ----------------------------------------------------------------------------
 -- 2. ROW LEVEL SECURITY
@@ -148,12 +165,29 @@ drop policy if exists kasir_settings_delete on public.kasir_settings;
 create policy kasir_settings_delete on public.kasir_settings
   for delete using (user_id = auth.uid());
 
+-- kasir_customers
+alter table public.kasir_customers enable row level security;
+drop policy if exists kasir_customers_select on public.kasir_customers;
+create policy kasir_customers_select on public.kasir_customers
+  for select using (user_id = auth.uid());
+drop policy if exists kasir_customers_insert on public.kasir_customers;
+create policy kasir_customers_insert on public.kasir_customers
+  for insert with check (user_id = auth.uid());
+drop policy if exists kasir_customers_update on public.kasir_customers;
+create policy kasir_customers_update on public.kasir_customers
+  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists kasir_customers_delete on public.kasir_customers;
+create policy kasir_customers_delete on public.kasir_customers
+  for delete using (user_id = auth.uid());
+
 -- ----------------------------------------------------------------------------
 -- 3. RPC — TRANSAKSI (atomik)
 -- ----------------------------------------------------------------------------
 
 -- Simpan transaksi + item + potong stok dalam SATU transaksi database.
 -- Menghitung ulang semua total dari keranjang (tidak percaya nilai klien).
+-- (buang overload lama 7-param yang tak menyimpan customer_name)
+drop function if exists public.kasir_create_transaction(jsonb, text, numeric, text, numeric, text, text);
 create or replace function public.kasir_create_transaction(
   p_lines          jsonb,
   p_discount_type  text,
@@ -161,7 +195,8 @@ create or replace function public.kasir_create_transaction(
   p_payment_method text,
   p_paid           numeric,
   p_note           text,
-  p_cashier_name   text
+  p_cashier_name   text,
+  p_customer_name  text default null
 )
 returns jsonb
 language plpgsql
@@ -224,12 +259,14 @@ begin
 
   insert into public.kasir_transactions
     (user_id, invoice_no, subtotal, discount_type, discount_value, discount_amount,
-     total, total_cost, paid, change_due, payment_method, note, cashier_name, status)
+     total, total_cost, paid, change_due, payment_method, note, cashier_name,
+     customer_name, status)
   values
     (v_user, v_invoice, v_subtotal, coalesce(p_discount_type, 'none'),
      coalesce(p_discount_value, 0), v_discount, v_total, v_total_cost,
      v_paid, v_change, coalesce(p_payment_method, 'cash'),
-     nullif(coalesce(p_note, ''), ''), coalesce(p_cashier_name, 'Kasir'), 'completed')
+     nullif(coalesce(p_note, ''), ''), coalesce(p_cashier_name, 'Kasir'),
+     nullif(coalesce(p_customer_name, ''), ''), 'completed')
   returning id into v_tx_id;
 
   for v_item in select * from jsonb_array_elements(p_lines) loop

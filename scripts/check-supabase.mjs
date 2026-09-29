@@ -71,7 +71,7 @@ async function main() {
   }
 
   console.log('\n2. Tabel kasir_*');
-  for (const table of ['kasir_products', 'kasir_transactions', 'kasir_transaction_items', 'kasir_settings', 'kasir_license_accounts']) {
+  for (const table of ['kasir_products', 'kasir_transactions', 'kasir_transaction_items', 'kasir_settings', 'kasir_customers', 'kasir_license_accounts']) {
     const { error } = await sb.from(table).select('*', { count: 'exact', head: true }).limit(1);
     if (error) bad(`Tabel ${table}: ${error.message} (jalankan supabase/schema.sql di SQL Editor)`);
     else ok(`Tabel ${table} ada`);
@@ -79,7 +79,7 @@ async function main() {
 
   console.log('\n3. RPC transaksi');
   for (const [fn, args] of [
-    ['kasir_create_transaction', { p_lines: [], p_discount_type: 'none', p_discount_value: 0, p_payment_method: 'cash', p_paid: 0, p_note: null, p_cashier_name: 'x' }],
+    ['kasir_create_transaction', { p_lines: [], p_discount_type: 'none', p_discount_value: 0, p_payment_method: 'cash', p_paid: 0, p_note: null, p_cashier_name: 'x', p_customer_name: null }],
     ['kasir_void_transaction', { p_tx_id: '00000000-0000-0000-0000-000000000000' }],
   ]) {
     const { error } = await sb.rpc(fn, args);

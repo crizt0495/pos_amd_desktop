@@ -1,5 +1,7 @@
 import { createClient } from './supabase/client';
+import { isoHariIni } from './format';
 import type {
+  Customer,
   DailyReport,
   PaymentReport,
   Product,
@@ -36,12 +38,13 @@ const num = (v: unknown): number => Number(v ?? 0);
 
 function mapProduct(r: Record<string, unknown>): Product {
   return {
-    ...(r as unknown as Omit<Product, 'price' | 'cost' | 'stock' | 'min_stock' | 'is_active'>),
+    ...(r as unknown as Omit<Product, 'price' | 'cost' | 'stock' | 'min_stock' | 'is_active' | 'satuanList'>),
     price: num(r.price),
     cost: num(r.cost),
     stock: num(r.stock),
     min_stock: num(r.min_stock),
     is_active: Boolean(r.is_active),
+    satuanList: Array.isArray(r.satuan_list) ? (r.satuan_list as unknown[]).map(String) : [],
   };
 }
 
@@ -165,6 +168,7 @@ export const productsApi = {
         min_stock: num(data.min_stock ?? 0),
         unit: String(data.unit ?? 'pcs').trim() || 'pcs',
         is_active: data.is_active === false ? false : true,
+        ...(Array.isArray(data.satuanList) ? { satuan_list: data.satuanList.map(String) } : {}),
       };
       if (!row.name) return { ok: false, error: 'Nama produk wajib diisi.' };
       const { data: created, error } = await createClient().from('kasir_products').insert(row).select().single();
@@ -190,6 +194,7 @@ export const productsApi = {
       if (data.min_stock !== undefined) patch.min_stock = num(data.min_stock);
       if (data.unit !== undefined) patch.unit = String(data.unit).trim() || 'pcs';
       if (data.is_active !== undefined) patch.is_active = Boolean(data.is_active);
+      if (data.satuanList !== undefined) patch.satuan_list = data.satuanList.map(String);
       patch.updated_at = new Date().toISOString();
 
       const { data: updated, error } = await createClient()
@@ -236,26 +241,56 @@ const SAMPLES = [
 export async function ensureSeeded(): Promise<void> {
   try {
     const uid = await currentUserId();
+
     const { count } = await createClient()
       .from('kasir_products')
       .select('id', { count: 'exact', head: true });
-    if (count && count > 0) return;
+    if (count && count > 0) {
+      // tetap pastikan satuan_list terisi untuk produk lama
+    } else {
+      await createClient().from('kasir_products').insert(
+        SAMPLES.map(([barcode, name, category, price, cost, stock, min_stock, unit]) => ({
+          user_id: uid,
+          barcode,
+          name,
+          category,
+          price,
+          cost,
+          stock,
+          min_stock,
+          unit,
+          satuan_list: ['Pcs', 'Dus/6', 'Pack'],
+        })),
+      );
+    }
 
-    await createClient().from('kasir_products').insert(
-      SAMPLES.map(([barcode, name, category, price, cost, stock, min_stock, unit]) => ({
-        user_id: uid,
-        barcode,
-        name,
-        category,
-        price,
-        cost,
-        stock,
-        min_stock,
-        unit,
-      })),
-    );
+    const { count: cCount } = await createClient()
+      .from('kasir_customers')
+      .select('id', { count: 'exact', head: true });
+    if (!cCount) {
+      await createClient().from('kasir_customers').insert({ user_id: uid, name: 'Umum' });
+    }
   } catch {
-    /* abaikan — produk contoh tidak wajib */
+    /* abaikan — data contoh tidak wajib */
+  }
+}
+
+/** Pratinjau no-nota harian berikutnya: INV-YYYYMMDD-0001 (angka asli dibuat RPC). */
+export async function nextInvoicePreview(): Promise<string> {
+  try {
+    const today = isoHariIni().replace(/-/g, '');
+    const { data, error } = await createClient()
+      .from('kasir_transactions')
+      .select('invoice_no')
+      .like('invoice_no', `INV-${today}-%`)
+      .order('invoice_no', { ascending: false })
+      .limit(1);
+    if (error || !data || data.length === 0) return `INV-${today}-0001`;
+    const last = String(data[0]?.invoice_no ?? '');
+    const n = Number(last.split('-').pop() ?? 0) || 0;
+    return `INV-${today}-${String(n + 1).padStart(4, '0')}`;
+  } catch {
+    return 'INV-…';
   }
 }
 
@@ -281,6 +316,7 @@ export const transactionsApi = {
     paid: number;
     note?: string | null;
     cashierName: string;
+    customerName?: string;
   }): Promise<Result<CreatedTx>> {
     try {
       const { data: result, error } = await createClient().rpc('kasir_create_transaction', {
@@ -291,6 +327,7 @@ export const transactionsApi = {
         p_paid: num(data.paid),
         p_note: data.note ?? null,
         p_cashier_name: data.cashierName,
+        p_customer_name: data.customerName ?? null,
       });
       if (error) return { ok: false, error: error.message };
       const body = result as { transaction: Record<string, unknown>; totals?: Record<string, unknown>; changeDue?: number };
@@ -501,6 +538,59 @@ export const settingsApi = {
         .upsert({ user_id: uid, key, value: JSON.parse(JSON.stringify(value)) }, { onConflict: 'user_id,key' });
       if (error) return { ok: false, error: error.message };
       return { ok: true, data: value };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
+/* ------------------------------- pelanggan ------------------------------ */
+
+export const customersApi = {
+  async list(): Promise<Result<Customer[]>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_customers')
+        .select('id, name, created_at')
+        .order('name', { ascending: true });
+      if (error) return { ok: false, error: error.message };
+      return {
+        ok: true,
+        data: (data ?? []).map((r) => ({ id: String(r.id), name: String(r.name) })),
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async add(name: string): Promise<Result<Customer>> {
+    const clean = name.trim();
+    if (!clean) return { ok: false, error: 'Nama pelanggan wajib diisi.' };
+    try {
+      const { data: existing } = await createClient()
+        .from('kasir_customers')
+        .select('id, name')
+        .eq('name', clean)
+        .maybeSingle();
+      if (existing) return { ok: true, data: { id: String(existing.id), name: String(existing.name) } };
+
+      const { data, error } = await createClient()
+        .from('kasir_customers')
+        .insert({ user_id: await currentUserId(), name: clean })
+        .select()
+        .single();
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: { id: String(data.id), name: String(data.name) } };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async remove(id: string): Promise<Result<{ id: string }>> {
+    try {
+      const { error } = await createClient().from('kasir_customers').delete().eq('id', id);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: { id } };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

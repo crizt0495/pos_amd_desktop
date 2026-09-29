@@ -13,6 +13,7 @@ export interface Product {
   stock: number;
   min_stock: number;
   unit: string;
+  satuanList: string[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -27,12 +28,18 @@ export type ProductInput = {
   stock: number;
   min_stock?: number;
   unit?: string;
+  satuanList?: string[];
   is_active?: boolean;
 };
 
 export type DiscountType = 'none' | 'percent' | 'fixed';
 export type PaymentMethod = 'cash' | 'qris' | 'transfer' | 'debit' | 'credit';
 export type TxStatus = 'completed' | 'void';
+
+export interface Customer {
+  id: string;
+  name: string;
+}
 
 export interface CartLine {
   product_id: string | null;
@@ -43,6 +50,8 @@ export interface CartLine {
   qty: number;
   discount: number;
   unit: string;
+  /** Daftar satuan yang bisa dipilih (dari produk atau default). */
+  satuanList: string[];
   /** Stok saat ditambahkan (untuk membatasi tombol +). */
   stock: number | null;
 }
@@ -61,6 +70,7 @@ export interface Transaction {
   payment_method: PaymentMethod;
   note: string | null;
   cashier_name: string | null;
+  customer_name: string | null;
   status: TxStatus;
   created_at: string;
 }

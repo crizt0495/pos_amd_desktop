@@ -61,6 +61,16 @@ export function isoHariLalu(n: number): string {
 
 /* ------------------------------- keranjang ------------------------------ */
 
+/** Daftar satuan yang bisa dipilih pada satu produk (baris keranjang).
+ *  Prioritas: satuan_list produk; fallback default [Pcs, Dus/6, Pack] + unit. */
+export function satuanOptions(p: { unit?: string | null; satuanList?: string[] }): string[] {
+  const base = Array.isArray(p.satuanList) && p.satuanList.length
+    ? p.satuanList.map(String)
+    : ['Pcs', 'Dus/6', 'Pack'];
+  if (p.unit && !base.includes(p.unit)) base.unshift(p.unit);
+  return base.length ? base : ['Pcs'];
+}
+
 export function hitungTotal(
   lines: CartLine[],
   discountType: DiscountType,
