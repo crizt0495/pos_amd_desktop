@@ -312,6 +312,46 @@
   .grand-total {
     @apply tnum font-bold leading-none text-accent-600;
   }
+
+  /* Input nominal (format ribuan; mentah saat difokus) */
+  .uang-input {
+    @apply rounded border border-[#cdd8e6] bg-white outline-none transition
+      focus:border-[#1b5fa8] focus:shadow-[0_0_0_2px_rgba(27,95,168,0.14)];
+  }
+}
+
+/* ---------------------------- autocomplete ---------------------------- */
+/* Dropdown saran di bawah kolom Kode Item (ala iPOS: daftar barang muncul
+   saat kode/nama diketik). */
+
+.ac-panel {
+  @apply absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-auto rounded border
+    border-[#1b5fa8] bg-white py-0.5 shadow-[0_8px_24px_rgba(27,58,92,0.18)];
+}
+
+.ac-item {
+  @apply flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] text-[#22374b]
+    transition;
+}
+
+.ac-item-active {
+  @apply bg-[#eaf2fb];
+}
+
+.ac-kode {
+  @apply w-[86px] shrink-0 truncate font-mono text-[11px] text-[#7a8ba0];
+}
+
+.ac-nama {
+  @apply min-w-0 flex-1 truncate font-semibold;
+}
+
+.ac-meta {
+  @apply tnum shrink-0 text-[11px] text-[#9fb0c4];
+}
+
+.ac-harga {
+  @apply tnum w-[84px] shrink-0 text-right font-bold text-[#1b3a5c];
 }
 
 /* ------------------------------------------------------------------ */

@@ -35,7 +35,12 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${width} animate-pop-in overflow-hidden rounded-xl bg-white shadow-[0_20px_50px_rgba(16,40,70,0.28)]`}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`w-full ${width} animate-pop-in overflow-hidden rounded-xl bg-white shadow-[0_20px_50px_rgba(16,40,70,0.28)]`}
+      >
         <div className="flex items-center justify-between bg-gradient-to-r from-[#2470c0] to-[#134a85] px-5 py-3">
           <h2 className="text-[14px] font-bold text-white">{title}</h2>
           <button

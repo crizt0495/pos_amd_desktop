@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
+import { CartProvider } from '@/lib/cart-store';
 import { ToastProvider } from '@/components/Toast';
 import { SettingsModal } from '@/components/SettingsModal';
 
@@ -77,6 +78,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ToastProvider>
+      <CartProvider>
       <div className="flex h-screen min-h-0 flex-col bg-[#eef2f8]">
         {/* ===================== TITLE BAR (Sistem Menu) ==================== */}
         <div className="ipos-titlebar h-10">
@@ -185,6 +187,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           void settingsApi.get<string>('cashierName', 'Kasir').then((c) => setCashierName(c || 'Kasir'));
         }}
       />
+      </CartProvider>
     </ToastProvider>
   );
 }

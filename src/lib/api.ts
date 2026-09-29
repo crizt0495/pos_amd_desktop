@@ -1,7 +1,8 @@
 import { createClient } from './supabase/client';
-import { isoHariIni } from './format';
+import { isoHariIni, normalisasiVarian } from './format';
 import type {
   Customer,
+  CustomerInput,
   DailyReport,
   PaymentReport,
   Product,
@@ -38,13 +39,14 @@ const num = (v: unknown): number => Number(v ?? 0);
 
 function mapProduct(r: Record<string, unknown>): Product {
   return {
-    ...(r as unknown as Omit<Product, 'price' | 'cost' | 'stock' | 'min_stock' | 'is_active' | 'satuanList'>),
+    ...(r as unknown as Omit<Product, 'price' | 'cost' | 'stock' | 'min_stock' | 'is_active' | 'satuanList' | 'variants'>),
     price: num(r.price),
     cost: num(r.cost),
     stock: num(r.stock),
     min_stock: num(r.min_stock),
     is_active: Boolean(r.is_active),
     satuanList: Array.isArray(r.satuan_list) ? (r.satuan_list as unknown[]).map(String) : [],
+    variants: normalisasiVarian(r.variants),
   };
 }
 
@@ -169,6 +171,9 @@ export const productsApi = {
         unit: String(data.unit ?? 'pcs').trim() || 'pcs',
         is_active: data.is_active === false ? false : true,
         ...(Array.isArray(data.satuanList) ? { satuan_list: data.satuanList.map(String) } : {}),
+        ...(data.variants !== undefined
+          ? { variants: normalisasiVarian(data.variants) as unknown as Record<string, unknown>[] }
+          : {}),
       };
       if (!row.name) return { ok: false, error: 'Nama produk wajib diisi.' };
       const { data: created, error } = await createClient().from('kasir_products').insert(row).select().single();
@@ -195,6 +200,7 @@ export const productsApi = {
       if (data.unit !== undefined) patch.unit = String(data.unit).trim() || 'pcs';
       if (data.is_active !== undefined) patch.is_active = Boolean(data.is_active);
       if (data.satuanList !== undefined) patch.satuan_list = data.satuanList.map(String);
+      if (data.variants !== undefined) patch.variants = normalisasiVarian(data.variants);
       patch.updated_at = new Date().toISOString();
 
       const { data: updated, error } = await createClient()
@@ -546,41 +552,64 @@ export const settingsApi = {
 
 /* ------------------------------- pelanggan ------------------------------ */
 
+const mapCustomer = (r: Record<string, unknown>): Customer => ({
+  id: String(r.id),
+  name: String(r.name),
+  phone: r.phone ? String(r.phone) : null,
+  address: r.address ? String(r.address) : null,
+});
+
 export const customersApi = {
   async list(): Promise<Result<Customer[]>> {
     try {
       const { data, error } = await createClient()
         .from('kasir_customers')
-        .select('id, name, created_at')
+        .select('id, name, phone, address, created_at')
         .order('name', { ascending: true });
       if (error) return { ok: false, error: error.message };
-      return {
-        ok: true,
-        data: (data ?? []).map((r) => ({ id: String(r.id), name: String(r.name) })),
-      };
+      return { ok: true, data: (data ?? []).map((r) => mapCustomer(r as Record<string, unknown>)) };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
   },
 
-  async add(name: string): Promise<Result<Customer>> {
-    const clean = name.trim();
+  async add(input: CustomerInput | string): Promise<Result<Customer>> {
+    const raw: CustomerInput = typeof input === 'string' ? { name: input } : input;
+    const clean = String(raw.name ?? '').trim();
     if (!clean) return { ok: false, error: 'Nama pelanggan wajib diisi.' };
+    const phone = String(raw.phone ?? '').trim() || null;
+    const address = String(raw.address ?? '').trim() || null;
+
     try {
       const { data: existing } = await createClient()
         .from('kasir_customers')
-        .select('id, name')
+        .select('id, name, phone, address')
         .eq('name', clean)
         .maybeSingle();
-      if (existing) return { ok: true, data: { id: String(existing.id), name: String(existing.name) } };
+      if (existing) {
+        // lengkapi data yang belum ada tanpa menimpa isian lama
+        const patch: Record<string, unknown> = {};
+        if (!existing.phone && phone) patch.phone = phone;
+        if (!existing.address && address) patch.address = address;
+        if (Object.keys(patch).length) {
+          const { data: patched, error: perr } = await createClient()
+            .from('kasir_customers')
+            .update(patch)
+            .eq('id', String(existing.id))
+            .select('id, name, phone, address')
+            .single();
+          if (!perr && patched) return { ok: true, data: mapCustomer(patched as Record<string, unknown>) };
+        }
+        return { ok: true, data: mapCustomer(existing as Record<string, unknown>) };
+      }
 
       const { data, error } = await createClient()
         .from('kasir_customers')
-        .insert({ user_id: await currentUserId(), name: clean })
-        .select()
+        .insert({ user_id: await currentUserId(), name: clean, phone, address })
+        .select('id, name, phone, address')
         .single();
       if (error) return { ok: false, error: error.message };
-      return { ok: true, data: { id: String(data.id), name: String(data.name) } };
+      return { ok: true, data: mapCustomer(data as Record<string, unknown>) };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

@@ -17,7 +17,15 @@ import { productsApi } from '@/lib/api';
 import { rupiah } from '@/lib/format';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import type { Product, ProductInput } from '@/lib/types';
+import { normalisasiVarian } from '@/lib/format';
+import type { Product, ProductInput, ProductVariant } from '@/lib/types';
+
+type VarianForm = {
+  satuan: string;
+  harga_jual: string;
+  harga_pokok: string;
+  konversi: string;
+};
 
 type FormState = {
   barcode: string;
@@ -28,6 +36,7 @@ type FormState = {
   stock: string;
   min_stock: string;
   unit: string;
+  varian: VarianForm[];
 };
 
 const EMPTY: FormState = {
@@ -39,7 +48,19 @@ const EMPTY: FormState = {
   stock: '',
   min_stock: '',
   unit: 'pcs',
+  varian: [],
 };
+
+const EMPTY_VARIAN: VarianForm = { satuan: '', harga_jual: '', harga_pokok: '', konversi: '1' };
+
+/** Varian -> string form; baris tanpa nama satuan diabaikan. */
+const varianKeForm = (list: ProductVariant[]): VarianForm[] =>
+  list.map((v) => ({
+    satuan: v.satuan,
+    harga_jual: String(v.harga_jual),
+    harga_pokok: String(v.harga_pokok),
+    konversi: String(v.konversi),
+  }));
 
 const UNITS = ['pcs', 'box', 'btl', 'kg', 'gram', 'lusin', 'pak', 'sachet'];
 
@@ -94,8 +115,46 @@ export default function ProdukScreen() {
       stock: String(p.stock),
       min_stock: String(p.min_stock),
       unit: p.unit,
+      varian: varianKeForm(p.variants ?? []),
     });
     setOpen(true);
+  }
+
+  /* --------------------------- editor varian ------------------------- */
+  function tambahVarianBaris() {
+    setForm((prev) => ({ ...prev, varian: [...prev.varian, { ...EMPTY_VARIAN }] }));
+  }
+
+  function ubahVarian(i: number, patch: Partial<VarianForm>) {
+    setForm((prev) => {
+      const varian = [...prev.varian];
+      const cur = varian[i];
+      if (!cur) return prev;
+      varian[i] = { ...cur, ...patch };
+      return { ...prev, varian };
+    });
+  }
+
+  function hapusVarian(i: number) {
+    setForm((prev) => ({ ...prev, varian: prev.varian.filter((_, x) => x !== i) }));
+  }
+
+  /** Baris varian pertama belum diisi -> isi otomatis dari harga produk. */
+  function isiVarianOtomatis() {
+    setForm((prev) => {
+      if (prev.varian.length || !Number(prev.price)) return prev;
+      return {
+        ...prev,
+        varian: [
+          {
+            satuan: 'Pcs',
+            harga_jual: prev.price,
+            harga_pokok: prev.cost,
+            konversi: '1',
+          },
+        ],
+      };
+    });
   }
 
   async function simpan() {
@@ -113,6 +172,29 @@ export default function ProdukScreen() {
       return;
     }
 
+    // Varian: buang baris kosong / tidak valid, dan tolak nama satuan kembar.
+    const varian = normalisasiVarian(
+      form.varian
+        .filter((v) => v.satuan.trim())
+        .map((v) => ({
+          satuan: v.satuan.trim(),
+          harga_jual: Number(v.harga_jual) || 0,
+          harga_pokok: Number(v.harga_pokok) || 0,
+          konversi: Number(v.konversi) || 1,
+        })),
+    );
+    const duplikat = varian.find(
+      (v, i) => varian.findIndex((x) => x.satuan.toLowerCase() === v.satuan.toLowerCase()) !== i,
+    );
+    if (duplikat) {
+      toast.error('Satuan varian kembar', `"${duplikat.satuan}" dipakai lebih dari sekali.`);
+      return;
+    }
+    if (varian.some((v) => v.harga_jual < 0 || v.harga_pokok < 0 || v.konversi <= 0)) {
+      toast.error('Varian tidak valid', 'Harga harus >= 0 dan konversi harus lebih dari 0.');
+      return;
+    }
+
     const payload: ProductInput = {
       barcode: form.barcode.trim() || null,
       name: form.name.trim(),
@@ -122,6 +204,8 @@ export default function ProdukScreen() {
       stock,
       min_stock: minStock,
       unit: form.unit.trim() || 'pcs',
+      variants: varian,
+      satuanList: varian.length ? varian.map((v) => v.satuan) : undefined,
     };
 
     setSaving(true);
@@ -486,6 +570,84 @@ export default function ProdukScreen() {
               </span>
             </div>
           ) : null}
+        </div>
+
+        {/* ====================== VARIAN SATUAN (iPOS) ==================== */}
+        <div className="mt-3 border-t border-[#e2e8f0] pt-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Package className="h-3.5 w-3.5 text-[#1b5fa8]" />
+            <p className="text-[12.5px] font-bold text-[#1b3a5c]">Varian Satuan</p>
+            <button type="button" className="rb-btn ml-auto" onClick={tambahVarianBaris}>
+              <Plus className="h-3.5 w-3.5" />
+              Tambah Varian
+            </button>
+          </div>
+
+          <p className="mb-2 rounded bg-[#f6f9fd] p-2 text-[11.5px] text-[#5b6b80]">
+            Saat kasir mengubah kolom <b>Satuan</b>, <b>H. Jual</b> dan <b>H. Pokok</b> otomatis ikut
+            berubah sesuai varian di bawah. Kosongkan bila semua satuan memakai harga produk yang sama.
+          </p>
+
+          {form.varian.length === 0 ? (
+            <button
+              type="button"
+              onClick={isiVarianOtomatis}
+              disabled={!Number(form.price)}
+              className="w-full rounded border border-dashed border-[#cdd8e6] py-2.5 text-[12px] font-semibold text-[#7a8ba0] transition hover:border-[#1b5fa8] hover:text-[#1b5fa8] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {Number(form.price)
+                ? '+ Tambahkan satuan dasar dari harga produk'
+                : 'Isi Harga Jual dulu untuk membuat satuan dasar'}
+            </button>
+          ) : (
+            <div className="space-y-1.5">
+              {form.varian.map((v, i) => (
+                <div key={`varian-${i}`} className="flex items-center gap-1.5">
+                  <input
+                    className="input h-9 flex-1"
+                    placeholder="Satuan (mis. Dus/6)"
+                    value={v.satuan}
+                    onChange={(e) => ubahVarian(i, { satuan: e.target.value })}
+                  />
+                  <input
+                    className="input tnum h-9 w-[112px] text-right"
+                    placeholder="H. Jual"
+                    inputMode="numeric"
+                    value={v.harga_jual}
+                    onChange={(e) => ubahVarian(i, { harga_jual: e.target.value })}
+                  />
+                  <input
+                    className="input tnum h-9 w-[112px] text-right"
+                    placeholder="H. Pokok"
+                    inputMode="numeric"
+                    value={v.harga_pokok}
+                    onChange={(e) => ubahVarian(i, { harga_pokok: e.target.value })}
+                  />
+                  <input
+                    className="input tnum h-9 w-[74px] text-right"
+                    placeholder="Konv."
+                    inputMode="numeric"
+                    value={v.konversi}
+                    onChange={(e) => ubahVarian(i, { konversi: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => hapusVarian(i)}
+                    title="Hapus varian"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[#e9b3b3] bg-white text-[#c92a2a] transition hover:bg-[#fff5f5]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-1.5 pr-[34px] text-[11px] text-[#9fb0c4]">
+                <span className="w-[112px] shrink-0 text-center">Harga Jual</span>
+                <span className="w-[112px] shrink-0 text-center">Harga Pokok</span>
+                <span className="w-[74px] shrink-0 text-center">Konversi</span>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
 

@@ -87,6 +87,7 @@ create table if not exists public.kasir_settings (
 
 -- Migrasi kolom baru untuk database yang sudah terisi (idempotent).
 alter table public.kasir_products     add column if not exists satuan_list   jsonb not null default '[]';
+alter table public.kasir_products     add column if not exists variants       jsonb not null default '[]';
 alter table public.kasir_transactions add column if not exists customer_name text;
 
 -- Pelanggan (dropdown "Pelanggan" di layar Kasir; default "Umum").
@@ -94,6 +95,8 @@ create table if not exists public.kasir_customers (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references auth.users (id) on delete cascade,
   name       text not null,
+  phone      text,
+  address    text,
   created_at timestamptz not null default now()
 );
 
@@ -225,11 +228,12 @@ begin
   end if;
 
   -- hitung subtotal & total cost dari keranjang
+  -- potongan bersifat flat per baris: qty x harga - potongan (dibatasi 0)
   for v_item in select * from jsonb_array_elements(p_lines) loop
     v_subtotal   := v_subtotal
-      + round((coalesce((v_item.value->>'price')::numeric, 0)
-             - coalesce((v_item.value->>'discount')::numeric, 0))
-             * greatest(coalesce((v_item.value->>'qty')::numeric, 0), 0), 2);
+      + greatest(round(coalesce((v_item.value->>'price')::numeric, 0)
+             * greatest(coalesce((v_item.value->>'qty')::numeric, 0), 0), 2)
+             - coalesce((v_item.value->>'discount')::numeric, 0), 0);
     v_total_cost := v_total_cost
       + coalesce((v_item.value->>'cost')::numeric, 0)
         * greatest(coalesce((v_item.value->>'qty')::numeric, 0), 0);
@@ -282,9 +286,9 @@ begin
        coalesce((v_item.value->>'cost')::numeric, 0),
        greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0),
        coalesce((v_item.value->>'discount')::numeric, 0),
-       round((coalesce((v_item.value->>'price')::numeric, 0)
-            - coalesce((v_item.value->>'discount')::numeric, 0))
-            * greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0), 2));
+       greatest(round(coalesce((v_item.value->>'price')::numeric, 0)
+            * greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0), 2)
+            - coalesce((v_item.value->>'discount')::numeric, 0), 0));
 
     -- potong stok hanya untuk produk terdaftar
     if coalesce((v_item.value->>'product_id')::text, '') <> '' then

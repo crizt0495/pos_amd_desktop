@@ -3,6 +3,15 @@
  * Bentuk data ini sesuai kolom tabel supabase/schema.sql.
  */
 
+/** Varian satuan: harga jual/pokok & konversi per satuan (mis. Pcs vs Dus/6). */
+export interface ProductVariant {
+  satuan: string;
+  harga_jual: number;
+  harga_pokok: number;
+  /** Berapa satuan dasar dalam 1 varian ini (Dus/6 = 6). */
+  konversi: number;
+}
+
 export interface Product {
   id: string;
   barcode: string | null;
@@ -14,6 +23,8 @@ export interface Product {
   min_stock: number;
   unit: string;
   satuanList: string[];
+  /** Varian satuan; kosong = pakai harga produk apa adanya. */
+  variants: ProductVariant[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -29,6 +40,7 @@ export type ProductInput = {
   min_stock?: number;
   unit?: string;
   satuanList?: string[];
+  variants?: ProductVariant[];
   is_active?: boolean;
 };
 
@@ -39,7 +51,15 @@ export type TxStatus = 'completed' | 'void';
 export interface Customer {
   id: string;
   name: string;
+  phone: string | null;
+  address: string | null;
 }
+
+export type CustomerInput = {
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+};
 
 export interface CartLine {
   product_id: string | null;
@@ -48,10 +68,13 @@ export interface CartLine {
   price: number;
   cost: number;
   qty: number;
+  /** Potongan flat untuk satu baris (bukan per satuan): qty x price - discount. */
   discount: number;
   unit: string;
   /** Daftar satuan yang bisa dipilih (dari produk atau default). */
   satuanList: string[];
+  /** Varian satuan produk ini (dipakai saat kolom SATUAN diubah). */
+  variants: ProductVariant[];
   /** Stok saat ditambahkan (untuk membatasi tombol +). */
   stock: number | null;
 }
@@ -125,6 +148,8 @@ export interface CartTotals {
   totalCost: number;
   itemCount: number;
   profit: number;
+  /** Total seluruh potongan per baris (flat), sebelum diskon header. */
+  potonganBaris: number;
 }
 
 export interface ReceiptData {

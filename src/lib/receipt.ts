@@ -1,4 +1,4 @@
-import { rupiah } from './format';
+import { jumlahBaris, rupiah } from './format';
 import { settingsApi } from './api';
 import type { CartLine, ReceiptData, Transaction, TransactionItem } from './types';
 
@@ -17,7 +17,7 @@ function linesToItems(lines: CartLine[]) {
     price: l.price,
     qty: l.qty,
     discount: l.discount,
-    subtotal: Math.round((l.price - (l.discount || 0)) * l.qty),
+    subtotal: jumlahBaris(l),
   }));
 }
 

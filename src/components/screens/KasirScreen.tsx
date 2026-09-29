@@ -9,6 +9,7 @@ import {
   CreditCard,
   FilePlus2,
   Landmark,
+  List,
   Pencil,
   Printer,
   QrCode,
@@ -18,18 +19,25 @@ import {
 } from 'lucide-react';
 
 import { customersApi, nextInvoicePreview, productsApi, settingsApi, transactionsApi } from '@/lib/api';
+import { useCart } from '@/lib/cart-store';
 import {
+  cariVarian,
   gabungKeranjang,
   hitungKembali,
   hitungTotal,
+  jumlahBaris,
+  parseRupiah,
   rupiah,
   satuanOptions,
 } from '@/lib/format';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { ModalListBarang } from '@/components/ModalListBarang';
+import { ModalPelanggan } from '@/components/ModalPelanggan';
 import { ReceiptView } from '@/components/Receipt';
-import type { CartLine, Customer, PaymentMethod, Product, ReceiptData } from '@/lib/types';
+import { UangInput } from '@/components/UangInput';
+import type { CartLine, Customer, CustomerInput, PaymentMethod, Product, ReceiptData } from '@/lib/types';
 
 /** Metode pembayaran — urut & label mengikuti kolom bayar iPOS. */
 const PAY_FIELDS: { key: PaymentMethod; label: string; Icon: typeof Wallet }[] = [
@@ -42,6 +50,9 @@ const PAY_FIELDS: { key: PaymentMethod; label: string; Icon: typeof Wallet }[] =
 
 /** Baris kosong sebagai penutup grid — ala iPOS. */
 const KOSONG_SAMPAI = 8;
+
+/** Maksimal saran autocomplete di bawah kolom Kode Item. */
+const MAX_SARAN = 10;
 
 const PENDING_KEY = 'kasirpro.pending.v1';
 
@@ -88,6 +99,9 @@ function RbBtn({
 
 export default function KasirScreen() {
   const toast = useToast();
+  const cart = useCart();
+  const { lines, setLines, itemQty, setItemQty, customer, setCustomer } = cart;
+  const { sales, setSales, keterangan, setKeterangan } = cart;
 
   /* ------------------------------ header ------------------------------ */
   const [store, setStore] = React.useState<StoreMeta>({
@@ -100,20 +114,21 @@ export default function KasirScreen() {
   const [tanggal, setTanggal] = React.useState('');
   const [invoiceNo, setInvoiceNo] = React.useState('INV-…');
   const [customers, setCustomers] = React.useState<Customer[]>([]);
-  const [customer, setCustomer] = React.useState('Umum');
-  const [sales, setSales] = React.useState('');
-  const [keterangan, setKeterangan] = React.useState('');
 
   /* ------------------------------ item entry -------------------------- */
   const [products, setProducts] = React.useState<Product[]>([]);
-  const [lines, setLines] = React.useState<CartLine[]>([]);
   const [itemCode, setItemCode] = React.useState('');
-  const [itemQty, setItemQty] = React.useState(1);
   const [activeRow, setActiveRow] = React.useState<number | null>(null);
   const [zone, setZone] = React.useState<'header' | 'detail'>('header');
 
   const codeRef = React.useRef<HTMLInputElement>(null);
   const qtyRef = React.useRef<HTMLInputElement>(null);
+  const wrapSaranRef = React.useRef<HTMLDivElement>(null);
+
+  /* ------------------------------ autocomplete ------------------------ */
+  const [saran, setSaran] = React.useState<Product[]>([]);
+  const [saranTampil, setSaranTampil] = React.useState(false);
+  const [saranIdx, setSaranIdx] = React.useState(0);
 
   /* ------------------------------ pembayaran -------------------------- */
   const [pay, setPay] = React.useState<Record<PaymentMethod, string>>({
@@ -133,6 +148,8 @@ export default function KasirScreen() {
 
   /* ------------------------------ modal ------------------------------- */
   const [cancelOpen, setCancelOpen] = React.useState(false);
+  const [listBarangOpen, setListBarangOpen] = React.useState(false);
+  const [tambahPlgOpen, setTambahPlgOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [success, setSuccess] = React.useState<{ receipt: ReceiptData; change: number } | null>(null);
   const [autoPrint, setAutoPrint] = React.useState(true);
@@ -142,15 +159,10 @@ export default function KasirScreen() {
 
   /* ------------------------------ turunan ----------------------------- */
   const totals = hitungTotal(lines, 'none', 0);
-  const subtotalKotor = React.useMemo(
-    () => lines.reduce((s, l) => s + l.price * l.qty, 0),
-    [lines],
-  );
-  const totalPotongan = React.useMemo(
-    () => lines.reduce((s, l) => s + (l.discount || 0) * l.qty, 0),
-    [lines],
-  );
-  const totalBayar = PAY_FIELDS.reduce((s, f) => s + (Number(pay[f.key]) || 0), 0);
+  const subtotalKotor = React.useMemo(() => lines.reduce((s, l) => s + l.price * l.qty, 0), [lines]);
+  // Potongan sekarang flat per baris (bukan per satuan).
+  const totalPotongan = totals.potonganBaris;
+  const totalBayar = PAY_FIELDS.reduce((s, f) => s + (parseRupiah(pay[f.key]) || 0), 0);
   const kurang = Math.max(0, totals.total - totalBayar);
   const change = hitungKembali(totals.total, totalBayar);
   const rugiLines = lines.filter((l) => l.price < l.cost);
@@ -202,6 +214,7 @@ export default function KasirScreen() {
   /* ------------------------------ aksi item --------------------------- */
   const fokusKode = React.useCallback(() => {
     setZone('header');
+    setSaranTampil(false);
     codeRef.current?.focus();
     codeRef.current?.select();
   }, []);
@@ -221,7 +234,29 @@ export default function KasirScreen() {
     setMethod('cash');
   }
 
-  /** Tambah satu baris dari Kode Item. 1 = sukses. */
+  /** Masukkan satu produk ke keranjang. */
+  function masukkanProduk(p: Product, qty?: number) {
+    const units = satuanOptions(p);
+    const q = Math.max(1, Math.floor(qty ?? itemQty) || 1);
+    setLines((prev) =>
+      gabungKeranjang(prev, {
+        product_id: p.id,
+        barcode: p.barcode,
+        name: p.name,
+        price: p.price,
+        cost: p.cost,
+        qty: q,
+        discount: 0,
+        unit: units[0] ?? p.unit,
+        satuanList: units,
+        variants: p.variants ?? [],
+        stock: p.stock,
+      }),
+    );
+    kilat(p.id);
+  }
+
+  /** Tambah satu baris dari Kode Item. true = sukses. */
   async function tambahBaris(): Promise<boolean> {
     const code = itemCode.trim();
     if (!code) return false;
@@ -249,38 +284,95 @@ export default function KasirScreen() {
     }
 
     if (!p) {
-      toast.info('Item tidak ditemukan', `"${code}" tidak ada di master barang.`);
+      toast.info('Item tidak ditemukan', `"${code}" tidak ada di master barang. Tekan F10 untuk Cari Barang.`);
       return false;
     }
 
-    const units = satuanOptions(p);
-    setLines((prev) =>
-      gabungKeranjang(prev, {
-        product_id: p!.id,
-        barcode: p!.barcode,
-        name: p!.name,
-        price: p!.price,
-        cost: p!.cost,
-        qty,
-        discount: 0,
-        unit: units[0] ?? p!.unit,
-        satuanList: units,
-        stock: p!.stock,
-      }),
-    );
-    kilat(p.id);
+    masukkanProduk(p, qty);
     setItemCode('');
+    setSaran([]);
+    setSaranTampil(false);
     return true;
   }
 
-  /** Enter di Kode Item: kosong → pindah ke Jumlah (alur iPOS). */
+  /* ------------------------- autocomplete (debounce) ------------------ */
+  React.useEffect(() => {
+    const key = itemCode.trim().toLowerCase();
+    if (!key) {
+      setSaran([]);
+      setSaranTampil(false);
+      return;
+    }
+    // Saran hanya bila belum ada hasil scan barcode persis (scan tidak perlu saran).
+    const exact = products.some((x) => (x.barcode ?? '').toLowerCase() === key);
+    if (exact) {
+      setSaran([]);
+      setSaranTampil(false);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      const hasil = products
+        .filter(
+          (p) =>
+            p.is_active !== false &&
+            (p.name.toLowerCase().includes(key) || (p.barcode ?? '').toLowerCase().includes(key)),
+        )
+        .slice(0, MAX_SARAN);
+      setSaran(hasil);
+      setSaranIdx(0);
+      setSaranTampil(hasil.length > 0);
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [itemCode, products]);
+
+  // Klik di luar menutup daftar saran.
+  React.useEffect(() => {
+    if (!saranTampil) return;
+    const onDown = (e: MouseEvent) => {
+      if (!wrapSaranRef.current?.contains(e.target as Node)) setSaranTampil(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [saranTampil]);
+
+  function pilihSaran(p: Product) {
+    masukkanProduk(p);
+    setItemCode('');
+    setSaran([]);
+    setSaranTampil(false);
+    setItemQty(1);
+    codeRef.current?.focus();
+  }
+
+  /** Enter di Kode Item: kosong -> pindah ke Jumlah (alur iPOS). */
   async function onKodeEnter(e: React.KeyboardEvent) {
-    if (e.key !== 'Enter') return; // janganbekuk ketikan huruf/barcode
+    if (e.key === 'ArrowDown' && saranTampil) {
+      e.preventDefault();
+      setSaranIdx((i) => Math.min(i + 1, saran.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp' && saranTampil) {
+      e.preventDefault();
+      setSaranIdx((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Escape' && saranTampil) {
+      e.preventDefault();
+      setSaranTampil(false);
+      return;
+    }
+    if (e.key !== 'Enter') return; // jangan bekuk ketikan huruf/barcode
     e.preventDefault();
+
     if (!itemCode.trim()) {
       setZone('detail');
       qtyRef.current?.focus();
       qtyRef.current?.select();
+      return;
+    }
+    // Enter saat ada saran: ambil yang sedang disorot.
+    if (saranTampil && saran[saranIdx]) {
+      pilihSaran(saran[saranIdx]!);
       return;
     }
     if (await tambahBaris()) {
@@ -323,21 +415,35 @@ export default function KasirScreen() {
     });
   }, []);
 
+  /** Ganti satuan: H. Jual & H. Pokok ikut berubah sesuai varian satuan itu. */
+  const ubahSatuan = React.useCallback((i: number, satuan: string) => {
+    setLines((prev) => {
+      const l = prev[i];
+      if (!l) return prev;
+      const v = cariVarian(l.variants, satuan);
+      const copy = [...prev];
+      copy[i] = v ? { ...l, unit: v.satuan, price: v.harga_jual, cost: v.harga_pokok } : { ...l, unit: satuan };
+      return copy;
+    });
+  }, []);
+
   const hapusBaris = React.useCallback((i: number) => {
     setLines((prev) => prev.filter((_, x) => x !== i));
   }, []);
 
   /* ------------------------------ transaksi --------------------------- */
+  const { resetCart } = cart;
   const resetForm = React.useCallback(() => {
-    setLines([]);
+    resetCart();
     setItemCode('');
     setItemQty(1);
-    setKeterangan('');
     setActiveRow(null);
+    setSaran([]);
+    setSaranTampil(false);
     resetBayar();
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
-  }, [fokusKode]);
+  }, [resetCart, fokusKode]);
 
   function simpanPendingSekarang() {
     if (!lines.length) return;
@@ -430,14 +536,9 @@ export default function KasirScreen() {
     }
   }
 
-  async function tambahPelanggan() {
-    const nama = window.prompt('Nama pelanggan baru:');
-    if (!nama || !nama.trim()) return;
-    const res = await customersApi.add(nama);
-    if (!res.ok) {
-      toast.error('Gagal menambah pelanggan', res.error);
-      return;
-    }
+  async function simpanPelanggan(input: CustomerInput) {
+    const res = await customersApi.add(input);
+    if (!res.ok) throw new Error(res.error);
     const list = await customersApi.list();
     if (list.ok) setCustomers(list.data);
     setCustomer(res.data.name);
@@ -461,7 +562,7 @@ export default function KasirScreen() {
       const tag = el?.tagName ?? '';
       const editable = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || el?.isContentEditable;
       const adaModal =
-        cancelOpen || savePendOpen || pendListOpen || Boolean(success);
+        cancelOpen || savePendOpen || pendListOpen || listBarangOpen || tambahPlgOpen || Boolean(success);
 
       if (e.key === 'Escape') {
         if (adaModal) return; // Modal punya penutup Esc sendiri
@@ -483,9 +584,15 @@ export default function KasirScreen() {
         setPendListOpen(true);
         return;
       }
-      if (e.key === 'F8' || e.key === 'F10') {
+      if (e.key === 'F8') {
         e.preventDefault();
         fokusKode();
+        return;
+      }
+      // F10 = List Barang (bukan lagi fokus Kode Item).
+      if (e.key === 'F10') {
+        e.preventDefault();
+        setListBarangOpen(true);
         return;
       }
       if (e.key === 'F9') {
@@ -530,6 +637,8 @@ export default function KasirScreen() {
     cancelOpen,
     savePendOpen,
     pendListOpen,
+    listBarangOpen,
+    tambahPlgOpen,
     success,
     fokusKode,
     resetForm,
@@ -546,7 +655,7 @@ export default function KasirScreen() {
         <RbBtn kbd="F9" label="Baru" Icon={FilePlus2} onClick={resetForm} />
         <RbBtn
           kbd="F5"
-          label="Pending"
+          label="Perangguh"
           Icon={BookmarkPlus}
           onClick={() => setSavePendOpen(true)}
           disabled={!lines.length}
@@ -558,6 +667,12 @@ export default function KasirScreen() {
           onClick={() => setPendListOpen(true)}
         />
         <RbBtn kbd="F8" label="Kode Item" Icon={CornerDownLeft} onClick={fokusKode} />
+        <RbBtn
+          kbd="F10"
+          label="Cari Barang"
+          Icon={List}
+          onClick={() => setListBarangOpen(true)}
+        />
 
         <span className="rb-sep" />
 
@@ -597,7 +712,7 @@ export default function KasirScreen() {
       {/* ====================== HEADER FORM (Kode Item) ================= */}
       <div className="shrink-0 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2.5">
         <div className="flex flex-wrap items-end gap-2">
-          <div className="w-full sm:w-[300px] lg:w-[340px]">
+          <div className="relative w-full sm:w-[300px] lg:w-[340px]" ref={wrapSaranRef}>
             <label className="frm-label" htmlFor="kode-item">
               Kode Item / Barcode
             </label>
@@ -605,15 +720,47 @@ export default function KasirScreen() {
               id="kode-item"
               ref={codeRef}
               className="frm-key"
-              placeholder="Scan barcode atau ketik nama, lalu Enter…"
+              placeholder="Scan barcode atau ketik nama barang"
               value={itemCode}
               onChange={onItemChange}
               onKeyDown={(e) => void onKodeEnter(e)}
+              onFocus={() => itemCode.trim() && setSaranTampil(saran.length > 0)}
               autoFocus
               autoComplete="off"
-              autoCapitalize="characters"
               spellCheck={false}
+              role="combobox"
+              aria-expanded={saranTampil}
+              aria-autocomplete="list"
+              aria-controls="saran-kode-item"
             />
+
+            {saranTampil ? (
+              <ul
+                id="saran-kode-item"
+                role="listbox"
+                className="ac-panel"
+                aria-label="Saran barang"
+              >
+                {saran.map((p, i) => (
+                  <li key={p.id} role="option" aria-selected={i === saranIdx}>
+                    <button
+                      type="button"
+                      className={`ac-item ${i === saranIdx ? 'ac-item-active' : ''}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        pilihSaran(p);
+                      }}
+                      onMouseEnter={() => setSaranIdx(i)}
+                    >
+                      <span className="ac-kode">{p.barcode || '—'}</span>
+                      <span className="ac-nama">{p.name}</span>
+                      <span className="ac-meta">Stok {p.stock}</span>
+                      <span className="ac-harga">{rupiah(p.price)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
 
           <div className="w-[92px]">
@@ -662,18 +809,19 @@ export default function KasirScreen() {
                 value={customer}
                 onChange={(e) => setCustomer(e.target.value)}
               >
+                <option value="Umum">Umum</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.name}>
                     {c.name}
                   </option>
                 ))}
-                {!customers.some((c) => c.name === customer) ? (
+                {customer !== 'Umum' && !customers.some((c) => c.name === customer) ? (
                   <option value={customer}>{customer}</option>
                 ) : null}
               </select>
               <button
                 type="button"
-                onClick={() => void tambahPelanggan()}
+                onClick={() => setTambahPlgOpen(true)}
                 title="Tambah pelanggan"
                 className="h-8 w-8 shrink-0 rounded border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
               >
@@ -712,7 +860,7 @@ export default function KasirScreen() {
 
       {/* ========================= DETAIL GRID ========================== */}
       <div className="min-h-0 flex-1 overflow-auto bg-white">
-        <table className="w-full min-w-[900px] border-collapse">
+        <table className="w-full min-w-[940px] border-collapse">
           <thead className="sticky top-0 z-10">
             <tr>
               <th className="th w-[42px] text-center">No</th>
@@ -722,8 +870,8 @@ export default function KasirScreen() {
               <th className="th w-[96px] text-right">H. Pokok</th>
               <th className="th w-[104px] text-right">H. Jual</th>
               <th className="th w-[88px] text-right">Jumlah</th>
-              <th className="th w-[96px] text-right">Potongan</th>
-              <th className="th w-[112px] text-right">Jumlah</th>
+              <th className="th w-[104px] text-right">Potongan</th>
+              <th className="th w-[120px] text-right">Jumlah</th>
               <th className="th w-[64px] text-center">Aksi</th>
             </tr>
           </thead>
@@ -732,14 +880,14 @@ export default function KasirScreen() {
               <tr>
                 <td colSpan={10} className="px-3 py-10 text-center text-[12.5px] text-[#9fb0c4]">
                   Belum ada item. Scan barcode di kolom <b>Kode Item</b> lalu tekan{' '}
-                  <span className="kbd">Enter</span>.
+                  <span className="kbd">Enter</span>
                 </td>
               </tr>
             ) : null}
 
             {lines.map((l, i) => {
               const units = l.satuanList.length ? l.satuanList : [l.unit];
-              const jumlah = (l.price - (l.discount || 0)) * l.qty;
+              const jumlah = jumlahBaris(l);
               const rugi = l.price < l.cost;
               const kilat = l.product_id === flashKey;
               return (
@@ -767,7 +915,7 @@ export default function KasirScreen() {
                     <select
                       className="cell !w-[84px]"
                       value={units.includes(l.unit) ? l.unit : units[0]}
-                      onChange={(e) => ubah(i, { unit: e.target.value })}
+                      onChange={(e) => ubahSatuan(i, e.target.value)}
                     >
                       {units.map((u) => (
                         <option key={u} value={u}>
@@ -778,14 +926,12 @@ export default function KasirScreen() {
                   </td>
                   <td className="td tnum text-right text-[#9fb0c4]">{rupiah(l.cost)}</td>
                   <td className="td p-0">
-                    <input
-                      className="cell tnum text-right"
-                      data-cell="price"
-                      type="number"
-                      min={0}
+                    <UangInput
+                      dataCell="price"
+                      ariaLabel={`Harga jual ${l.name}`}
+                      className="cell text-right"
                       value={l.price}
-                      onChange={(e) => ubah(i, { price: Math.max(0, Number(e.target.value) || 0) })}
-                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(v) => ubah(i, { price: Math.max(0, v) })}
                     />
                   </td>
                   <td className="td p-0">
@@ -801,14 +947,12 @@ export default function KasirScreen() {
                     />
                   </td>
                   <td className="td p-0">
-                    <input
-                      className="cell tnum text-right"
-                      data-cell="disc"
-                      type="number"
-                      min={0}
+                    <UangInput
+                      dataCell="disc"
+                      ariaLabel={`Potongan ${l.name}`}
+                      className="cell text-right"
                       value={l.discount || 0}
-                      onChange={(e) => ubah(i, { discount: Math.max(0, Number(e.target.value) || 0) })}
-                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(v) => ubah(i, { discount: Math.max(0, v) })}
                     />
                   </td>
                   <td className="td tnum text-right font-bold text-[#1b3a5c]">{rupiah(jumlah)}</td>
@@ -886,18 +1030,13 @@ export default function KasirScreen() {
                   <Icon className="h-3 w-3" />
                   {label}
                 </label>
-                <input
+                <UangInput
                   id={`pay-${key}`}
-                  className="tnum h-7 w-full rounded border border-transparent bg-[#f6f9fd] px-1.5 text-right text-[13px] font-semibold text-[#22374b] outline-none focus:border-[#1b5fa8] focus:bg-white"
-                  type="number"
-                  min={0}
+                  className="tnum h-7 w-full border-transparent bg-[#f6f9fd] px-1.5 text-right text-[13px] font-semibold text-[#22374b] focus:border-[#1b5fa8] focus:bg-white"
                   value={pay[key]}
-                  placeholder="0"
-                  onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setPay((prev) => ({ ...prev, [key]: v }));
-                    if (Number(v) > 0) setMethod(key);
+                  onChange={(v) => {
+                    setPay((prev) => ({ ...prev, [key]: v ? String(v) : '' }));
+                    if (v > 0) setMethod(key);
                   }}
                 />
               </div>
@@ -940,6 +1079,21 @@ export default function KasirScreen() {
           </div>
         </div>
       </div>
+
+      {/* ========================== MODAL LIST BARANG =================== */}
+      <ModalListBarang
+        open={listBarangOpen}
+        onClose={() => setListBarangOpen(false)}
+        products={products}
+        onPilih={(p) => masukkanProduk(p)}
+      />
+
+      {/* ========================= MODAL TAMBAH PELANGGAN ============== */}
+      <ModalPelanggan
+        open={tambahPlgOpen}
+        onClose={() => setTambahPlgOpen(false)}
+        onSave={simpanPelanggan}
+      />
 
       {/* ====================== MODAL SIMPAN PENDING ==================== */}
       <Modal

@@ -1,4 +1,4 @@
-import type { CartLine, CartTotals, DiscountType } from './types';
+import type { CartLine, CartTotals, DiscountType, ProductVariant } from './types';
 
 /** Format & perhitungan lokal (salinan dari KasirPro Desktop). */
 
@@ -13,10 +13,21 @@ export function rupiah(value: number | string | null | undefined): string {
   return `Rp. ${ANGKA.format(n)}`;
 }
 
+/** Alias eksplisit untuk format ribuan gaya Indonesia. */
+export const formatRupiah = rupiah;
+
 export function angka(value: number | null | undefined): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return '0';
   return ANGKA.format(n);
+}
+
+/** Bersihkan input uang yang diketik user: "Rp. 15.000" / "15.000" -> 15000. */
+export function parseRupiah(value: string | number | null | undefined): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const digits = String(value ?? '').replace(/[^\d-]/g, '');
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /** "10 Nov 2025, 14:32" */
@@ -61,14 +72,90 @@ export function isoHariLalu(n: number): string {
 
 /* ------------------------------- keranjang ------------------------------ */
 
+/** Normalisasi daftar varian dari jsonb database. */
+export function normalisasiVarian(v: unknown): ProductVariant[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const satuan = String(o.satuan ?? '').trim();
+      if (!satuan) return null;
+      const hargaJual = Number(o.harga_jual);
+      const hargaPokok = Number(o.harga_pokok);
+      const konversi = Number(o.konversi);
+      return {
+        satuan,
+        harga_jual: Number.isFinite(hargaJual) ? hargaJual : 0,
+        harga_pokok: Number.isFinite(hargaPokok) ? hargaPokok : 0,
+        konversi: Number.isFinite(konversi) && konversi > 0 ? konversi : 1,
+      } satisfies ProductVariant;
+    })
+    .filter((v): v is ProductVariant => v !== null);
+}
+
+/** Varian yang cocok dengan nama satuan (case-insensitive, longgar spasi). */
+export function cariVarian(
+  variants: ProductVariant[] | null | undefined,
+  satuan: string,
+): ProductVariant | null {
+  if (!Array.isArray(variants) || !variants.length) return null;
+  const key = String(satuan ?? '').trim().toLowerCase();
+  if (!key) return null;
+  return variants.find((v) => v.satuan.trim().toLowerCase() === key) ?? null;
+}
+
 /** Daftar satuan yang bisa dipilih pada satu produk (baris keranjang).
- *  Prioritas: satuan_list produk; fallback default [Pcs, Dus/6, Pack] + unit. */
-export function satuanOptions(p: { unit?: string | null; satuanList?: string[] }): string[] {
-  const base = Array.isArray(p.satuanList) && p.satuanList.length
-    ? p.satuanList.map(String)
-    : ['Pcs', 'Dus/6', 'Pack'];
-  if (p.unit && !base.includes(p.unit)) base.unshift(p.unit);
-  return base.length ? base : ['Pcs'];
+ *  Prioritas: varian produk; lalu satuan_list; fallback default + unit. */
+export function satuanOptions(p: {
+  unit?: string | null;
+  satuanList?: string[];
+  variants?: ProductVariant[] | null;
+}): string[] {
+  const varian = normalisasiVarian(p.variants);
+  const sumber = varian.length
+    ? varian.map((v) => v.satuan)
+    : Array.isArray(p.satuanList) && p.satuanList.length
+      ? p.satuanList.map(String)
+      : ['Pcs', 'Dus/6', 'Pack'];
+
+  const key = (s: string) => s.trim().toLowerCase();
+
+  // Satuan dasar produk hanya menambah opsi baru bila benar-benar tidak
+  // tercakup di daftar (satuan_list tidak boleh menduplikasi varian, dan
+  // perbandingan case-insensitive: unit "pcs" sudah tercakup varian "Pcs").
+  const tercakup = new Set(sumber.map(key));
+  const base = [...sumber];
+  const unit = String(p.unit ?? '').trim();
+  if (unit && !tercakup.has(key(unit))) base.unshift(unit);
+
+  // Buang duplikat yang lolos (mis. satuan_list sendiri berisi nama kembar).
+  const unik = new Set<string>();
+  const hasil = base.filter((s) => {
+    const k = key(s);
+    if (!k || unik.has(k)) return false;
+    unik.add(k);
+    return true;
+  });
+
+  return hasil.length ? hasil : ['Pcs'];
+}
+
+/** Harga jual/pokok untuk satu satuan; jatuh ke harga produk bila tanpa varian. */
+export function hargaSatuan(
+  p: { price: number; cost: number },
+  variants: ProductVariant[] | null | undefined,
+  satuan: string,
+): { price: number; cost: number } {
+  const v = cariVarian(variants, satuan);
+  return {
+    price: v ? v.harga_jual : p.price,
+    cost: v ? v.harga_pokok : p.cost,
+  };
+}
+
+/** Jumlah satu baris: qty x H. Jual - Potongan (flat per baris, minimal 0). */
+export function jumlahBaris(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number {
+  return round2(Math.max(0, (Number(l.price) || 0) * (Number(l.qty) || 0) - (Number(l.discount) || 0)));
 }
 
 export function hitungTotal(
@@ -76,8 +163,9 @@ export function hitungTotal(
   discountType: DiscountType,
   discountValue: number,
 ): CartTotals {
-  const subtotal = round2(lines.reduce((sum, l) => sum + (l.price - (l.discount || 0)) * l.qty, 0));
+  const subtotal = round2(lines.reduce((sum, l) => sum + jumlahBaris(l), 0));
   const totalCost = round2(lines.reduce((sum, l) => sum + l.cost * l.qty, 0));
+  const potonganBaris = round2(lines.reduce((sum, l) => sum + (Number(l.discount) || 0), 0));
 
   let discountAmount = 0;
   if (discountType === 'percent') {
@@ -95,6 +183,7 @@ export function hitungTotal(
     totalCost,
     itemCount: lines.reduce((n, l) => n + l.qty, 0),
     profit: round2(total - totalCost),
+    potonganBaris,
   };
 }
 
