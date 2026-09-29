@@ -21,12 +21,41 @@ const PAYMENT_LABELS: { key: PaymentMethod; label: string }[] = [
 
 const KOSONG_SAMPAI = 10;
 
-/** Pembulatan uang tunai ke ribuan terdekat. */
-function bulatUang(n: number): number {
-  if (n <= 0) return 0;
-  return Math.ceil(n / 1000) * 1000;
+/** Tombol shortcut bar bawah — label hotkey + aksi yang bisa diklik. */
+function ShortcutButton({
+  kbd,
+  label,
+  onClick,
+  disabled,
+  primary,
+}: {
+  kbd: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        'flex items-center gap-1.5 border-2 px-2 py-1 text-[12px] font-bold leading-none transition',
+        primary ? 'border-black bg-black text-white hover:bg-zinc-800' : 'border-black bg-white hover:bg-yellow-100',
+        disabled ? 'pointer-events-none opacity-40' : '',
+      ].join(' ')}
+    >
+      <kbd className={primary ? 'text-zinc-300' : 'text-zinc-500'}>{kbd}</kbd>
+      <span>{label}</span>
+    </button>
+  );
 }
 
+/** Tombol shortcut bar bawah — label hotkey + aksi yang bisa diklik.
+ *
+ *  (dipakai di footer: Batal/Bayar/Buka Laci/Cari Barang/Kosongkan)
+ */
 export default function KasirScreen() {
   const toast = useToast();
 
@@ -307,6 +336,31 @@ export default function KasirScreen() {
   }
 
   /* ------------------------------ hotkey global ------------------------ */
+  function bukaCari() {
+    setSearchOpen(true);
+    window.setTimeout(() => searchInputRef.current?.focus(), 50);
+  }
+
+  function bukaLaci() {
+    console.log('[POS] open-drawer');
+    toast.info('Buka laci', 'demo: F11 hanya log di browser.');
+  }
+
+  function kosongkanKlik() {
+    clearCart();
+    toast.info('Keranjang dikosongkan');
+  }
+
+  /** Tombol angka di keypad modal bayar. */
+  function tekanAngkaUang(k: string) {
+    setPaidInput((prev) => {
+      const base = prev.trim() === '' ? '' : prev;
+      if (k === '⌫') return base.slice(0, -1);
+      const next = base + k;
+      return next.length <= 12 ? next : base;
+    });
+  }
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -364,7 +418,8 @@ export default function KasirScreen() {
   }, [cart.length, payOpen, searchOpen, cancelOpen, clearCart, toast]);
 
   /* ------------------------------ render ------------------------------- */
-  const emptyRows = Math.max(0, KOSONG_SAMPAI - cart.length);
+  const kosongHint = cart.length === 0;
+  const emptyRows = Math.max(0, KOSONG_SAMPAI - cart.length - (kosongHint ? 1 : 0));
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white font-mono text-black">
@@ -476,18 +531,29 @@ export default function KasirScreen() {
 
       {/* ==================== 4. TABEL KERANJANG (CORE) ==================== */}
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain bg-white">
-        <div className="flex items-center justify-between border-b-2 border-black px-3 py-1.5 text-[12px]">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black px-2.5 py-1.5 text-[12px] sm:px-3">
           <span className="flex items-center gap-1.5">
             <ShoppingCart className="h-3.5 w-3.5" /> Keranjang
-            {cart.length ? <b className="tnum">({totals.itemCount} item)</b> : null}
+            {cart.length ? <b className="tnum">({totals.itemCount} item)</b> : <b>kosong</b>}
           </span>
-          <button
-            type="button"
-            className="flex items-center gap-1 px-2 py-1 text-[11.5px] text-zinc-600 hover:text-black"
-            onClick={clearCart}
-          >
-            <Trash2 className="h-3 w-3" /> Kosongkan
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className="flex items-center gap-1 border-2 border-black bg-white px-2 py-1 text-[11.5px] font-bold hover:bg-yellow-100 disabled:pointer-events-none disabled:opacity-40"
+              onClick={clearCart}
+              disabled={!cart.length}
+            >
+              <Trash2 className="h-3 w-3" /> Kosongkan
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-1 border-2 border-black bg-black px-2.5 py-1 text-[12px] font-bold text-white hover:bg-zinc-800 disabled:pointer-events-none disabled:opacity-40"
+              onClick={openPay}
+              disabled={!cart.length}
+            >
+              Bayar <kbd>End</kbd>
+            </button>
+          </div>
         </div>
 
         <table className="w-full min-w-[600px] border-collapse text-[12.5px]">
@@ -495,7 +561,7 @@ export default function KasirScreen() {
             <tr className="sticky top-0 z-10 bg-gray-100 text-[12px]">
               <th className="w-11 border-2 border-black px-1 py-1.5">No</th>
               <th className="border-2 border-black px-2 py-1.5 text-left">Barang</th>
-              <th className="w-16 border-2 border-black px-1 py-1.5">Qty</th>
+              <th className="w-20 border-2 border-black px-1 py-1.5">Qty</th>
               <th className="w-20 border-2 border-black px-1 py-1.5">Satuan</th>
               <th className="w-32 border-2 border-black px-1 py-1.5">Harga</th>
               <th className="w-32 border-2 border-black px-2 py-1.5 text-right">Jumlah</th>
@@ -530,16 +596,34 @@ export default function KasirScreen() {
                     </div>
                   </td>
                   <td className="border-2 border-black px-1 py-1 text-center">
-                    <div>
+                    <div className="flex items-center justify-center gap-0.5">
+                      <button
+                        type="button"
+                        aria-label="Kurangi qty"
+                        title="Kurangi"
+                        className="h-5 w-5 shrink-0 border-2 border-black bg-gray-100 text-[12px] font-bold leading-none hover:bg-yellow-100"
+                        onClick={() => setLineQty(i, line.qty - 1)}
+                      >
+                        −
+                      </button>
                       <input
-                        className="tnum w-full border-2 border-zinc-300 bg-white px-1 py-0.5 text-center outline-none focus:border-black"
+                        className="tnum w-9 border-2 border-zinc-300 bg-white px-0.5 py-0.5 text-center outline-none focus:border-black"
                         type="number"
                         min={1}
                         value={line.qty}
                         onChange={(e) => setLineQty(i, Number(e.target.value) || 1)}
                       />
-                      <p className="pt-0.5 text-[9.5px] text-zinc-500">↓ Edit</p>
+                      <button
+                        type="button"
+                        aria-label="Tambah qty"
+                        title="Tambah"
+                        className="h-5 w-5 shrink-0 border-2 border-black bg-gray-100 text-[12px] font-bold leading-none hover:bg-yellow-100"
+                        onClick={() => setLineQty(i, line.qty + 1)}
+                      >
+                        +
+                      </button>
                     </div>
+                    <p className="pt-0.5 text-[9.5px] text-zinc-500">↓ Stepper / Edit</p>
                   </td>
                   <td className="border-2 border-black px-1 py-1 text-center">
                     <div className="flex flex-col items-stretch">
@@ -579,6 +663,18 @@ export default function KasirScreen() {
               );
             })}
 
+            {/* panduan saat kosong */}
+            {kosongHint ? (
+              <tr className="bg-white">
+                <td
+                  colSpan={6}
+                  className="h-11 border-2 border-black px-2 text-center text-[11.5px] text-zinc-500"
+                >
+                  Keranjang kosong — scan barcode lalu <b>Enter</b>, atau tekan <b>F10</b> untuk cari barang.
+                </td>
+              </tr>
+            ) : null}
+
             {/* baris kosong sampai 10 baris */}
             {Array.from({ length: emptyRows }).map((_, i) => (
               <tr key={`empty-${i}`} className="bg-white">
@@ -607,25 +703,15 @@ export default function KasirScreen() {
       </div>
 
       {/* ====================== 5. FOOTER SHORTCUT ======================= */}
-      <footer className="shrink-0 border-t-2 border-black bg-gray-200 px-3 py-2 text-[12px] font-bold leading-relaxed">
-        <div className="flex flex-wrap gap-x-5 gap-y-0.5">
-          <span>
-            <b>Esc</b> : Batal
-          </span>
-          <span>
-            <b>End</b> : Bayar
-          </span>
-          <span>
-            <b>F11</b> : Buka Laci
-          </span>
+      <footer className="shrink-0 border-t-2 border-black bg-gray-200 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ShortcutButton kbd="Esc" label="Batal" onClick={() => setCancelOpen(true)} disabled={!cart.length} />
+          <ShortcutButton kbd="End" label="Bayar" onClick={openPay} disabled={!cart.length} primary />
+          <ShortcutButton kbd="F11" label="Buka Laci" onClick={bukaLaci} />
         </div>
-        <div className="flex flex-wrap gap-x-5 gap-y-0.5">
-          <span>
-            <b>Del</b> : Kosongkan
-          </span>
-          <span>
-            <b>F10</b> : Cari Barang
-          </span>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <ShortcutButton kbd="F10" label="Cari Barang" onClick={bukaCari} />
+          <ShortcutButton kbd="Del" label="Kosongkan" onClick={kosongkanKlik} disabled={!cart.length} />
         </div>
       </footer>
 
@@ -696,7 +782,7 @@ export default function KasirScreen() {
         open={payOpen}
         title="Pembayaran"
         onClose={() => setPayOpen(false)}
-        width="max-w-sm"
+        width="max-w-md"
         footer={
           <button
             type="button"
@@ -747,7 +833,7 @@ export default function KasirScreen() {
             </label>
             <div className="flex items-center gap-2">
               <input
-                className="tnum min-w-0 flex-1 border-2 border-black px-2 py-2 text-[15px] outline-none"
+                className="tnum min-w-0 flex-1 border-2 border-black px-2 py-2 text-[16px] outline-none"
                 type="number"
                 min={0}
                 autoFocus
@@ -758,11 +844,45 @@ export default function KasirScreen() {
               />
               <button
                 type="button"
-                className="shrink-0 border-2 border-black bg-gray-100 px-2.5 py-2 text-[12px] font-bold"
-                onClick={() => setPaidInput(String(bulatUang(totals.total)))}
+                className="shrink-0 border-2 border-black bg-gray-100 px-2.5 py-2 text-[12px] font-bold hover:bg-yellow-100"
+                onClick={() => setPaidInput(String(totals.total))}
               >
                 Pas
               </button>
+            </div>
+
+            {/* nominal cepat */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[
+                { label: 'Uang Pas', value: totals.total },
+                { label: 'Rp50.000', value: 50000 },
+                { label: 'Rp100.000', value: 100000 },
+                { label: 'Rp200.000', value: 200000 },
+                { label: 'Rp500.000', value: 500000 },
+              ].map((q) => (
+                <button
+                  key={q.label}
+                  type="button"
+                  className="border-2 border-zinc-400 bg-white px-2 py-1 text-[11.5px] font-bold hover:border-black hover:bg-yellow-100"
+                  onClick={() => setPaidInput(String(q.value))}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+
+            {/* keypad numerik */}
+            <div className="mt-2 grid grid-cols-3 gap-1.5">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="border-2 border-black bg-white py-2 text-[16px] font-bold hover:bg-gray-100 active:bg-black active:text-white"
+                  onClick={() => tekanAngkaUang(k)}
+                >
+                  {k}
+                </button>
+              ))}
             </div>
           </div>
 
