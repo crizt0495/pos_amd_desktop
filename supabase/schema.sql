@@ -370,7 +370,7 @@ as $$
 declare
   v_rows jsonb;
 begin
-  select coalesce(jsonb_agg(row_to_jsonb(r)), '[]'::jsonb) into v_rows
+  select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) into v_rows
   from (
     select i.product_name as name, i.product_id as product_id,
            round(sum(i.qty), 2) as qty,
@@ -398,7 +398,7 @@ as $$
 declare
   v_rows jsonb;
 begin
-  select coalesce(jsonb_agg(row_to_jsonb(r)), '[]'::jsonb) into v_rows
+  select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) into v_rows
   from (
     select t.created_at::date::text as tanggal,
            count(*) as transaksi,
@@ -425,7 +425,7 @@ as $$
 declare
   v_rows jsonb;
 begin
-  select coalesce(jsonb_agg(row_to_jsonb(r)), '[]'::jsonb) into v_rows
+  select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) into v_rows
   from (
     select t.payment_method as metode,
            count(*) as n,

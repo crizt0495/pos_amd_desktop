@@ -72,7 +72,7 @@ async function main() {
 
   console.log('\n2. Tabel kasir_*');
   for (const table of ['kasir_products', 'kasir_transactions', 'kasir_transaction_items', 'kasir_settings']) {
-    const { error } = await sb.from(table).select('id', { count: 'exact', head: true }).limit(1);
+    const { error } = await sb.from(table).select('*', { count: 'exact', head: true }).limit(1);
     if (error) bad(`Tabel ${table}: ${error.message} (jalankan supabase/schema.sql di SQL Editor)`);
     else ok(`Tabel ${table} ada`);
   }
@@ -93,12 +93,21 @@ async function main() {
   }
 
   console.log('\n4. RPC laporan');
-  for (const fn of ['kasir_report_summary', 'kasir_report_top', 'kasir_report_daily', 'kasir_report_by_payment']) {
-    const { error } = await sb.rpc(fn, { p_from: null, p_to: null, p_limit: 1 });
+  const s = (n) => (n === null ? null : `${n}T00:00:00.000Z`);
+  for (const [fn, args] of [
+    ['kasir_report_summary', { p_from: null, p_to: null }],
+    ['kasir_report_top', { p_from: null, p_to: null, p_limit: 5 }],
+    ['kasir_report_daily', { p_from: null, p_to: null }],
+    ['kasir_report_by_payment', { p_from: null, p_to: null }],
+  ]) {
+    // panggil dengan argumen kosong; kalau fungsi ADA, PostgREST tidak
+    // mengembalikan error "function does not exist".
+    const { data, error } = await sb.rpc(fn, args);
     if (error && /function.*does not exist|could not find the function/i.test(error.message)) {
-      bad(`RPC ${fn} belum ada`);
+      bad(`RPC ${fn} belum ada (jalankan supabase/schema.sql)`);
     } else {
-      ok(`RPC ${fn} ada`);
+      ok(`RPC ${fn} ada` + (error ? ` (isi kosong: ${error.message.split('\n')[0] ?? ''})` : ''));
+      if (error) console.log(`       ${c.dim}coba isi rentang: ${JSON.stringify({ p_from: s('2026-01-01'), p_to: s('2026-12-31') })}${c.reset}`);
     }
   }
 
