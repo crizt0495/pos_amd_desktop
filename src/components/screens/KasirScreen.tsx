@@ -369,12 +369,12 @@ export default function KasirScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-white font-mono text-black">
       {/* ======================= 1. HEADER TOTAL ======================= */}
-      <header className="flex h-[120px] shrink-0 items-center border-b-2 border-black px-5">
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold tracking-widest text-black">POS AMD</p>
-          <p className="text-[11px] text-zinc-500">{store.name}</p>
+      <header className="flex h-[96px] shrink-0 items-center border-b-2 border-black px-4 sm:h-[112px] sm:px-5 md:h-[120px] md:px-6">
+        <div className="min-w-0 flex-1 pr-3">
+          <p className="truncate text-[13px] font-bold tracking-widest text-black">POS AMD</p>
+          <p className="truncate text-[11px] text-zinc-500">{store.name}</p>
         </div>
-        <div className="tnum text-right text-4xl font-bold leading-none text-red-600 sm:text-6xl lg:text-7xl">
+        <div className="tnum shrink-0 whitespace-nowrap text-right text-3xl font-bold leading-none text-red-600 sm:text-5xl lg:text-6xl xl:text-7xl">
           {rupiah(totals.total)}
         </div>
       </header>
@@ -382,11 +382,13 @@ export default function KasirScreen() {
       {/* ===================== 2. INFO TRANSAKSI ======================== */}
       <section className="shrink-0 border-b-2 border-black text-[13px]">
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_220px]">
-          <div className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-0.5 px-4 py-2.5 leading-relaxed">
+          <div className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 px-4 py-2.5 leading-relaxed sm:gap-x-6 sm:px-5">
             <span className="text-zinc-500">No Nota</span>
-            <span className="text-right">{invoicePreview} <span className="text-zinc-400">(auto)</span></span>
+            <span className="min-w-0 text-right">
+              {invoicePreview} <span className="text-zinc-400">(auto)</span>
+            </span>
             <span className="text-zinc-500">Tanggal</span>
-            <span className="text-right">
+            <span className="min-w-0 whitespace-nowrap text-right">
               {now.toLocaleDateString('id-ID', {
                 weekday: 'short',
                 day: '2-digit',
@@ -396,11 +398,11 @@ export default function KasirScreen() {
               {now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
             </span>
             <span className="text-zinc-500">Kasir</span>
-            <span className="text-right">{cashier}</span>
+            <span className="min-w-0 truncate text-right">{cashier}</span>
             <span className="text-zinc-500">Pelanggan</span>
-            <span className="flex items-center justify-end gap-1">
+            <span className="flex min-w-0 items-center justify-end gap-1.5">
               <select
-                className="h-7 max-w-[170px] border-2 border-black bg-white px-1 text-[12.5px] outline-none"
+                className="h-7 min-w-0 flex-1 border-2 border-black bg-white px-1 text-[12.5px] outline-none focus:bg-yellow-100 sm:max-w-[190px] sm:flex-none"
                 value={customer}
                 onChange={(e) => setCustomer(e.target.value)}
               >
@@ -416,7 +418,7 @@ export default function KasirScreen() {
               <button
                 type="button"
                 onClick={() => void tambahPelanggan()}
-                className="h-7 w-7 border-2 border-black bg-gray-200 text-[14px] font-bold leading-none"
+                className="h-7 shrink-0 border-2 border-black bg-gray-200 px-2 text-[14px] font-bold leading-none"
                 title="Tambah pelanggan"
               >
                 +
@@ -458,7 +460,7 @@ export default function KasirScreen() {
               spellCheck={false}
             />
           </div>
-          <div className="flex flex-[3] items-stretch">
+          <div className="flex min-w-[126px] flex-[3] items-stretch">
             <span className="flex items-center border-r-2 border-black px-2 text-zinc-500">Qty</span>
             <input
               className="tnum min-w-0 flex-1 px-3 py-2.5 text-[15px] outline-none"
@@ -473,7 +475,7 @@ export default function KasirScreen() {
       </form>
 
       {/* ==================== 4. TABEL KERANJANG (CORE) ==================== */}
-      <div className="min-h-0 flex-1 overflow-auto bg-white">
+      <div className="min-h-0 flex-1 overflow-auto overscroll-contain bg-white">
         <div className="flex items-center justify-between border-b-2 border-black px-3 py-1.5 text-[12px]">
           <span className="flex items-center gap-1.5">
             <ShoppingCart className="h-3.5 w-3.5" /> Keranjang
@@ -488,14 +490,14 @@ export default function KasirScreen() {
           </button>
         </div>
 
-        <table className="w-full border-collapse text-[12.5px]">
+        <table className="w-full min-w-[600px] border-collapse text-[12.5px]">
           <thead>
-            <tr className="bg-gray-100 text-[12px]">
-              <th className="w-9 border-2 border-black px-1 py-1.5">No</th>
+            <tr className="sticky top-0 z-10 bg-gray-100 text-[12px]">
+              <th className="w-11 border-2 border-black px-1 py-1.5">No</th>
               <th className="border-2 border-black px-2 py-1.5 text-left">Barang</th>
               <th className="w-16 border-2 border-black px-1 py-1.5">Qty</th>
-              <th className="w-24 border-2 border-black px-1 py-1.5">Satuan</th>
-              <th className="w-36 border-2 border-black px-1 py-1.5">Harga</th>
+              <th className="w-20 border-2 border-black px-1 py-1.5">Satuan</th>
+              <th className="w-32 border-2 border-black px-1 py-1.5">Harga</th>
               <th className="w-32 border-2 border-black px-2 py-1.5 text-right">Jumlah</th>
             </tr>
           </thead>
@@ -580,12 +582,12 @@ export default function KasirScreen() {
             {/* baris kosong sampai 10 baris */}
             {Array.from({ length: emptyRows }).map((_, i) => (
               <tr key={`empty-${i}`} className="bg-white">
-                <td className="h-9 border-2 border-black" />
-                <td className="h-9 border-2 border-black" />
-                <td className="h-9 border-2 border-black" />
-                <td className="h-9 border-2 border-black" />
-                <td className="h-9 border-2 border-black" />
-                <td className="h-9 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
+                <td className="h-11 border-2 border-black" />
               </tr>
             ))}
           </tbody>
