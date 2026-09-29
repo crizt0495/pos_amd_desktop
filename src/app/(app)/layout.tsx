@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
   Boxes,
-  ExternalLink,
   LogOut,
   Maximize2,
   Minus,
@@ -29,9 +28,6 @@ const MODULES = [
   { href: '/kasir', label: 'Penjualan', sub: 'Penjualan Kasir', Icon: Receipt },
   { href: '/laporan', label: 'Laporan', sub: 'Laporan Penjualan', Icon: BarChart3 },
 ] as const;
-
-/** Portal KasirPro (mobile PWA) — dibuka di tab terpisah. */
-const PORTAL_URL = process.env.NEXT_PUBLIC_PORTAL_URL || 'https://pos-amd.vercel.app';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -141,16 +137,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <Settings className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Pengaturan</span>
             </button>
-            <a
-              className="ribbon-btn"
-              href={PORTAL_URL}
-              target="_blank"
-              rel="noreferrer"
-              title="Buka KasirPro Portal (mobile)"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Portal</span>
-            </a>
           </div>
         </div>
 
