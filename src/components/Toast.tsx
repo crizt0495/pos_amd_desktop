@@ -27,9 +27,9 @@ export function useToast(): ToastApi {
 }
 
 const TONE = {
-  ok: { cls: 'border-emerald-200 bg-emerald-50 text-emerald-800', Icon: CheckCircle2 },
-  error: { cls: 'border-red-200 bg-red-50 text-red-800', Icon: AlertTriangle },
-  info: { cls: 'border-zinc-200 bg-white text-zinc-800', Icon: Info },
+  ok: { cls: 'border-[#b7e0c1] bg-[#ebfbee] text-[#1b5a2b]', Icon: CheckCircle2 },
+  error: { cls: 'border-[#ffc9c9] bg-[#fff5f5] text-[#a51d1d]', Icon: AlertTriangle },
+  info: { cls: 'border-[#cdd8e6] bg-white text-[#22374b]', Icon: Info },
 } as const;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -70,7 +70,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-xl border px-3.5 py-2.5 shadow-lg animate-fade-in ${cfg.cls}`}
+              className={`pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-lg border px-3.5 py-2.5 shadow-[0_8px_24px_rgba(16,40,70,0.18)] animate-pop-in ${cfg.cls}`}
             >
               <Icon className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="min-w-0 flex-1">

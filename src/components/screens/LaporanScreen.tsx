@@ -145,22 +145,40 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* ------------------------- SUB-RIBBON -------------------------- */}
+      <div className="sub-ribbon">
+        <span className="rb-label">Laporan · Laporan Penjualan</span>
+        <button
+          type="button"
+          className="rb-btn-primary"
+          onClick={() => void load()}
+          disabled={loading}
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
+        </button>
+        <span className="rb-sep" />
+        {PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => pilihPreset(p)}
+            className={`rb-btn !h-7 !px-2 !text-[11.5px] ${
+              preset === p.key ? '!border-[#1b5fa8] !bg-[#e8f1fa] !text-[#134a85]' : ''
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+        <span className="ml-auto hidden shrink-0 pr-1 text-[11.5px] text-[#7a8ba0] sm:block">
+          {preset === 'all' ? 'Semua transaksi' : `${from} s/d ${to}`}
+        </span>
+      </div>
+
       {/* ------------------------------ filter ---------------------------- */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white p-3">
-        <div className="flex gap-1">
-          {PRESETS.map((p) => (
-            <button
-              key={p.key}
-              type="button"
-              onClick={() => pilihPreset(p)}
-              className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${
-                preset === p.key ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#d8e0ec] bg-white p-3">
+        <h2 className="mr-1 flex items-center gap-1.5 text-[13px] font-bold text-[#1b3a5c]">
+          <BarChart3 className="h-4 w-4 text-[#1b5fa8]" /> Laporan Penjualan
+        </h2>
 
         <div className="flex items-center gap-1.5">
           <input
@@ -173,7 +191,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
               setPreset('custom');
             }}
           />
-          <span className="text-[12px] text-zinc-400">s/d</span>
+          <span className="text-[12px] text-[#9fb0c4]">s/d</span>
           <input
             type="date"
             className="input h-8 w-[142px] text-[12px]"
@@ -186,13 +204,9 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           />
         </div>
 
-        <button type="button" className="btn-outline h-8 px-3" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
+        <button type="button" className="btn-outline h-8 px-3" onClick={() => window.print()}>
+          <Printer className="h-3.5 w-3.5" /> Cetak Laporan
         </button>
-
-        <span className="ml-auto text-[11.5px] text-zinc-400">
-          {preset === 'all' ? 'Semua transaksi' : `${from} s/d ${to}`}
-        </span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -207,11 +221,11 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
         <div className="mt-2.5 grid gap-2.5 lg:grid-cols-[1.35fr_1fr]">
           {/* ------------------------- grafik harian ------------------- */}
           <div className="card p-3.5">
-            <h3 className="mb-2.5 flex items-center gap-2 text-[13px] font-bold text-zinc-800">
-              <BarChart3 className="h-4 w-4" /> Omzet Harian
+            <h3 className="mb-2.5 flex items-center gap-2 text-[13px] font-bold text-[#1b3a5c]">
+              <BarChart3 className="h-4 w-4 text-[#1b5fa8]" /> Omzet Harian
             </h3>
             {!daily.length ? (
-              <p className="py-8 text-center text-[12.5px] text-zinc-400">Belum ada transaksi pada rentang ini.</p>
+              <p className="py-8 text-center text-[12.5px] text-[#9fb0c4]">Belum ada transaksi pada rentang ini.</p>
             ) : (
               <>
                 <div className="flex h-32 items-end gap-1">
@@ -219,24 +233,24 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                     <div key={d.tanggal} className="group flex flex-1 flex-col items-center gap-1">
                       <div className="relative flex w-full flex-1 items-end">
                         <div
-                          className="w-full rounded-t bg-zinc-900/85 transition group-hover:bg-zinc-900"
+                          className="w-full rounded-t bg-[#1b5fa8]/85 transition group-hover:bg-[#134a85]"
                           style={{ height: `${Math.max(3, (d.omzet / omzetMax) * 100)}%` }}
                           title={`${d.tanggal}: ${rupiah(d.omzet)} (${d.transaksi} transaksi)`}
                         />
                       </div>
-                      <span className="truncate text-[9.5px] text-zinc-400">
+                      <span className="truncate text-[9.5px] text-[#9fb0c4]">
                         {d.tanggal.slice(8)}/{d.tanggal.slice(5, 7)}
                       </span>
                     </div>
                   ))}
                 </div>
-                <div className="mt-2.5 space-y-1 border-t border-dashed border-zinc-200 pt-2 text-[11.5px]">
+                <div className="mt-2.5 space-y-1 border-t border-dashed border-[#d8e0ec] pt-2 text-[11.5px]">
                   {daily.slice(-5).reverse().map((d) => (
                     <div key={d.tanggal} className="flex items-center justify-between">
-                      <span className="text-zinc-500">{d.tanggal}</span>
+                      <span className="text-[#5b6b80]">{d.tanggal}</span>
                       <span className="flex items-center gap-3">
-                        <span className="tnum text-zinc-500">{d.transaksi} trx</span>
-                        <span className="tnum w-24 text-right font-semibold text-zinc-800">{rupiah(d.omzet)}</span>
+                        <span className="tnum text-[#7a8ba0]">{d.transaksi} trx</span>
+                        <span className="tnum w-24 text-right font-semibold text-[#22374b]">{rupiah(d.omzet)}</span>
                       </span>
                     </div>
                   ))}
@@ -247,19 +261,19 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
           {/* ---------------------- produk terlaris -------------------- */}
           <div className="card p-3.5">
-            <h3 className="mb-2.5 text-[13px] font-bold text-zinc-800">Produk Terlaris</h3>
+            <h3 className="mb-2.5 text-[13px] font-bold text-[#1b3a5c]">Produk Terlaris</h3>
             {!top.length ? (
-              <p className="py-8 text-center text-[12.5px] text-zinc-400">Belum ada penjualan.</p>
+              <p className="py-8 text-center text-[12.5px] text-[#9fb0c4]">Belum ada penjualan.</p>
             ) : (
               <ol className="space-y-1.5">
                 {top.map((p, i) => (
                   <li key={`${p.name}-${i}`} className="flex items-center gap-2.5">
-                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-zinc-100 text-[10.5px] font-bold text-zinc-500">
+                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded bg-[#e8f1fa] text-[10.5px] font-bold text-[#1b5fa8]">
                       {i + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-700">{p.name}</span>
-                    <span className="tnum shrink-0 text-[11.5px] text-zinc-500">{angka(p.qty)}</span>
-                    <span className="tnum w-24 shrink-0 text-right text-[12px] font-semibold text-zinc-800">
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#35485c]">{p.name}</span>
+                    <span className="tnum shrink-0 text-[11.5px] text-[#7a8ba0]">{angka(p.qty)}</span>
+                    <span className="tnum w-24 shrink-0 text-right text-[12px] font-semibold text-[#22374b]">
                       {rupiah(p.omzet)}
                     </span>
                   </li>
@@ -269,16 +283,16 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
             {byPayment.length ? (
               <>
-                <h3 className="mb-1.5 mt-3.5 border-t border-dashed border-zinc-200 pt-3 text-[13px] font-bold text-zinc-800">
+                <h3 className="mb-1.5 mt-3.5 border-t border-dashed border-[#d8e0ec] pt-3 text-[13px] font-bold text-[#1b3a5c]">
                   Metode Pembayaran
                 </h3>
                 <ul className="space-y-1">
                   {byPayment.map((p) => (
                     <li key={p.metode} className="flex items-center justify-between text-[12px]">
-                      <span className="text-zinc-600">{PAYMENT_METHOD_LABEL[p.metode] ?? p.metode}</span>
+                      <span className="text-[#4a5b70]">{PAYMENT_METHOD_LABEL[p.metode] ?? p.metode}</span>
                       <span className="flex items-center gap-3">
-                        <span className="tnum text-zinc-400">{p.n} trx</span>
-                        <span className="tnum w-24 text-right font-semibold text-zinc-800">{rupiah(p.omzet)}</span>
+                        <span className="tnum text-[#9fb0c4]">{p.n} trx</span>
+                        <span className="tnum w-24 text-right font-semibold text-[#22374b]">{rupiah(p.omzet)}</span>
                       </span>
                     </li>
                   ))}
@@ -290,14 +304,14 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
         {/* ------------------------ daftar transaksi -------------------- */}
         <div className="card mt-2.5 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-zinc-100 px-3.5 py-2.5">
-            <h3 className="text-[13px] font-bold text-zinc-800">Riwayat Transaksi</h3>
-            <span className="text-[11.5px] text-zinc-400">{list.length} transaksi terbaru</span>
+          <div className="panel-head">
+            <h3 className="panel-title">Riwayat Transaksi</h3>
+            <span className="text-[11.5px] text-[#7a8ba0]">{list.length} transaksi terbaru</span>
           </div>
 
           <div className="max-h-[320px] overflow-auto">
             <table className="w-full min-w-[760px] border-collapse">
-              <thead className="sticky top-0 bg-white shadow-[0_1px_0_#e4e4e7]">
+              <thead className="sticky top-0 bg-[#f6f9fd]">
                 <tr>
                   <th className="th w-[150px]">Invoice</th>
                   <th className="th w-[150px]">Waktu</th>
@@ -307,27 +321,27 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                   <th className="th w-[150px] text-right">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-[#eef2f7]">
                 {!list.length && !loading ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-[12.5px] text-zinc-400">
+                    <td colSpan={6} className="py-10 text-center text-[12.5px] text-[#9fb0c4]">
                       Belum ada transaksi pada rentang ini.
                     </td>
                   </tr>
                 ) : (
                   list.map((tx) => (
-                    <tr key={tx.id} className="bg-white transition hover:bg-zinc-50">
-                      <td className="td font-mono text-[12px] font-semibold text-zinc-700">{tx.invoice_no}</td>
-                      <td className="td text-zinc-500">{tanggalWaktu(tx.created_at)}</td>
-                      <td className="td text-zinc-500">{PAYMENT_METHOD_LABEL[tx.payment_method] ?? tx.payment_method}</td>
-                      <td className="td tnum text-right font-semibold">{rupiah(tx.total)}</td>
+                    <tr key={tx.id} className="bg-white transition hover:bg-[#f6f9fd]">
+                      <td className="td font-mono text-[12px] font-semibold text-[#35485c]">{tx.invoice_no}</td>
+                      <td className="td text-[#5b6b80]">{tanggalWaktu(tx.created_at)}</td>
+                      <td className="td text-[#5b6b80]">{PAYMENT_METHOD_LABEL[tx.payment_method] ?? tx.payment_method}</td>
+                      <td className="td tnum text-right font-bold text-accent-600">{rupiah(tx.total)}</td>
                       <td className="td">
                         {tx.status === 'void' ? (
-                          <span className="rounded-md bg-red-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-red-600">
+                          <span className="rounded bg-[#fff5f5] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#c92a2a]">
                             Dibatalkan
                           </span>
                         ) : (
-                          <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+                          <span className="rounded bg-[#ebfbee] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#1b5a2b]">
                             Selesai
                           </span>
                         )}
@@ -352,7 +366,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                           {tx.status !== 'void' ? (
                             <button
                               type="button"
-                              className="btn-ghost px-2 py-1 text-[11.5px] text-red-600 hover:bg-red-50"
+                              className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
                               onClick={() => setVoiding(tx)}
                             >
                               <Ban className="h-3.5 w-3.5" />
@@ -377,7 +391,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
       >
         {detail ? (
           <div className="space-y-2.5">
-            <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-zinc-50 p-3 text-[12px]">
+            <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-[#f6f9fd] p-3 text-[12px]">
               <Info label="Waktu" value={tanggalWaktu(detail.tx.created_at)} />
               <Info label="Kasir" value={detail.tx.cashier_name || '-'} />
               <Info
@@ -387,29 +401,29 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
               <Info label="Kembalian" value={rupiah(detail.tx.change_due)} />
             </div>
 
-            <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200">
+            <ul className="divide-y divide-[#eef2f7] rounded-lg border border-[#d8e0ec]">
               {detail.items.map((it, i) => (
                 <li key={i} className="flex items-center justify-between px-3 py-1.5 text-[12.5px]">
-                  <span className="truncate text-zinc-700">
+                  <span className="truncate text-[#35485c]">
                     {it.qty} x {it.product_name}
                   </span>
-                  <span className="tnum shrink-0 font-semibold text-zinc-800">{rupiah(it.subtotal)}</span>
+                  <span className="tnum shrink-0 font-semibold text-[#22374b]">{rupiah(it.subtotal)}</span>
                 </li>
               ))}
             </ul>
 
-            <dl className="space-y-1 rounded-xl border border-zinc-200 p-3 text-[12.5px]">
+            <dl className="space-y-1 rounded-lg border border-[#d8e0ec] p-3 text-[12.5px]">
               <div className="flex justify-between">
-                <dt className="text-zinc-500">Subtotal</dt>
+                <dt className="text-[#5b6b80]">Subtotal</dt>
                 <dd className="tnum">{rupiah(detail.tx.subtotal)}</dd>
               </div>
               {detail.tx.discount_amount > 0 ? (
                 <div className="flex justify-between">
-                  <dt className="text-zinc-500">Diskon</dt>
-                  <dd className="tnum text-red-600">-{rupiah(detail.tx.discount_amount)}</dd>
+                  <dt className="text-[#5b6b80]">Diskon</dt>
+                  <dd className="tnum text-[#e03131]">-{rupiah(detail.tx.discount_amount)}</dd>
                 </div>
               ) : null}
-              <div className="flex justify-between border-t border-dashed border-zinc-200 pt-1 text-[14px] font-bold">
+              <div className="flex justify-between border-t border-dashed border-[#d8e0ec] pt-1 text-[14px] font-bold">
                 <dt>Total</dt>
                 <dd className="tnum">{rupiah(detail.tx.total)}</dd>
               </div>
@@ -454,11 +468,11 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           </>
         }
       >
-        <p className="text-[13px] leading-relaxed text-zinc-600">
-          Batalkan transaksi <b className="text-zinc-900">{voiding?.invoice_no}</b> sebesar{' '}
-          <b className="text-zinc-900">{rupiah(voiding?.total ?? 0)}</b>?
+        <p className="text-[13px] leading-relaxed text-[#35485c]">
+          Batalkan transaksi <b className="text-[#1b3a5c]">{voiding?.invoice_no}</b> sebesar{' '}
+          <b className="text-[#1b3a5c]">{rupiah(voiding?.total ?? 0)}</b>?
         </p>
-        <p className="mt-2 rounded-lg bg-amber-50 p-2.5 text-[11.5px] text-amber-800">
+        <p className="mt-2 rounded-lg bg-[#fff9db] p-2.5 text-[11.5px] text-[#a35b00]">
           Transaksi ditandai Dibatalkan dan stok produk otomatis dikembalikan. Riwayat tetap tercatat.
         </p>
       </Modal>
@@ -481,11 +495,13 @@ function Stat({
 }) {
   return (
     <div className="card p-3.5">
-      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#5b6b80]">
         {icon}
         {label}
       </p>
-      <p className={`tnum mt-1 text-[20px] font-bold ${tone === 'green' ? 'text-emerald-600' : 'text-zinc-900'}`}>
+      <p
+        className={`tnum mt-1 text-[20px] font-bold ${tone === 'green' ? 'text-[#2f9e44]' : 'text-[#1b3a5c]'}`}
+      >
         {value}
       </p>
     </div>
@@ -495,8 +511,8 @@ function Stat({
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-2">
-      <span className="text-zinc-500">{label}</span>
-      <span className="truncate font-semibold text-zinc-800">{value}</span>
+      <span className="text-[#5b6b80]">{label}</span>
+      <span className="truncate font-semibold text-[#22374b]">{value}</span>
     </div>
   );
 }

@@ -5,6 +5,14 @@
 @layer base {
   :root {
     color-scheme: light;
+
+    /* Palet iPOS */
+    --ipos-blue: #1b5fa8;
+    --ipos-blue-dark: #134a85;
+    --ipos-blue-light: #e8f1fa;
+    --ipos-line: #d8e0ec;
+    --ipos-bg: #eef2f8;
+    --ipos-accent: #e8590c;
   }
 
   html,
@@ -13,7 +21,7 @@
   }
 
   body {
-    @apply bg-zinc-100 text-foreground antialiased;
+    @apply bg-[#eef2f8] text-foreground antialiased;
   }
 
   * {
@@ -39,12 +47,15 @@
   }
 
   *::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
   }
   *::-webkit-scrollbar-thumb {
     border-radius: 8px;
-    background: #d4d4d8;
+    background: #c3cedd;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #a3b4c9;
   }
   *::-webkit-scrollbar-track {
     background: transparent;
@@ -52,55 +63,254 @@
 }
 
 @layer components {
-  .card {
-    @apply rounded-2xl border border-zinc-200 bg-white;
+  /* ------------------------------------------------------------------ */
+  /* Chrome ala iPOS: title bar, ribbon, rail, status bar              */
+  /* ------------------------------------------------------------------ */
+
+  .ipos-titlebar {
+    @apply flex shrink-0 items-center gap-3 bg-gradient-to-b from-[#2470c0] to-[#134a85] px-3 text-white;
+    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.18);
   }
 
+  .ipos-logo {
+    @apply grid h-8 w-8 shrink-0 place-items-center rounded bg-white/15 text-white ring-1 ring-white/25;
+  }
+
+  .ipos-ribbon {
+    @apply flex shrink-0 items-stretch justify-between gap-3 border-b bg-[#f6f9fd] px-2;
+    border-color: var(--ipos-line);
+  }
+
+  .ribbon-tab {
+    @apply relative flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-[12.5px] font-semibold
+      text-[#4a5b70] transition hover:bg-[#e6eef8] hover:text-[#1b5fa8];
+  }
+
+  .ribbon-tab-active {
+    @apply bg-white text-[#1b5fa8] shadow-[inset_0_-3px_0_#1b5fa8];
+  }
+
+  .ribbon-group {
+    @apply flex items-center gap-1.5 border-l pl-3;
+    border-color: var(--ipos-line);
+  }
+
+  .ribbon-btn {
+    @apply inline-flex h-8 items-center gap-1.5 rounded border border-[#cdd8e6] bg-white px-2.5
+      text-[12px] font-semibold text-[#35485c] transition
+      hover:border-[#1b5fa8] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]
+      active:translate-y-px;
+  }
+
+  .ipos-rail {
+    @apply flex w-14 shrink-0 flex-col items-center gap-1 bg-gradient-to-b from-[#1a579b] to-[#103a6b] py-2;
+  }
+
+  .rail-item {
+    @apply grid h-11 w-12 place-items-center rounded-md text-white/70 transition
+      hover:bg-white/15 hover:text-white;
+  }
+
+  .rail-item-active {
+    @apply bg-white/20 text-white shadow-[inset_2px_0_0_#ffc078];
+  }
+
+  .ipos-statusbar {
+    @apply flex shrink-0 items-center gap-3 border-t bg-[#e7edf6] px-3 text-[11px] text-[#4a5b70];
+    border-color: var(--ipos-line);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Panel & tabel                                                       */
+  /* ------------------------------------------------------------------ */
+
+  .card {
+    @apply rounded-lg border bg-white;
+    border-color: var(--ipos-line);
+    box-shadow: 0 1px 2px rgba(16, 40, 70, 0.04);
+  }
+
+  .panel-head {
+    @apply flex shrink-0 items-center justify-between gap-2 border-b bg-[#f6f9fd] px-3.5 py-2.5;
+    border-color: var(--ipos-line);
+  }
+
+  .panel-title {
+    @apply flex items-center gap-1.5 text-[12.5px] font-bold text-[#1b3a5c];
+  }
+
+  .th {
+    @apply whitespace-nowrap px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#5b6b80];
+  }
+
+  .td {
+    @apply px-3 py-2 text-[12.5px] text-[#35485c];
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Kontrol                                                             */
+  /* ------------------------------------------------------------------ */
+
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold transition
-      active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded border px-3 py-2 text-[12.5px]
+      font-semibold transition active:translate-y-px
+      disabled:pointer-events-none disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-zinc-900 text-white hover:bg-zinc-800;
+    @apply btn border-[#134a85] bg-[#1b5fa8] text-white hover:bg-[#17538f];
   }
 
   .btn-outline {
-    @apply btn border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50;
+    @apply btn border-[#cdd8e6] bg-white text-[#35485c] hover:border-[#1b5fa8] hover:bg-[#e8f1fa] hover:text-[#1b5fa8];
   }
 
   .btn-ghost {
-    @apply btn text-zinc-600 hover:bg-zinc-100;
+    @apply btn border-transparent text-[#5b6b80] hover:bg-[#e6eef8] hover:text-[#1b5fa8];
   }
 
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn border-[#c92a2a] bg-[#e03131] text-white hover:bg-[#c92a2a];
   }
 
   .btn-success {
-    @apply btn bg-emerald-600 text-white hover:bg-emerald-700;
+    @apply btn border-[#2b8a3e] bg-[#2f9e44] text-white hover:bg-[#2b8a3e];
   }
 
   .input {
-    @apply h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-[13px] text-zinc-900
-      outline-none transition placeholder:text-zinc-400
-      focus:border-zinc-900 focus:ring-2 focus:ring-zinc-900/10;
+    @apply h-9 w-full rounded border border-[#cdd8e6] bg-white px-2.5 text-[13px] text-[#22374b]
+      outline-none transition placeholder:text-[#9fb0c4]
+      focus:border-[#1b5fa8] focus:ring-2 focus:ring-[#1b5fa8]/15;
   }
 
   .label {
-    @apply mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-500;
+    @apply mb-1 block text-[11px] font-bold uppercase tracking-wide text-[#5b6b80];
   }
 
   .tnum {
     font-variant-numeric: tabular-nums;
   }
 
-  .th {
-    @apply px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500;
+  /* ------------------------------------------------------------------ */
+  /* Katalog & keranjang                                                 */
+  /* ------------------------------------------------------------------ */
+
+  .chip {
+    @apply inline-flex shrink-0 items-center gap-1 rounded-full border border-[#cdd8e6] bg-white
+      px-3 py-1 text-[12px] font-semibold text-[#4a5b70] transition
+      hover:border-[#1b5fa8] hover:text-[#1b5fa8];
   }
 
-  .td {
-    @apply px-3 py-2 text-[13px] text-zinc-700;
+  .chip-active {
+    @apply border-[#1b5fa8] bg-[#1b5fa8] text-white hover:text-white;
+  }
+
+  .tile {
+    @apply flex h-[104px] w-full flex-col rounded-lg border border-[#dde5ef] bg-white p-2.5 text-left
+      shadow-[0_1px_2px_rgba(16,40,70,0.05)] transition
+      hover:border-[#1b5fa8] hover:shadow-[0_4px_12px_rgba(27,95,168,0.14)]
+      active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45;
+  }
+
+  .cart-line {
+    @apply border-b border-[#eef2f7] px-3 py-2.5 transition;
+  }
+
+  /* Keycap gaya iPOS untuk hint tombol pintasan */
+  .kbd {
+    @apply inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-[3px] border
+      border-[#c3cedd] bg-[#f1f5fa] px-1 text-[9.5px] font-bold uppercase leading-none text-[#5b6b80];
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Sub-ribbon — baris perintah di bawah ribbon modul                  */
+  /* ------------------------------------------------------------------ */
+
+  .sub-ribbon {
+    @apply flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-white px-2 py-1.5;
+    border-color: var(--ipos-line);
+  }
+
+  .rb-label {
+    @apply hidden shrink-0 pr-1.5 text-[10px] font-bold uppercase tracking-wider text-[#9fb0c4] xl:block;
+  }
+
+  .rb-sep {
+    @apply mx-0.5 h-5 w-px shrink-0;
+    background: var(--ipos-line);
+  }
+
+  .rb-btn {
+    @apply inline-flex h-8 shrink-0 items-center gap-1.5 rounded border border-[#cdd8e6] bg-white
+      px-2.5 text-[12px] font-semibold text-[#35485c] transition
+      hover:border-[#1b5fa8] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]
+      active:translate-y-px disabled:pointer-events-none disabled:opacity-45;
+  }
+
+  .rb-btn-primary {
+    @apply rb-btn border-[#134a85] bg-[#1b5fa8] text-white hover:bg-[#17538f] hover:text-white;
+  }
+
+  .rb-btn-danger {
+    @apply rb-btn border-[#e9b3b3] bg-white text-[#c92a2a] hover:border-[#e03131] hover:bg-[#fff5f5]
+      hover:text-[#c92a2a];
+  }
+
+  .rb-btn-go {
+    @apply rb-btn h-9 border-[#134a85] bg-[#1b5fa8] px-4 text-[13px] font-bold text-white
+      shadow-[0_2px_6px_rgba(27,95,168,0.32)] hover:bg-[#17538f] hover:text-white;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Form transaksi ala iPOS — header field + detail grid                */
+  /* ------------------------------------------------------------------ */
+
+  .frm-label {
+    @apply mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-[#5b6b80];
+  }
+
+  .frm-input {
+    @apply h-8 w-full rounded border border-[#cdd8e6] bg-white px-2 text-[12.5px] text-[#22374b]
+      outline-none transition placeholder:text-[#9fb0c4]
+      focus:border-[#1b5fa8] focus:ring-2 focus:ring-[#1b5fa8]/15;
+  }
+
+  .frm-readonly {
+    @apply h-8 w-full rounded border border-[#d8e0ec] bg-[#f4f8fc] px-2 text-[12.5px] text-[#5b6b80];
+  }
+
+  /* Kolom "Kode Item" — fokus utama, kotak tebal biru ala iPOS */
+  .frm-key {
+    @apply h-9 w-full rounded border-2 border-[#1b5fa8] bg-white px-2.5 text-[14px] font-semibold
+      uppercase tracking-wide text-[#22374b] outline-none ring-2 ring-[#1b5fa8]/15
+      placeholder:normal-case placeholder:font-normal placeholder:tracking-normal
+      placeholder:text-[#9fb0c4];
+  }
+
+  /* Sel tabel yang bisa diedit — mengilap saat baris aktif */
+  .cell {
+    @apply h-7 w-full rounded border border-transparent bg-transparent px-1.5 text-[12px]
+      text-[#22374b] outline-none transition
+      focus:border-[#1b5fa8] focus:bg-white focus:shadow-[0_0_0_2px_rgba(27,95,168,0.14)];
+  }
+
+  .cell-row-active {
+    @apply bg-[#eaf2fb];
+  }
+
+  /* Kotak pembayaran (Tunai / QRIS / Kartu Debit / Kredit) */
+  .pay-box {
+    @apply flex min-w-0 flex-1 flex-col rounded border border-[#cdd8e6] bg-white px-2 py-1.5
+      transition;
+  }
+
+  .pay-box-active {
+    @apply border-[#1b5fa8] bg-[#f5faff] shadow-[0_0_0_2px_rgba(27,95,168,0.14)];
+  }
+
+  /* Grand total */
+  .grand-total {
+    @apply tnum font-bold leading-none text-accent-600;
   }
 }
 
@@ -163,7 +373,8 @@
 
 /* Modal struk di layar */
 .receipt-shell {
-  @apply rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm;
+  @apply rounded-lg border bg-white p-3.5 shadow-sm;
+  border-color: var(--ipos-line);
   overflow: hidden;
 }
 

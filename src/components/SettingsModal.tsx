@@ -86,7 +86,7 @@ export function SettingsModal({
       }
     >
       <div className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg bg-zinc-50 p-2.5 text-[11.5px] text-zinc-500">
+        <div className="flex items-center gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
           <Store className="h-3.5 w-3.5 shrink-0" />
           Data ini tercetak pada struk kasir.
         </div>
