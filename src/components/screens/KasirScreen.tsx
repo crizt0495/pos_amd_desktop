@@ -67,7 +67,7 @@ export default function KasirScreen() {
     cashier: 'Kasir',
   });
   const [cashier, setCashier] = React.useState('Kasir');
-  const [now, setNow] = React.useState(new Date());
+  const [now, setNow] = React.useState<Date | null>(null);
   const [invoicePreview, setInvoicePreview] = React.useState('INV-…');
 
   /* ------------------------------ produk ------------------------------ */
@@ -109,6 +109,8 @@ export default function KasirScreen() {
 
   /* ------------------------------ memuat data -------------------------- */
   React.useEffect(() => {
+    // Mulai null (SSR) lalu isi waktu riil di klien — hindari mismatch hidrasi.
+    setNow(new Date());
     const t = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(t);
   }, []);
@@ -461,13 +463,19 @@ export default function KasirScreen() {
             </span>
             <span className="text-zinc-500">Tanggal</span>
             <span className="min-w-0 whitespace-nowrap text-right">
-              {now.toLocaleDateString('id-ID', {
-                weekday: 'short',
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-              })}{' '}
-              {now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+              {now ? (
+                <>
+                  {now.toLocaleDateString('id-ID', {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                  })}{' '}
+                  {now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                </>
+              ) : (
+                '—'
+              )}
             </span>
             <span className="text-zinc-500">Kasir</span>
             <span className="min-w-0 truncate text-right">{cashier}</span>

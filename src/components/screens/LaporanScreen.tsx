@@ -33,8 +33,10 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   const toast = useToast();
 
   const [preset, setPreset] = React.useState<Preset>('today');
-  const [from, setFrom] = React.useState(isoHariIni());
-  const [to, setTo] = React.useState(isoHariIni());
+  // Tanggal mulai kosong di SSR lalu diisi di klien — hindari mismatch hidrasi.
+  const [from, setFrom] = React.useState('');
+  const [to, setTo] = React.useState('');
+  const [ready, setReady] = React.useState(false);
 
   const [summary, setSummary] = React.useState<ReportSummary | null>(null);
   const [top, setTop] = React.useState<TopProduct[]>([]);
@@ -54,6 +56,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   const range = preset === 'all' ? {} : { from, to };
 
   const load = React.useCallback(async () => {
+    if (!ready) return;
     setLoading(true);
     const [s, t, d, p, l] = await Promise.all([
       reportsApi.summary(range),
@@ -69,7 +72,14 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
     if (p.ok) setByPayment(p.data);
     if (l.ok) setList(l.data);
     setLoading(false);
-  }, [from, to, preset]);
+  }, [from, to, preset, ready]);
+
+  React.useEffect(() => {
+    // Inisialisasi rentang tanggal di sisi klien (bukan saat SSR).
+    setFrom(isoHariIni());
+    setTo(isoHariIni());
+    setReady(true);
+  }, []);
 
   React.useEffect(() => {
     void load();
