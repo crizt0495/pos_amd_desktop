@@ -1,4 +1,4 @@
-import { jumlahBaris, round2, rupiah } from './format';
+import { jumlahBaris, potonganEfektif, round2, rupiah } from './format';
 import { settingsApi } from './api';
 import type { CartLine, ReceiptData, Transaction, TransactionItem } from './types';
 
@@ -16,7 +16,11 @@ function linesToItems(lines: CartLine[]) {
     name: l.name,
     price: l.price,
     qty: l.qty,
-    discount: l.discount,
+    // Nilai efektif (dibatasi harga x qty) supaya angka yang dicetak sama
+    // dengan yang dipotong di database; persennya ikut dibawa supaya struk
+    // bisa menulis "Pot/Diskon 10%" saat kasir memakai mode %.
+    discount: potonganEfektif(l),
+    discountPct: l.potonganPct ?? null,
     subtotal: jumlahBaris(l),
   }));
 }
@@ -75,6 +79,9 @@ export function buildReceiptFromTx(
       price: i.price,
       qty: i.qty,
       discount: i.discount,
+      // Persen tidak disimpan di database (UI-only), jadi struk cetak ulang
+      // menulis "Pot/Diskon" tanpa persen — lebih baik daripada menebak.
+      discountPct: null,
       subtotal: i.subtotal,
     })),
     subtotal: tx.subtotal,
@@ -118,10 +125,49 @@ export function formatTanggalStruk(iso: string): string {
   });
 }
 
-/** Row item struk yang aman di baris 58mm (nama dipotong + harga/baris). */
-export function lineItems(d: ReceiptData): { name: string; sub: string }[] {
+/** Satu baris item struk, lengkap dengan rincian potongannya. */
+export type BarisStruk = {
+  name: string;
+  qty: number;
+  price: number;
+  /** qty x harga sebelum potongan. */
+  gross: number;
+  /** Potongan baris (dibatasi ke harga x qty). */
+  discount: number;
+  /** Persen potongan bila diketahui (mode %), null untuk mode Rp. */
+  discountPct: number | null;
+  /** qty x harga - potongan. */
+  net: number;
+};
+
+/** Rincian tiap item untuk dicetak: nama, qty x harga, potongan, nilai akhir. */
+export function barisStruk(d: ReceiptData): BarisStruk[] {
   return d.items.map((it) => {
-    const name = `${it.qty > 1 ? `${it.qty}x ` : ''}${it.name}`;
-    return { name, sub: rupiah(it.subtotal) };
+    const qty = Math.max(Number(it.qty) || 0, 0);
+    const price = Math.max(Number(it.price) || 0, 0);
+    const gross = round2(price * qty);
+    const discount = round2(Math.min(Math.max(Number(it.discount) || 0, 0), gross));
+    return {
+      name: it.name,
+      qty,
+      price,
+      gross,
+      discount,
+      discountPct: it.discountPct ?? null,
+      net: round2(gross - discount),
+    };
   });
+}
+
+/** Ringkasan footer struk: subtotal kotor, total potongan, total akhir. */
+export function ringkasanStruk(d: ReceiptData, baris: BarisStruk[]) {
+  const subtotalKotor = round2(baris.reduce((s, b) => s + b.gross, 0));
+  const potonganItem = round2(baris.reduce((s, b) => s + b.discount, 0));
+  return {
+    subtotalKotor,
+    // Potongan per item + diskon level transaksi (khusus transaksi lama).
+    // `max` supaya angka di footer tak pernah lebih kecil dari rincian item.
+    totalPotongan: round2(Math.max(Number(d.discountAmount) || 0, potonganItem)),
+    total: Number(d.total) || 0,
+  };
 }

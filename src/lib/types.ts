@@ -245,7 +245,15 @@ export interface ReceiptData {
   storeAddress?: string;
   storePhone?: string;
   cashierName: string;
-  items: { name: string; price: number; qty: number; discount: number; subtotal: number }[];
+  items: {
+    name: string;
+    price: number;
+    qty: number;
+    discount: number;
+    /** Persen potongan bila kasir memakai mode % (null = mode Rp / tidak diketahui). */
+    discountPct?: number | null;
+    subtotal: number;
+  }[];
   subtotal: number;
   discountAmount: number;
   total: number;

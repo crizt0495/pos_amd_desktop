@@ -1,13 +1,20 @@
 import { PAYMENT_METHOD_LABEL, type ReceiptData } from '@/lib/types';
-import { formatTanggalStruk, lineItems } from '@/lib/receipt';
+import { barisStruk, formatTanggalStruk, ringkasanStruk } from '@/lib/receipt';
 import { rupiah } from '@/lib/format';
 
 /**
  * Struk 58mm. Saat dicetak (window.print) hanya elemen berkelas .receipt-print
  * yang terlihat — lihat @media print di app/globals.css.
+ *
+ * Format item sengaja 4 baris supaya potongan per item terlihat jelas:
+ *   Nama Item
+ *     2 x Rp. 3.500              Rp. 7.000
+ *     Pot/Diskon 10%             -Rp. 700
+ *                                Rp. 6.300
  */
 export function ReceiptView({ data }: { data: ReceiptData }) {
-  const items = lineItems(data);
+  const baris = barisStruk(data);
+  const { subtotalKotor, totalPotongan, total } = ringkasanStruk(data, baris);
 
   return (
     <div className="receipt-shell">
@@ -39,25 +46,46 @@ export function ReceiptView({ data }: { data: ReceiptData }) {
           <span>Item</span>
           <span>Jumlah</span>
         </div>
-        {items.map((it, i) => (
+        {baris.map((b, i) => (
           <div key={i} className="item">
-            <span className="name">{it.name}</span>
-            <span className="amt">{it.sub}</span>
+            <span className="name">{b.name}</span>
+            <span className="line">
+              <span>
+                {b.qty} x {rupiah(b.price)}
+              </span>
+              <span>{rupiah(b.gross)}</span>
+            </span>
+            {b.discount > 0 ? (
+              <span className="line disc">
+                <span>
+                  Pot/Diskon{b.discountPct != null ? ` ${b.discountPct}%` : ''}
+                </span>
+                <span>-{rupiah(b.discount)}</span>
+              </span>
+            ) : null}
+            <span className="line net">
+              <span />
+              <span>{rupiah(b.net)}</span>
+            </span>
           </div>
         ))}
 
         <hr />
 
         <div className="rows">
-          {data.discountAmount > 0 ? (
+          <div>
+            <span>SUBTOTAL</span>
+            <span>{rupiah(subtotalKotor)}</span>
+          </div>
+          {totalPotongan > 0 ? (
             <div>
-              <span>Diskon</span>
-              <span>-{rupiah(data.discountAmount)}</span>
+              <span>TOTAL POTONGAN</span>
+              <span>-{rupiah(totalPotongan)}</span>
             </div>
           ) : null}
           <div className="total">
             <span>TOTAL</span>
-            <span>{rupiah(data.total)}</span>
+            <span>{rupiah(total)}</span>
           </div>
           <div>
             <span>Bayar</span>

@@ -883,7 +883,9 @@ export default function KasirScreen() {
       const receipt = buildReceiptPreview({
         invoiceNo: tx.invoice_no,
         store,
-        lines: linesAman,
+        // Struk memakai keranjang asli (bukan `linesAman`) supaya persen
+        // potongan mode % ikut terbawa — `linesAman` sudah dibuang field itu.
+        lines,
         subtotal: totals.subtotal,
         discountAmount: totalPotongan,
         total: totalTagihan,

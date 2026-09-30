@@ -432,22 +432,48 @@
   padding-top: 5px;
 }
 
-.receipt .item,
 .receipt .item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 700;
+}
+
+/* Satu item = nama (bisa wrap) + beberapa baris "kiri ... kanan" */
+.receipt .item {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.receipt .item .name {
+  display: block;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.receipt .item .line {
   display: flex;
   justify-content: space-between;
   gap: 6px;
 }
 
-.receipt .item .name {
+.receipt .item .line > span:first-child {
   min-width: 0;
-  flex: 1;
-  white-space: normal;
   word-break: break-word;
 }
 
-.receipt .item .amt {
+/* Nominal tak pernah turun baris di printer thermal. */
+.receipt .item .line > span:last-child {
   white-space: nowrap;
+}
+
+.receipt .item .line.disc > span:first-child {
+  padding-left: 2px;
+}
+
+.receipt .item .line.net {
+  font-weight: 700;
 }
 
 /* Modal struk di layar */
