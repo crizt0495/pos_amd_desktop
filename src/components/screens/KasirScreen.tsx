@@ -39,6 +39,7 @@ import {
 } from '@/lib/format';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
+import { BigTotalDisplay } from '@/components/BigTotalDisplay';
 import { Modal } from '@/components/Modal';
 import { ModalBayar, type ShortcutBayar } from '@/components/ModalBayar';
 import { ModalListBarang } from '@/components/ModalListBarang';
@@ -1179,6 +1180,14 @@ export default function KasirScreen() {
           </span>
         </span>
       </div>
+
+      {/* ==================== TOTAL BESAR UNTUK PELANGGAN =============== */}
+      {/* Angka live dari keranjang; setelah transaksi tersimpan tampil 2 baris
+          (Total + Kembali) sampai modal struk ditutup. */}
+      <BigTotalDisplay
+        total={success ? success.receipt.total : totalTagihan}
+        kembali={success ? success.change : null}
+      />
 
       {/* ====================== HEADER FORM (Kode Item) ================= */}
       <div className="shrink-0 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2.5">

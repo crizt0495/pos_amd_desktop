@@ -11,7 +11,7 @@ manajemen produk, laporan & pembatalan (void). Di-host di **Vercel**, data di
 
 | Layar   | Kemampuan                                                                 |
 | ------- | ------------------------------------------------------------------------- |
-| Kasir   | Scan barcode / cari produk, keranjang, **diskon default per item baru** (Rp / %, isi otomatis kolom Potongan, masih bisa diedit per baris), tunai & QRIS, struk 58mm (cetak web), **shift kasir** (buka/tutup + setoran laci & selisih live) |
+| Kasir   | Scan barcode / cari produk, keranjang, **diskon default per item baru** (Rp / %, isi otomatis kolom Potongan, masih bisa diedit per baris), tunai & QRIS, struk 58mm (cetak web) dengan rincian Potongan per item, **Total Besar untuk pelanggan** (bisa diseret & posisinya tersimpan, setelah bayar tampil TOTAL + KEMBALI), **shift kasir** (buka/tutup + setoran laci & selisih live) |
 | Produk  | Tambah / ubah / hapus, stok ±, status non-aktif, peringatan stok menipis, **ekspor/impor CSV** (BOM UTF-8, angka ala Indonesia, upsert per barcode), **kartu stok** (mutasi terjual/retur/void/stok masuk-keluar) & **stok masuk** |
 | Laporan | Omzet & laba, grafik harian, produk terlaris, metode bayar, riwayat + void (stok kembali), **retur penjualan** (refund proporsional + riwayat retur), **laporan per kasir & riwayat shift** |
 
@@ -32,12 +32,16 @@ src/
     api.ts                 data layer (produk, transaksi, laporan, setting)
     format.ts              rupiah, tanggal, hitung keranjang
     receipt.ts             penyusun struk
+    tampilan.ts            preferensi display total besar (localStorage)
     types.ts               domain types
   app/
     login/                 halaman masuk (Serial Key / lisensi dari portal)
     (app)/kasir            layar kasir
     (app)/produk           layar produk
     (app)/laporan          layar laporan
+  components/
+    BigTotalDisplay.tsx    kotak total besar (seret, simpan posisi, ciut ke pil)
+    SettingsModal.tsx      Pengaturan: tab Toko (per akun) & Tampilan (per perangkat)
 supabase/schema.sql        skema + RLS + RPC (kanonik, idempotent — satu file utuh)
 supabase/migrations/       migrasi bertahap per fitur (retur, shift kasir, kartu stok)
 scripts/check-supabase.mjs verifikasi skema (tabel + RPC semua fitur)
