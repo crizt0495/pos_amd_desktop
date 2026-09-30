@@ -1,14 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp } from 'lucide-react';
+import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } from 'lucide-react';
 
-import { reportsApi, transactionsApi } from '@/lib/api';
+import { reportsApi, returnsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
 import { buildReceiptFromTx, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import { Modal } from '@/components/Modal';
+import { ReturModal } from '@/components/ReturModal';
 import { ReceiptView } from '@/components/Receipt';
 import { PAYMENT_METHOD_LABEL } from '@/lib/types';
 import type {
@@ -16,6 +17,7 @@ import type {
   PaymentReport,
   ReceiptData,
   ReportSummary,
+  ReturnRecord,
   TopProduct,
   Transaction,
   TransactionItem,
@@ -52,6 +54,11 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   } | null>(null);
   const [printData, setPrintData] = React.useState<ReceiptData | null>(null);
   const [voiding, setVoiding] = React.useState<Transaction | null>(null);
+  const [returns, setReturns] = React.useState<ReturnRecord[]>([]);
+  const [returSel, setReturSel] = React.useState<{
+    tx: Transaction;
+    items: TransactionItem[];
+  } | null>(null);
   // Kunci pembatalan transaksi agar tak terkirim dua kali.
   const voidGuard = useButtonGuard();
   // Kunci tombol ringan (buka detail, cetak, preset) tanpa spinner.
@@ -62,12 +69,13 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   const load = React.useCallback(async () => {
     if (!ready) return;
     setLoading(true);
-    const [s, t, d, p, l] = await Promise.all([
+    const [s, t, d, p, l, r] = await Promise.all([
       reportsApi.summary(range),
       reportsApi.topProducts(range),
       reportsApi.daily(range),
       reportsApi.byPayment(range),
       transactionsApi.list({ ...range, limit: 200 }),
+      returnsApi.list(range),
     ]);
 
     if (s.ok) setSummary(s.data);
@@ -75,6 +83,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
     if (d.ok) setDaily(d.data);
     if (p.ok) setByPayment(p.data);
     if (l.ok) setList(l.data);
+    if (r.ok) setReturns(r.data);
     setLoading(false);
   }, [from, to, preset, ready]);
 
@@ -134,6 +143,17 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
     setVoiding(null);
     onVoid?.(tx.invoice_no);
     await load();
+  }
+
+  /** Buka modal retur transaksi: muat item lalu tampilkan. */
+  async function bukaRetur(tx: Transaction) {
+    const res = await transactionsApi.get(tx.id);
+    if (!res.ok) {
+      toast.error('Gagal memuat transaksi', res.error);
+      return;
+    }
+    if (!res.data.transaction) return;
+    setReturSel({ tx: res.data.transaction, items: res.data.items });
   }
 
   /** Pembatalan transaksi: satu klik = satu void (klik ganda ditolak). */
@@ -324,7 +344,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           </div>
 
           <div className="max-h-[320px] overflow-auto">
-            <table className="w-full min-w-[760px] border-collapse">
+            <table className="w-full min-w-[820px] border-collapse">
               <thead className="sticky top-0 bg-[#f6f9fd]">
                 <tr>
                   <th className="th w-[150px]">Invoice</th>
@@ -332,7 +352,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                   <th className="th w-[90px]">Metode</th>
                   <th className="th w-[110px] text-right">Total</th>
                   <th className="th w-[100px]">Status</th>
-                  <th className="th w-[150px] text-right">Aksi</th>
+                  <th className="th w-[190px] text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#eef2f7]">
@@ -380,18 +400,70 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                             <Printer className="h-3.5 w-3.5" />
                           </button>
                           {tx.status !== 'void' ? (
-                            <button
-                              type="button"
-                              className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
-                              onClick={() => ui.run(() => setVoiding(tx), `void-${tx.id}`)}
-                              disabled={ui.locked(`void-${tx.id}`)}
-                              aria-label={`Batalkan transaksi ${tx.invoice_no}`}
-                            >
-                              <Ban className="h-3.5 w-3.5" />
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#b0720a] hover:bg-[#fff9db]"
+                                onClick={() => ui.run(() => void bukaRetur(tx), `retur-${tx.id}`)}
+                                disabled={ui.locked(`retur-${tx.id}`)}
+                                aria-label={`Retur transaksi ${tx.invoice_no}`}
+                              >
+                                <Undo2 className="h-3.5 w-3.5" /> Retur
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
+                                onClick={() => ui.run(() => setVoiding(tx), `void-${tx.id}`)}
+                                disabled={ui.locked(`void-${tx.id}`)}
+                                aria-label={`Batalkan transaksi ${tx.invoice_no}`}
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                              </button>
+                            </>
                           ) : null}
                         </div>
                       </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ------------------------ riwayat retur ---------------------- */}
+        <div className="card mt-2.5 overflow-hidden">
+          <div className="panel-head">
+            <h3 className="panel-title">Riwayat Retur</h3>
+            <span className="text-[11.5px] text-[#7a8ba0]">{returns.length} retur</span>
+          </div>
+
+          <div className="max-h-[200px] overflow-auto">
+            <table className="w-full min-w-[640px] border-collapse">
+              <thead className="sticky top-0 bg-[#f6f9fd]">
+                <tr>
+                  <th className="th w-[150px]">Retur No</th>
+                  <th className="th w-[150px]">Nota Asal</th>
+                  <th className="th w-[150px]">Waktu</th>
+                  <th className="th w-[90px]">Kasir</th>
+                  <th className="th w-[110px] text-right">Dana Kembali</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#eef2f7]">
+                {!returns.length ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-[12.5px] text-[#9fb0c4]">
+                      Belum ada retur pada rentang ini.
+                    </td>
+                  </tr>
+                ) : (
+                  returns.map((rt) => (
+                    <tr key={rt.id} className="bg-white transition hover:bg-[#f6f9fd]">
+                      <td className="td font-mono text-[12px] font-semibold text-[#35485c]">{rt.retur_no}</td>
+                      <td className="td font-mono text-[12px] text-[#5b6b80]">{rt.invoice_no}</td>
+                      <td className="td text-[#5b6b80]">{tanggalWaktu(rt.created_at)}</td>
+                      <td className="td text-[#5b6b80]">{rt.cashier_name || '-'}</td>
+                      <td className="td tnum text-right font-bold text-[#e03131]">-{rupiah(rt.total)}</td>
                     </tr>
                   ))
                 )}
@@ -473,6 +545,15 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
       >
         {printData ? <ReceiptView data={printData} /> : null}
       </Modal>
+
+      {/* ------------------------ retur penjualan ----------------------- */}
+      <ReturModal
+        open={Boolean(returSel)}
+        tx={returSel?.tx ?? null}
+        items={returSel?.items ?? []}
+        onClose={() => setReturSel(null)}
+        onSaved={() => void load()}
+      />
 
       {/* --------------------------- void transaksi ---------------------- */}
       <Modal

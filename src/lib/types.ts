@@ -160,6 +160,39 @@ export interface PaymentReport {
   omzet: number;
 }
 
+/** Header retur penjualan (kasir_returns). */
+export interface ReturnRecord {
+  id: string;
+  transaction_id: string;
+  invoice_no: string;
+  retur_no: string;
+  total: number;
+  cashier_name: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** Baris retur penjualan (kasir_return_items). */
+export interface ReturnItem {
+  id: string;
+  return_id: string;
+  transaction_item_id: string | null;
+  product_id: string | null;
+  product_name: string;
+  price: number;
+  cost: number;
+  qty: number;
+  discount: number;
+  refund: number;
+}
+
+/** Satu baris input retur — dikirim ke RPC `kasir_create_return`. */
+export interface ReturnLineInput {
+  transaction_item_id: string;
+  product_id?: string | null;
+  qty: number;
+}
+
 export interface CartTotals {
   subtotal: number;
   discountAmount: number;

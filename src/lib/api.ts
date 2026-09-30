@@ -8,6 +8,9 @@ import type {
   Product,
   ProductInput,
   ReportSummary,
+  ReturnItem,
+  ReturnLineInput,
+  ReturnRecord,
   TopProduct,
   Transaction,
   TransactionItem,
@@ -636,6 +639,85 @@ export const customersApi = {
       const { error } = await createClient().from('kasir_customers').delete().eq('id', id);
       if (error) return { ok: false, error: error.message };
       return { ok: true, data: { id } };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
+/* ------------------------------- retur ------------------------------ */
+
+const mapReturn = (r: Record<string, unknown>): ReturnRecord => ({
+  id: String(r.id),
+  transaction_id: String(r.transaction_id),
+  invoice_no: String(r.invoice_no ?? ''),
+  retur_no: String(r.retur_no ?? ''),
+  total: num(r.total),
+  cashier_name: r.cashier_name ? String(r.cashier_name) : null,
+  note: r.note ? String(r.note) : null,
+  created_at: String(r.created_at ?? ''),
+});
+
+const mapReturnItem = (r: Record<string, unknown>): ReturnItem => ({
+  id: String(r.id),
+  return_id: String(r.return_id),
+  transaction_item_id: r.transaction_item_id ? String(r.transaction_item_id) : null,
+  product_id: r.product_id ? String(r.product_id) : null,
+  product_name: String(r.product_name ?? ''),
+  price: num(r.price),
+  cost: num(r.cost),
+  qty: num(r.qty),
+  discount: num(r.discount),
+  refund: num(r.refund),
+});
+
+export const returnsApi = {
+  async list(filter: { from?: string; to?: string; limit?: number } = {}): Promise<Result<ReturnRecord[]>> {
+    try {
+      const limit = Math.min(Math.max(num(filter.limit) || 100, 1), 1000);
+      let q = createClient().from('kasir_returns').select('*');
+      if (filter.from) q = q.gte('created_at', `${filter.from}T00:00:00.000Z`);
+      if (filter.to) q = q.lte('created_at', `${filter.to}T23:59:59.999Z`);
+      const { data, error } = await q.order('created_at', { ascending: false }).limit(limit);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []).map((r) => mapReturn(r as Record<string, unknown>)) };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async items(returnId: string): Promise<Result<ReturnItem[]>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_return_items')
+        .select('*')
+        .eq('return_id', returnId);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []).map((r) => mapReturnItem(r as Record<string, unknown>)) };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async create(data: {
+    transactionId: string;
+    items: ReturnLineInput[];
+    note?: string | null;
+  }): Promise<Result<{ retur: ReturnRecord; total: number }>> {
+    try {
+      const { data: result, error } = await createClient().rpc('kasir_create_return', {
+        p_tx_id: data.transactionId,
+        p_items: data.items
+          .filter((it) => num(it.qty) > 0)
+          .map((it) => ({ transaction_item_id: it.transaction_item_id, qty: num(it.qty) })),
+        p_note: data.note ?? null,
+      });
+      if (error) return { ok: false, error: error.message };
+      const body = result as { return: Record<string, unknown>; total?: number };
+      return {
+        ok: true,
+        data: { retur: mapReturn(body.return ?? {}), total: num(body.total) },
+      };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
