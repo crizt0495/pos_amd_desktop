@@ -1407,18 +1407,21 @@ export default function KasirScreen() {
       </div>
 
       {/* ========================= DETAIL GRID ========================== */}
+      {/* Wrapper bg-white + thead/th berlatar solid: kalau header tembus
+          transparan, nama barang di baris yang di-scroll akan "nembus" dari
+          belakang saat header ini nempel di atas. */}
       <div className="min-h-0 flex-1 overflow-auto bg-white">
         <table className="w-full min-w-[940px] border-collapse">
-          <thead className="sticky top-0 z-10">
+          <thead className="sticky top-0 z-20 bg-white shadow-[0_2px_4px_rgba(16,40,70,0.10)]">
             <tr>
-              <th className="th w-[42px] text-center">No</th>
-              <th className="th w-[130px]">Kode Item</th>
-              <th className="th">Nama Item</th>
-              <th className="th w-[92px]">Satuan</th>
-              <th className="th w-[96px] text-right">H. Pokok</th>
-              <th className="th w-[104px] text-right">H. Jual</th>
-              <th className="th w-[88px] text-right">Jumlah</th>
-              <th className="th w-[128px] text-right">
+              <th className="th w-[42px] bg-[#eef2ff] text-center">No</th>
+              <th className="th w-[130px] bg-[#eef2ff]">Kode Item</th>
+              <th className="th bg-[#eef2ff]">Nama Item</th>
+              <th className="th w-[92px] bg-[#eef2ff]">Satuan</th>
+              <th className="th w-[96px] bg-[#eef2ff] text-right">H. Pokok</th>
+              <th className="th w-[104px] bg-[#eef2ff] text-right">H. Jual</th>
+              <th className="th w-[88px] bg-[#eef2ff] text-right">Jumlah</th>
+              <th className="th w-[128px] bg-[#eef2ff] text-right">
                 <span className="inline-flex items-center justify-end gap-1">
                   <span>Potongan</span>
                   {/* Satu toggle untuk form Diskon di atas & kolom ini, jadi
@@ -1447,8 +1450,8 @@ export default function KasirScreen() {
                   </span>
                 </span>
               </th>
-              <th className="th w-[120px] text-right">Jumlah</th>
-              <th className="th w-[64px] text-center">Aksi</th>
+              <th className="th w-[120px] bg-[#eef2ff] text-right">Jumlah Akhir</th>
+              <th className="th w-[64px] bg-[#eef2ff] text-center">Aksi</th>
             </tr>
           </thead>
           <tbody>

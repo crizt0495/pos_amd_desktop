@@ -179,15 +179,15 @@ export function ModalListBarang({
           />
         </div>
 
-        <div className="max-h-[52vh] overflow-auto rounded border border-[#d8e0ec]">
+        <div className="max-h-[52vh] overflow-auto rounded border border-[#d8e0ec] bg-white">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 z-10">
+            <thead className="sticky top-0 z-20 bg-white shadow-[0_2px_4px_rgba(16,40,70,0.10)]">
               <tr>
-                <th className="th w-[40px] text-center">No</th>
-                <th className="th w-[130px]">Kode</th>
-                <th className="th">Nama Barang</th>
-                <th className="th w-[86px] text-right">Stok</th>
-                <th className="th w-[112px] text-right">Harga</th>
+                <th className="th w-[40px] bg-[#eef2ff] text-center">No</th>
+                <th className="th w-[130px] bg-[#eef2ff]">Kode</th>
+                <th className="th bg-[#eef2ff]">Nama Barang</th>
+                <th className="th w-[86px] bg-[#eef2ff] text-right">Stok</th>
+                <th className="th w-[112px] bg-[#eef2ff] text-right">Harga</th>
               </tr>
             </thead>
             <tbody>
