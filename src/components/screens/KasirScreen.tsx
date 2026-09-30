@@ -12,10 +12,11 @@ import {
   Pencil,
   Printer,
   Trash2,
+  Wallet,
   X,
 } from 'lucide-react';
 
-import { customersApi, nextInvoicePreview, productsApi, settingsApi, transactionsApi } from '@/lib/api';
+import { customersApi, nextInvoicePreview, productsApi, settingsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
@@ -42,12 +43,14 @@ import { ModalListBarang } from '@/components/ModalListBarang';
 import { ModalPelanggan } from '@/components/ModalPelanggan';
 import { ReceiptView } from '@/components/Receipt';
 import { RupiahInput } from '@/components/RupiahInput';
+import { ShiftModal } from '@/components/ShiftModal';
 import {
   PAYMENT_METHOD_LABEL,
   type CartLine,
   type Customer,
   type CustomerInput,
   type DiscountType,
+  type KasirShift,
   type PaymentMethod,
   type Product,
   type ReceiptData,
@@ -184,6 +187,15 @@ export default function KasirScreen() {
   const [success, setSuccess] = React.useState<{ receipt: ReceiptData; change: number } | null>(null);
   const [autoPrint, setAutoPrint] = React.useState(true);
 
+  /* ------------------------------ shift kasir ------------------------ */
+  // Shift aktif (null = belum/tidak sedang shift). Transaksi tersimpan dicatat
+  // ke shift ini (shift_id) — laporan per kasir & hitung kas saat tutup.
+  const [shift, setShift] = React.useState<KasirShift | null>(null);
+  const [shiftModalOpen, setShiftModalOpen] = React.useState(false);
+  /** Perkiraan kas dari RPC `kasir_shift_preview` (tampil di modal tutup). */
+  const [shiftExpected, setShiftExpected] = React.useState<number | null>(null);
+  const shiftGuard = useButtonGuard();
+
   /* ---------------------------- diskon global ------------------------ */
   // Diskon transaksi: 'fixed' (Rp) atau 'percent' (%). Nilai 0 = tanpa diskon.
   const [diskonTipe, setDiskonTipe] = React.useState<'fixed' | 'percent'>('fixed');
@@ -258,6 +270,10 @@ export default function KasirScreen() {
       setInvoiceNo(invRes);
     })();
     void settingsApi.get<boolean>('autoPrint', true).then((v) => setAutoPrint(v !== false));
+    // Shift aktif (jika ada) ikut dimuat saat halaman kasir dibuka.
+    void shiftsApi.active().then((res) => {
+      if (res.ok) setShift(res.data);
+    });
   }, []);
 
   React.useEffect(() => {
@@ -835,6 +851,7 @@ export default function KasirScreen() {
         note: catatan || null,
         cashierName: cashier,
         customerName: customer,
+        shiftId: shift?.id,
       });
 
       if (!res.ok) {
@@ -877,6 +894,58 @@ export default function KasirScreen() {
     if (list.ok) setCustomers(list.data);
     setCustomer(res.data.name);
     toast.ok('Pelanggan ditambahkan', res.data.name);
+  }
+
+  /* ------------------------------ shift kasir ------------------------ */
+  /** Buka modal shift; saat ada shift aktif, ambil dulu perkiraan kasnya. */
+  function bukaShiftModal() {
+    setShiftExpected(null);
+    setShiftModalOpen(true);
+    if (shift) {
+      void shiftsApi.preview(shift.id).then((res) => {
+        if (res.ok) setShiftExpected(res.data.expected);
+      });
+    }
+  }
+
+  /** Konfirmasi buka shift (modal awal > 0). */
+  function bukaShift(openingCash: number) {
+    void shiftGuard.guard(
+      async () => {
+        const res = await shiftsApi.open(cashier, openingCash);
+        if (!res.ok) {
+          toast.error('Gagal buka shift', res.error);
+          return;
+        }
+        setShift(res.data);
+        setShiftModalOpen(false);
+        toast.ok('Shift dibuka', `${res.data.shift_no} — kasir ${res.data.cashier_name}`);
+      },
+      { pesanTunggu: 'Membuka shift…' },
+    );
+  }
+
+  /** Konfirmasi tutup shift (uang aktual di laci). */
+  function tutupShift(actualCash: number) {
+    void shiftGuard.guard(
+      async () => {
+        if (!shift) return;
+        const res = await shiftsApi.close(shift.id, actualCash);
+        if (!res.ok) {
+          toast.error('Gagal tutup shift', res.error);
+          return;
+        }
+        const s = res.data.selisih;
+        const kata = s === 0 ? 'kas pas' : s > 0 ? `lebih ${rupiah(s)}` : `kurang ${rupiah(Math.abs(s))}`;
+        setShift(null);
+        setShiftModalOpen(false);
+        toast.ok(
+          'Shift ditutup',
+          `${res.data.shift.shift_no} — perkiraan ${rupiah(res.data.expected)} (${kata})`,
+        );
+      },
+      { pesanTunggu: 'Menutup shift…' },
+    );
   }
 
   /* ------------------------------ hotkey ------------------------------ */
@@ -1035,6 +1104,22 @@ export default function KasirScreen() {
           onClick={() => ui.run(() => setListBarangOpen(true), 'kasir-f10')}
           disabled={ui.locked('kasir-f10')}
         />
+
+        <button
+          type="button"
+          onClick={() => ui.run(bukaShiftModal, 'kasir-shift')}
+          disabled={shiftGuard.busy || ui.locked('kasir-shift')}
+          data-loading={shiftGuard.busy}
+          aria-label="Shift kasir"
+          className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] font-semibold transition ${
+            shift
+              ? 'bg-[#e8f1fa] text-[#134a85] hover:bg-[#dbe9f7]'
+              : 'bg-[#fff4e5] text-[#b0720a] hover:bg-[#ffe9c4]'
+          }`}
+        >
+          <Wallet className="h-3.5 w-3.5" />
+          {shift ? `Shift ${shift.shift_no.slice(-4)}` : 'Buka Shift'}
+        </button>
 
         <span className="rb-sep" />
 
@@ -1573,6 +1658,17 @@ export default function KasirScreen() {
         open={tambahPlgOpen}
         onClose={() => setTambahPlgOpen(false)}
         onSave={simpanPelanggan}
+      />
+
+      {/* ============================ MODAL SHIFT ====================== */}
+      <ShiftModal
+        open={shiftModalOpen}
+        shift={shift}
+        expectedCash={shiftExpected}
+        busy={shiftGuard.busy}
+        onClose={() => setShiftModalOpen(false)}
+        onOpen={bukaShift}
+        onCloseShift={tutupShift}
       />
 
       {/* ======================= MODAL PEMBAYARAN ===================== */}

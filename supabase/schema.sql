@@ -89,6 +89,9 @@ create table if not exists public.kasir_settings (
 alter table public.kasir_products     add column if not exists satuan_list   jsonb not null default '[]';
 alter table public.kasir_products     add column if not exists variants       jsonb not null default '[]';
 alter table public.kasir_transactions add column if not exists customer_name text;
+alter table public.kasir_transactions add column if not exists shift_id       uuid;
+
+create index if not exists kasir_transactions_shift on public.kasir_transactions (user_id, shift_id);
 
 -- Pelanggan (dropdown "Pelanggan" di layar Kasir; default "Umum").
 create table if not exists public.kasir_customers (
@@ -102,6 +105,23 @@ create table if not exists public.kasir_customers (
 
 create unique index if not exists kasir_customers_user_name on public.kasir_customers (user_id, lower(name));
 create index if not exists kasir_customers_user on public.kasir_customers (user_id);
+
+-- Shift kasir (buka/tutup, modal awal, uang aktual di laci).
+create table if not exists public.kasir_shifts (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  cashier_name  text not null default 'Kasir',
+  shift_no      text not null,
+  opened_at     timestamptz not null default now(),
+  closed_at     timestamptz,
+  opening_cash  numeric not null default 0,
+  closing_cash  numeric,
+  expected_cash numeric,
+  status        text not null default 'open' check (status in ('open', 'closed'))
+);
+
+create unique index if not exists kasir_shifts_user_no on public.kasir_shifts (user_id, shift_no);
+create index if not exists kasir_shifts_user on public.kasir_shifts (user_id, opened_at desc);
 
 -- ----------------------------------------------------------------------------
 -- 2. ROW LEVEL SECURITY
@@ -183,14 +203,27 @@ drop policy if exists kasir_customers_delete on public.kasir_customers;
 create policy kasir_customers_delete on public.kasir_customers
   for delete using (user_id = auth.uid());
 
+-- kasir_shifts
+alter table public.kasir_shifts enable row level security;
+drop policy if exists kasir_shifts_select on public.kasir_shifts;
+create policy kasir_shifts_select on public.kasir_shifts
+  for select using (user_id = auth.uid());
+drop policy if exists kasir_shifts_insert on public.kasir_shifts;
+create policy kasir_shifts_insert on public.kasir_shifts
+  for insert with check (user_id = auth.uid());
+drop policy if exists kasir_shifts_update on public.kasir_shifts;
+create policy kasir_shifts_update on public.kasir_shifts
+  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 -- ----------------------------------------------------------------------------
 -- 3. RPC — TRANSAKSI (atomik)
 -- ----------------------------------------------------------------------------
 
 -- Simpan transaksi + item + potong stok dalam SATU transaksi database.
 -- Menghitung ulang semua total dari keranjang (tidak percaya nilai klien).
--- (buang overload lama 7-param yang tak menyimpan customer_name)
+-- (buang overload lama 7 & 8 param; versi 9 param menambah p_shift_id opsional)
 drop function if exists public.kasir_create_transaction(jsonb, text, numeric, text, numeric, text, text);
+drop function if exists public.kasir_create_transaction(jsonb, text, numeric, text, numeric, text, text, text);
 create or replace function public.kasir_create_transaction(
   p_lines          jsonb,
   p_discount_type  text,
@@ -199,7 +232,8 @@ create or replace function public.kasir_create_transaction(
   p_paid           numeric,
   p_note           text,
   p_cashier_name   text,
-  p_customer_name  text default null
+  p_customer_name  text default null,
+  p_shift_id       uuid default null
 )
 returns jsonb
 language plpgsql
@@ -225,6 +259,15 @@ begin
   end if;
   if v_user is null then
     raise exception 'Sesi tidak valid.';
+  end if;
+
+  -- pastikan shift milik user & masih aktif (bila dikirim)
+  if p_shift_id is not null then
+    perform 1 from public.kasir_shifts
+     where id = p_shift_id and user_id = v_user and status = 'open';
+    if not found then
+      raise exception 'Shift tidak aktif.';
+    end if;
   end if;
 
   -- hitung subtotal & total cost dari keranjang
@@ -264,13 +307,13 @@ begin
   insert into public.kasir_transactions
     (user_id, invoice_no, subtotal, discount_type, discount_value, discount_amount,
      total, total_cost, paid, change_due, payment_method, note, cashier_name,
-     customer_name, status)
+     customer_name, status, shift_id)
   values
     (v_user, v_invoice, v_subtotal, coalesce(p_discount_type, 'none'),
      coalesce(p_discount_value, 0), v_discount, v_total, v_total_cost,
      v_paid, v_change, coalesce(p_payment_method, 'cash'),
      nullif(coalesce(p_note, ''), ''), coalesce(p_cashier_name, 'Kasir'),
-     nullif(coalesce(p_customer_name, ''), ''), 'completed')
+     nullif(coalesce(p_customer_name, ''), ''), 'completed', p_shift_id)
   returning id into v_tx_id;
 
   for v_item in select * from jsonb_array_elements(p_lines) loop
@@ -480,6 +523,186 @@ begin
     order by omzet desc
   ) r;
   return v_rows;
+end;
+$$;
+
+-- Laporan per kasir: transaksi + omzet + laba per kasir pada rentang.
+create or replace function public.kasir_report_by_cashier(p_from text, p_to text)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_rows jsonb;
+begin
+  select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) into v_rows
+  from (
+    select coalesce(nullif(t.cashier_name, ''), 'Kasir') as kasir,
+           count(*)                                        as transaksi,
+           round(sum(t.total), 2)                          as omzet,
+           round(sum(t.total - t.total_cost), 2)           as laba
+    from public.kasir_transactions t
+    where t.user_id = auth.uid()
+      and t.status = 'completed'
+      and (p_from is null or t.created_at >= p_from::timestamptz)
+      and (p_to   is null or t.created_at <= p_to::timestamptz)
+    group by t.cashier_name
+    order by omzet desc
+  ) r;
+  return v_rows;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 3b. RPC — SHIFT KASIR
+-- ----------------------------------------------------------------------------
+
+-- Shift yang sedang terbuka (null bila tidak ada).
+create or replace function public.kasir_active_shift()
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_shift public.kasir_shifts%rowtype;
+begin
+  select * into v_shift from public.kasir_shifts
+   where user_id = auth.uid() and status = 'open'
+   order by opened_at desc
+   limit 1;
+  if v_shift.id is null then
+    return null;
+  end if;
+  return to_jsonb(v_shift);
+end;
+$$;
+
+-- Buka shift baru (gagal bila masih ada shift open).
+create or replace function public.kasir_open_shift(
+  p_opening_cash  numeric default 0,
+  p_cashier_name  text default 'Kasir'
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_user     uuid := auth.uid();
+  v_active   public.kasir_shifts%rowtype;
+  v_shift_no text;
+  v_n        int;
+  v_shift    public.kasir_shifts%rowtype;
+begin
+  if v_user is null then
+    raise exception 'Sesi tidak valid.';
+  end if;
+  select * into v_active from public.kasir_shifts
+   where user_id = v_user and status = 'open'
+   order by opened_at desc
+   limit 1;
+  if v_active.id is not null then
+    raise exception 'Shift % masih terbuka. Tutup dulu sebelum buka yang baru.',
+      v_active.shift_no;
+  end if;
+
+  select count(*) into v_n from public.kasir_shifts
+   where user_id = v_user
+     and shift_no like 'SHIFT-' || to_char(now(), 'YYYYMMDD') || '-%';
+  v_shift_no := 'SHIFT-' || to_char(now(), 'YYYYMMDD') || '-'
+             || lpad((v_n + 1)::text, 4, '0');
+
+  insert into public.kasir_shifts (user_id, cashier_name, shift_no, opening_cash)
+  values (v_user, coalesce(p_cashier_name, 'Kasir'), v_shift_no,
+          greatest(coalesce(p_opening_cash, 0), 0))
+  returning * into v_shift;
+
+  return to_jsonb(v_shift);
+end;
+$$;
+
+-- Pratinjau perkiraan kas untuk shift yang masih berjalan.
+create or replace function public.kasir_shift_preview(p_shift_id uuid)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_user     uuid := auth.uid();
+  v_shift    public.kasir_shifts%rowtype;
+  v_masuk    numeric;
+  v_expected numeric;
+begin
+  select * into v_shift from public.kasir_shifts
+   where id = p_shift_id and user_id = v_user;
+  if v_shift.id is null then
+    raise exception 'Shift tidak ditemukan.';
+  end if;
+
+  select coalesce(sum(paid - change_due), 0) into v_masuk
+    from public.kasir_transactions
+   where user_id = v_user
+     and shift_id = p_shift_id
+     and status = 'completed'
+     and payment_method = 'cash';
+
+  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk, 2);
+  return jsonb_build_object('expected', v_expected);
+end;
+$$;
+
+-- Tutup shift: hitung perkiraan kas & selisih dari uang aktual.
+create or replace function public.kasir_close_shift(
+  p_shift_id    uuid,
+  p_actual_cash numeric default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_user     uuid := auth.uid();
+  v_shift    public.kasir_shifts%rowtype;
+  v_masuk    numeric;
+  v_expected numeric;
+  v_actual   numeric;
+begin
+  select * into v_shift from public.kasir_shifts
+   where id = p_shift_id and user_id = v_user;
+  if v_shift.id is null then
+    raise exception 'Shift tidak ditemukan.';
+  end if;
+  if v_shift.status = 'closed' then
+    raise exception 'Shift sudah ditutup.';
+  end if;
+
+  select coalesce(sum(paid - change_due), 0) into v_masuk
+    from public.kasir_transactions
+   where user_id = v_user
+     and shift_id = p_shift_id
+     and status = 'completed'
+     and payment_method = 'cash';
+
+  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk, 2);
+  v_actual   := round(coalesce(p_actual_cash, v_expected), 2);
+
+  update public.kasir_shifts
+     set closed_at     = now(),
+         closing_cash  = v_actual,
+         expected_cash = v_expected,
+         status        = 'closed'
+   where id = p_shift_id
+  returning * into v_shift;
+
+  return jsonb_build_object(
+    'shift', to_jsonb(v_shift),
+    'expected', v_expected,
+    'selisih', round(v_actual - v_expected, 2)
+  );
 end;
 $$;
 

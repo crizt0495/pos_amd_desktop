@@ -193,6 +193,27 @@ export interface ReturnLineInput {
   qty: number;
 }
 
+/** Shift kasir (kasir_shifts): sesi buka/tutup + setup laci. */
+export interface KasirShift {
+  id: string;
+  cashier_name: string;
+  shift_no: string;
+  opened_at: string;
+  closed_at: string | null;
+  opening_cash: number;
+  closing_cash: number | null;
+  expected_cash: number | null;
+  status: 'open' | 'closed';
+}
+
+/** Baris laporan per kasir (kasir_report_by_cashier). */
+export interface CashierReport {
+  kasir: string;
+  transaksi: number;
+  omzet: number;
+  laba: number;
+}
+
 export interface CartTotals {
   subtotal: number;
   discountAmount: number;

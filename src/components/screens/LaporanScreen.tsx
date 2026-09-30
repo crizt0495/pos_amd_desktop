@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } from 'lucide-react';
 
-import { reportsApi, returnsApi, transactionsApi } from '@/lib/api';
+import { reportsApi, returnsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
 import { buildReceiptFromTx, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
@@ -13,7 +13,9 @@ import { ReturModal } from '@/components/ReturModal';
 import { ReceiptView } from '@/components/Receipt';
 import { PAYMENT_METHOD_LABEL } from '@/lib/types';
 import type {
+  CashierReport,
   DailyReport,
+  KasirShift,
   PaymentReport,
   ReceiptData,
   ReportSummary,
@@ -55,6 +57,8 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   const [printData, setPrintData] = React.useState<ReceiptData | null>(null);
   const [voiding, setVoiding] = React.useState<Transaction | null>(null);
   const [returns, setReturns] = React.useState<ReturnRecord[]>([]);
+  const [cashiers, setCashiers] = React.useState<CashierReport[]>([]);
+  const [shifts, setShifts] = React.useState<KasirShift[]>([]);
   const [returSel, setReturSel] = React.useState<{
     tx: Transaction;
     items: TransactionItem[];
@@ -69,13 +73,15 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
   const load = React.useCallback(async () => {
     if (!ready) return;
     setLoading(true);
-    const [s, t, d, p, l, r] = await Promise.all([
+    const [s, t, d, p, l, r, k, sh] = await Promise.all([
       reportsApi.summary(range),
       reportsApi.topProducts(range),
       reportsApi.daily(range),
       reportsApi.byPayment(range),
       transactionsApi.list({ ...range, limit: 200 }),
       returnsApi.list(range),
+      reportsApi.byCashier(range),
+      shiftsApi.list({ ...range, limit: 100 }),
     ]);
 
     if (s.ok) setSummary(s.data);
@@ -84,6 +90,8 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
     if (p.ok) setByPayment(p.data);
     if (l.ok) setList(l.data);
     if (r.ok) setReturns(r.data);
+    if (k.ok) setCashiers(k.data);
+    if (sh.ok) setShifts(sh.data);
     setLoading(false);
   }, [from, to, preset, ready]);
 
@@ -469,6 +477,124 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* ------------- omzet per kasir & riwayat shift -------------- */}
+        <div className="mt-2.5 grid gap-2.5 lg:grid-cols-2">
+          <div className="card overflow-hidden">
+            <div className="panel-head">
+              <h3 className="panel-title">Laporan per Kasir</h3>
+            </div>
+            <div className="max-h-[220px] overflow-auto">
+              <table className="w-full border-collapse">
+                <thead className="sticky top-0 bg-[#f6f9fd]">
+                  <tr>
+                    <th className="th w-[120px]">Kasir</th>
+                    <th className="th w-[70px] text-right">Trx</th>
+                    <th className="th w-[110px] text-right">Omzet</th>
+                    <th className="th w-[110px] text-right">Laba</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#eef2f7]">
+                  {!cashiers.length ? (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-[12.5px] text-[#9fb0c4]">
+                        Belum ada transaksi pada rentang ini.
+                      </td>
+                    </tr>
+                  ) : (
+                    cashiers.map((k2) => (
+                      <tr key={k2.kasir} className="bg-white transition hover:bg-[#f6f9fd]">
+                        <td className="td font-semibold text-[#35485c]">{k2.kasir}</td>
+                        <td className="td tnum text-right text-[#5b6b80]">{k2.transaksi}</td>
+                        <td className="td tnum text-right font-bold text-[#22374b]">{rupiah(k2.omzet)}</td>
+                        <td className="td tnum text-right text-[#0a7a3d]">{rupiah(k2.laba)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="panel-head">
+              <h3 className="panel-title">Riwayat Shift</h3>
+              <span className="text-[11.5px] text-[#7a8ba0]">
+                {shifts.filter((sh2) => sh2.status === 'open').length} berjalan
+              </span>
+            </div>
+            <div className="max-h-[220px] overflow-auto">
+              <table className="w-full min-w-[460px] border-collapse">
+                <thead className="sticky top-0 bg-[#f6f9fd]">
+                  <tr>
+                    <th className="th w-[120px]">Kode</th>
+                    <th className="th w-[90px]">Kasir</th>
+                    <th className="th w-[130px]">Dibuka</th>
+                    <th className="th w-[130px]">Ditutup</th>
+                    <th className="th w-[110px] text-right">Perkiraan</th>
+                    <th className="th w-[100px] text-right">Aktual</th>
+                    <th className="th w-[90px] text-right">Selisih</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#eef2f7]">
+                  {!shifts.length ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-[12.5px] text-[#9fb0c4]">
+                        Belum ada shift pada rentang ini.
+                      </td>
+                    </tr>
+                  ) : (
+                    shifts.map((sh) => {
+                      const selisih =
+                        sh.status === 'closed' && sh.closing_cash != null && sh.expected_cash != null
+                          ? sh.closing_cash - sh.expected_cash
+                          : null;
+                      return (
+                        <tr key={sh.id} className="bg-white transition hover:bg-[#f6f9fd]">
+                          <td className="td font-mono text-[12px] font-semibold text-[#35485c]">{sh.shift_no}</td>
+                          <td className="td text-[#5b6b80]">{sh.cashier_name}</td>
+                          <td className="td text-[#5b6b80]">{tanggalWaktu(sh.opened_at)}</td>
+                          <td className="td text-[#5b6b80]">
+                            {sh.closed_at ? (
+                              tanggalWaktu(sh.closed_at)
+                            ) : (
+                              <span className="font-semibold text-[#134a85]">berjalan</span>
+                            )}
+                          </td>
+                          <td className="td tnum text-right text-[#5b6b80]">
+                            {sh.expected_cash != null ? rupiah(sh.expected_cash) : '—'}
+                          </td>
+                          <td className="td tnum text-right text-[#5b6b80]">
+                            {sh.closing_cash != null ? rupiah(sh.closing_cash) : '—'}
+                          </td>
+                          <td
+                            className={`td tnum text-right font-bold ${
+                              selisih == null
+                                ? 'text-[#9fb0c4]'
+                                : selisih === 0
+                                  ? 'text-[#0a7a3d]'
+                                  : selisih > 0
+                                    ? 'text-[#b0720a]'
+                                    : 'text-[#e03131]'
+                            }`}
+                          >
+                            {selisih == null
+                              ? '—'
+                              : selisih === 0
+                                ? '0'
+                                : selisih > 0
+                                  ? `+${rupiah(selisih)}`
+                                  : `-${rupiah(Math.abs(selisih))}`}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

@@ -1,9 +1,11 @@
 import { createClient } from './supabase/client';
 import { isoHariIni, normalisasiVarian } from './format';
 import type {
+  CashierReport,
   Customer,
   CustomerInput,
   DailyReport,
+  KasirShift,
   PaymentReport,
   Product,
   ProductInput,
@@ -342,6 +344,7 @@ export const transactionsApi = {
     note?: string | null;
     cashierName: string;
     customerName?: string;
+    shiftId?: string | null;
   }): Promise<Result<CreatedTx>> {
     try {
       const { data: result, error } = await createClient().rpc('kasir_create_transaction', {
@@ -353,6 +356,9 @@ export const transactionsApi = {
         p_note: data.note ?? null,
         p_cashier_name: data.cashierName,
         p_customer_name: data.customerName ?? null,
+        // Hanya dikirim bila ada shift aktif — supaya pemanggilan tetap kompatibel
+        // dengan basis data versi 8-arg sebelum migrasi shift dijalankan.
+        ...(data.shiftId ? { p_shift_id: data.shiftId } : {}),
       });
       if (error) return { ok: false, error: error.message };
       const body = result as { transaction: Record<string, unknown>; totals?: Record<string, unknown>; changeDue?: number };
@@ -449,6 +455,91 @@ export const transactionsApi = {
   },
 };
 
+/* ------------------------------- shift ------------------------------ */
+
+const mapShift = (r: Record<string, unknown>): KasirShift => ({
+  id: String(r.id),
+  cashier_name: String(r.cashier_name ?? 'Kasir'),
+  shift_no: String(r.shift_no ?? ''),
+  opened_at: String(r.opened_at ?? ''),
+  closed_at: r.closed_at ? String(r.closed_at) : null,
+  opening_cash: num(r.opening_cash),
+  closing_cash: r.closing_cash == null ? null : num(r.closing_cash),
+  expected_cash: r.expected_cash == null ? null : num(r.expected_cash),
+  status: String(r.status ?? 'open') as KasirShift['status'],
+});
+
+export const shiftsApi = {
+  async active(): Promise<Result<KasirShift | null>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_active_shift');
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: data ? mapShift(data as Record<string, unknown>) : null };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async open(cashierName: string, openingCash = 0): Promise<Result<KasirShift>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_open_shift', {
+        p_opening_cash: num(openingCash),
+        p_cashier_name: cashierName || 'Kasir',
+      });
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: mapShift(data as Record<string, unknown>) };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async preview(id: string): Promise<Result<{ expected: number }>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_shift_preview', { p_shift_id: id });
+      if (error) return { ok: false, error: error.message };
+      const r = (data ?? {}) as Record<string, unknown>;
+      return { ok: true, data: { expected: num(r.expected) } };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async close(id: string, actualCash: number): Promise<Result<{ shift: KasirShift; expected: number; selisih: number }>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_close_shift', {
+        p_shift_id: id,
+        p_actual_cash: num(actualCash),
+      });
+      if (error) return { ok: false, error: error.message };
+      const r = (data ?? {}) as Record<string, unknown>;
+      return {
+        ok: true,
+        data: {
+          shift: mapShift((r.shift ?? {}) as Record<string, unknown>),
+          expected: num(r.expected),
+          selisih: num(r.selisih),
+        },
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async list(filter: { from?: string; to?: string; limit?: number } = {}): Promise<Result<KasirShift[]>> {
+    try {
+      const limit = Math.min(Math.max(num(filter.limit) || 50, 1), 500);
+      let q = createClient().from('kasir_shifts').select('*');
+      if (filter.from) q = q.gte('opened_at', `${filter.from}T00:00:00.000Z`);
+      if (filter.to) q = q.lte('opened_at', `${filter.to}T23:59:59.999Z`);
+      const { data, error } = await q.order('opened_at', { ascending: false }).limit(limit);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []).map((r) => mapShift(r as Record<string, unknown>)) };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
 /* ------------------------------- laporan ------------------------------ */
 
 function rangePayload(from?: string, to?: string): { p_from: string | null; p_to: string | null } {
@@ -530,6 +621,25 @@ export const reportsApi = {
           metode: String(r.metode ?? 'cash') as PaymentReport['metode'],
           n: num(r.n),
           omzet: num(r.omzet),
+        })),
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async byCashier(range: { from?: string; to?: string } = {}): Promise<Result<CashierReport[]>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_report_by_cashier', rangePayload(range.from, range.to));
+      if (error) return { ok: false, error: error.message };
+      const rows = (data ?? []) as Record<string, unknown>[];
+      return {
+        ok: true,
+        data: rows.map((r) => ({
+          kasir: String(r.kasir ?? 'Kasir'),
+          transaksi: num(r.transaksi),
+          omzet: num(r.omzet),
+          laba: num(r.laba),
         })),
       };
     } catch (e) {
