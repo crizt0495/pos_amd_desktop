@@ -89,6 +89,11 @@ export interface CartLine {
    * "Rp", field ini null. Selalu di-strip sebelum dikirim ke API/RPC.
    */
   potonganPct?: number | null;
+  /**
+   * Label potongan dari Diskon Paten (UI-only, TIDAK disimpan ke DB), mis.
+   * "Diskon Toko". null = potongan manual, struk menulis "Pot/Diskon".
+   */
+  potonganLabel?: string | null;
   unit: string;
   /** Daftar satuan yang bisa dipilih (dari produk atau default). */
   satuanList: string[];
@@ -252,6 +257,8 @@ export interface ReceiptData {
     discount: number;
     /** Persen potongan bila kasir memakai mode % (null = mode Rp / tidak diketahui). */
     discountPct?: number | null;
+    /** Label dari Diskon Paten, mis. "Diskon Toko" (null = tulis "Pot/Diskon"). */
+    discountLabel?: string | null;
     subtotal: number;
   }[];
   subtotal: number;

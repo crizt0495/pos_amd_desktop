@@ -11,6 +11,11 @@ import { rupiah } from '@/lib/format';
  *     2 x Rp. 3.500              Rp. 7.000
  *     Pot/Diskon 10%             -Rp. 700
  *                                Rp. 6.300
+ *
+ * Label baris potongan mengikuti `items[].discountLabel` (mis. "Diskon Toko"
+ * dari Pengaturan > Diskon > Diskon Paten), Persen menambahannya otomatis.
+ * Struk yang dicetak ulang dari riwayat tidak punya label (diskonLabel null),
+ * jadi jatuh ke teks bawaan "Pot/Diskon".
  */
 export function ReceiptView({ data }: { data: ReceiptData }) {
   const baris = barisStruk(data);
@@ -58,7 +63,8 @@ export function ReceiptView({ data }: { data: ReceiptData }) {
             {b.discount > 0 ? (
               <span className="line disc">
                 <span>
-                  Pot/Diskon{b.discountPct != null ? ` ${b.discountPct}%` : ''}
+                  {b.discountLabel || 'Pot/Diskon'}
+                  {b.discountPct != null ? ` ${b.discountPct}%` : ''}
                 </span>
                 <span>-{rupiah(b.discount)}</span>
               </span>

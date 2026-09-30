@@ -206,7 +206,7 @@ export function SatuanVarianTable({
           <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
           <span>
             {rugi.length} satuan dijual di bawah harga modal
-            {rugi.length === 1 ? ` (${rugi[0]!.satuan})` : ''}. Boleh disimpan, tapi接客 rugi.
+            {rugi.length === 1 ? ` (${rugi[0]!.satuan})` : ''}. Boleh disimpan, tapi penjualan merugi.
           </span>
         </p>
       ) : null}

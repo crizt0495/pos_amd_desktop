@@ -9,6 +9,7 @@ import {
   FilePlus2,
   List,
   Loader2,
+  Lock,
   Pencil,
   Printer,
   Trash2,
@@ -37,6 +38,16 @@ import {
   rupiah,
   satuanOptions,
 } from '@/lib/format';
+import {
+  bacaDiskonPaten,
+  dengarDiskonPaten,
+  DISKON_PATEN_AWAL,
+  labelStrukPaten,
+  patenAdaNilai,
+  patenBerlaku,
+  ringkasanPaten,
+  type DiskonPaten,
+} from '@/lib/diskonPaten';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
 import { BigTotalDisplay } from '@/components/BigTotalDisplay';
@@ -210,8 +221,40 @@ export default function KasirScreen() {
   // sedang diketik kasir.
   const modePotongan: 'rp' | 'pct' = diskonTipe === 'percent' ? 'pct' : 'rp';
 
+  /* ------------------- diskon paten (dikunci dari Pengaturan) ----------- */
+  // Owners toko bisa menetapkan diskon tetap di Pengaturan > Diskon. Kalau
+  // aktif, form "Diskon Item" di bawah terkunci (badge "Paten dari Setting")
+  // dan kolom Potongan tiap item baru langsung terisi nilai paten.
+  const [paten, setPaten] = React.useState<DiskonPaten>(DISKON_PATEN_AWAL);
+  // Ref supaya resetForm & aset tombol tak perlu bergantung pada config.
+  const patenRef = React.useRef<DiskonPaten>(DISKON_PATEN_AWAL);
+  patenRef.current = paten;
+  /** Terapkan config paten ke form Diskon: aktif -> terkunci, nonaktif -> 0. */
+  const terapkanPaten = React.useCallback((c: DiskonPaten) => {
+    if (c.aktif) {
+      setDiskonTipe(c.tipe === 'pct' ? 'percent' : 'fixed');
+      setDiskonNilai(c.tipe === 'pct' ? Math.min(Math.max(Math.floor(c.nilai), 0), 100) : Math.max(c.nilai, 0));
+    } else {
+      setDiskonTipe('fixed');
+      setDiskonNilai(0);
+    }
+  }, []);
+
   const flashTimer = React.useRef<number | null>(null);
   const [flashKey, setFlashKey] = React.useState<string | null>(null);
+
+  // Baca config paten saat mount lalu ikuti perubahannya dari Pengaturan —
+  // kasir tak perlu reload, dan mematikan paten langsung mengembalikan form
+  // ke mode manual (nilai 0).
+  React.useEffect(() => {
+    const awal = bacaDiskonPaten();
+    setPaten(awal);
+    terapkanPaten(awal);
+    return dengarDiskonPaten((c) => {
+      setPaten(c);
+      terapkanPaten(c);
+    });
+  }, [terapkanPaten]);
 
   /* ------------------------------ turunan ----------------------------- */
   const totals = hitungTotal(lines);
@@ -238,6 +281,9 @@ export default function KasirScreen() {
         ? `${Math.min(Math.floor(diskonNilai), 100)}% per item baru`
         : `${rupiah(diskonNilai)} per item baru`
       : '';
+  // Paten aktif = form Diskon terkunci; teks badge di bawah input.
+  const patenHidup = paten.aktif;
+  const ringkasanPatenHeader = patenHidup ? ringkasanPaten(paten) : '';
   const diskonTidakSah = potonganBarisTidakSah;
   const isTunai = method === 'cash';
   const bayarNominal = parseRupiah(bayarTeks) || 0;
@@ -328,6 +374,9 @@ export default function KasirScreen() {
    * item baru masuk dengan Potongan 500, % 10 -> 10% dari harga x qty. Nilai
    * dibatasi ke harga x qty sehingga baris tak pernah jadi minus. Baris yang
    * SUDAH ada di tabel tidak ikut berubah saat kasir mengubah diskon header.
+   *
+   * Kalau Diskon Paten aktif, cakupannya yang menentukan: produk di luar
+   * cakupan (mis. kategori lain) masuk dengan Potongan 0.
    */
   function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
     const units = satuanOptions(p);
@@ -340,6 +389,11 @@ export default function KasirScreen() {
     const q = Math.max(1, Math.floor(qty ?? itemQty) || 1);
     const nilaiBaris = { price: harga.harga_jual, qty: q };
 
+    // Diskon Paten: kalau produk ini di luar cakupan, baris masuk tanpa
+    // potongan (nilai 0) walau form diskonnya terisi.
+    const dariPaten = patenAdaNilai(paten) && patenBerlaku(paten, p);
+    const nilaiSeed = dariPaten ? diskonNilai : 0;
+
     setLines((prev) =>
       gabungKeranjang(prev, {
         product_id: p.id,
@@ -348,13 +402,15 @@ export default function KasirScreen() {
         price: harga.harga_jual,
         cost: harga.harga_beli,
         qty: q,
-        discount: potonganDariDefault(nilaiBaris, diskonTipe, diskonNilai),
+        discount: potonganDariDefault(nilaiBaris, diskonTipe, nilaiSeed),
         // Mode %: simpan persennya supaya kolom tabel menampilkan satuan yang
         // sama (dan tetap ikut terhitung ulang saat qty/harga berubah).
         potonganPct:
-          modePotongan === 'pct' && diskonNilai > 0
+          dariPaten && modePotongan === 'pct' && nilaiSeed > 0
             ? Math.min(100, Math.max(0, Math.floor(diskonNilai)))
             : null,
+        // Struk item ini menulis label paten, bukan "Pot/Diskon" biasa.
+        potonganLabel: dariPaten ? labelStrukPaten(paten) : null,
         unit: satuan,
         satuanList: units,
         variants: varian,
@@ -707,11 +763,13 @@ export default function KasirScreen() {
     setMethod('cash');
     setBayarTeks('');
     setCatatanModal('');
-    setDiskonTipe('fixed');
-    setDiskonNilai(0);
+    // Transaksi selesai -> diskon manual kembali 0, TAPI kalau Diskon Paten
+    // aktif nilainya langsung dipasang lagi (bukan 0) supaya kasir tak perlu
+    // menyetel ulang tiap pelanggan.
+    terapkanPaten(patenRef.current);
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
-  }, [resetCart, fokusKode]);
+  }, [resetCart, fokusKode, terapkanPaten]);
 
   function simpanPendingSekarang() {
     if (!lines.length) return;
@@ -748,8 +806,12 @@ export default function KasirScreen() {
   function lanjutPending(p: Pending) {
     setLines(p.lines);
     setCustomer(p.customer);
-    if (p.diskonTipe === 'percent' || p.diskonTipe === 'fixed') setDiskonTipe(p.diskonTipe);
-    if (typeof p.diskonNilai === 'number') setDiskonNilai(p.diskonNilai);
+    // Paten adalah aturan toko yang terkunci — kalau aktif, Snapshot diskon
+    // pending tak boleh menimpanya (formnya terkunci, jadi tak bisa diubah).
+    if (!patenRef.current.aktif) {
+      if (p.diskonTipe === 'percent' || p.diskonTipe === 'fixed') setDiskonTipe(p.diskonTipe);
+      if (typeof p.diskonNilai === 'number') setDiskonNilai(p.diskonNilai);
+    }
     setPendListOpen(false);
     setTimeout(fokusKode, 30);
     toast.info('Pending dilanjutkan', p.note);
@@ -854,9 +916,10 @@ export default function KasirScreen() {
 
       // Jaga-jaga: potongan tiap baris dikunci ke nilai sah (harga x qty)
       // agar tidak ada baris bernilai minus yang tersimpan ke database.
-      // Field UI potonganPct (mode %) dibuang sebelum dikirim ke API/RPC.
+      // Field UI potonganPct (mode %) & potonganLabel (Diskon Paten) dibuang
+      // sebelum dikirim ke API/RPC — keduanya tidak ada kolomnya di database.
       const linesAman = lines.map((l) => {
-        const { potonganPct: _pct, ...rest } = l;
+        const { potonganPct: _pct, potonganLabel: _label, ...rest } = l;
         return { ...rest, discount: potonganEfektif(l) };
       });
 
@@ -1101,7 +1164,7 @@ export default function KasirScreen() {
         />
         <RbBtn
           kbd="F5"
-          label="Perangguh"
+          label="Simpan Pending"
           Icon={BookmarkPlus}
           onClick={() => ui.run(() => setSavePendOpen(true), 'kasir-f5')}
           disabled={!lines.length || pendingGuard.busy || ui.locked('kasir-f5')}
@@ -1325,20 +1388,38 @@ export default function KasirScreen() {
             />
           </div>
 
-          <div className="w-[200px]">
-            <span className="frm-label">Diskon Item</span>
+          <div className="w-[264px]">
+            <span className="frm-label flex items-center gap-1.5">
+              Diskon Item
+              {patenHidup ? (
+                <span
+                  title="Dikunci dari Pengaturan &gt; Diskon"
+                  className="inline-flex items-center gap-1 rounded-full bg-[#fff4d6] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[#b8770a] ring-1 ring-[#f2d99a]"
+                >
+                  <Lock className="h-2.5 w-2.5" />
+                  Paten
+                </span>
+              ) : null}
+            </span>
             <div className="flex items-stretch gap-1">
-              <div className="flex shrink-0 overflow-hidden rounded border border-[#cdd8e6] bg-white text-[11px] font-bold">
+              <div
+                className={`flex shrink-0 overflow-hidden rounded border border-[#cdd8e6] text-[11px] font-bold ${
+                  patenHidup ? 'bg-[#f1f4f8]' : 'bg-white'
+                }`}
+              >
                 {(['fixed', 'percent'] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => pilihDiskonTipe(t)}
+                    disabled={patenHidup}
                     aria-pressed={diskonTipe === t}
                     title={
-                      t === 'fixed'
-                        ? 'Potongan nominal (Rp) untuk item baru'
-                        : 'Potongan persen (%) untuk item baru'
+                      patenHidup
+                        ? 'Satuan potongan dikunci dari Pengaturan'
+                        : t === 'fixed'
+                          ? 'Potongan nominal (Rp) untuk item baru'
+                          : 'Potongan persen (%) untuk item baru'
                     }
                     className={`px-2 transition ${
                       diskonTipe === t
@@ -1355,7 +1436,8 @@ export default function KasirScreen() {
                 <RupiahInput
                   id="diskon"
                   ariaLabel="Diskon default item baru (nominal)"
-                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]"
+                  disabled={patenHidup}
+                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8] disabled:bg-[#f1f4f8] disabled:text-[#5b6b80]"
                   value={diskonNilai}
                   onChange={(v) => setDiskonNilai(Math.max(0, v))}
                   onBlur={komitDiskonDefault}
@@ -1369,7 +1451,8 @@ export default function KasirScreen() {
                   type="number"
                   min={0}
                   max={100}
-                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]"
+                  disabled={patenHidup}
+                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8] disabled:bg-[#f1f4f8] disabled:text-[#5b6b80]"
                   value={diskonNilai || ''}
                   onChange={(e) => setDiskonNilai(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
                   onBlur={komitDiskonDefault}
@@ -1384,7 +1467,11 @@ export default function KasirScreen() {
                 />
               )}
             </div>
-            {labelDiskonDefault ? (
+            {patenHidup ? (
+              <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#b8770a]">
+                Paten dari Pengaturan · {ringkasanPatenHeader}
+              </p>
+            ) : labelDiskonDefault ? (
               <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#1b5fa8]">
                 {labelDiskonDefault}
               </p>
@@ -1426,17 +1513,24 @@ export default function KasirScreen() {
                   <span>Potongan</span>
                   {/* Satu toggle untuk form Diskon di atas & kolom ini, jadi
                       satuan yang diketik kasir selalu sama di keduanya. */}
-                  <span className="inline-flex overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold">
+                  <span
+                    className={`inline-flex overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold ${
+                      patenHidup ? 'bg-[#f1f4f8]' : ''
+                    }`}
+                  >
                     {(['rp', 'pct'] as const).map((m) => (
                       <button
                         key={m}
                         type="button"
                         onClick={() => pilihDiskonTipe(m === 'rp' ? 'fixed' : 'percent')}
+                        disabled={patenHidup}
                         aria-pressed={modePotongan === m}
                         title={
-                          m === 'rp'
-                            ? 'Kolom Potongan nominal (Rp)'
-                            : 'Kolom Potongan persen (%)'
+                          patenHidup
+                            ? 'Satuan kolom dikunci dari Pengaturan'
+                            : m === 'rp'
+                              ? 'Kolom Potongan nominal (Rp)'
+                              : 'Kolom Potongan persen (%)'
                         }
                         className={`px-1.5 transition ${
                           modePotongan === m

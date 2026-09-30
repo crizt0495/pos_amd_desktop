@@ -21,6 +21,8 @@ function linesToItems(lines: CartLine[]) {
     // bisa menulis "Pot/Diskon 10%" saat kasir memakai mode %.
     discount: potonganEfektif(l),
     discountPct: l.potonganPct ?? null,
+    // Label Diskon Paten (mis. "Diskon Toko"); null = potongan biasa.
+    discountLabel: l.potonganLabel ?? null,
     subtotal: jumlahBaris(l),
   }));
 }
@@ -82,6 +84,8 @@ export function buildReceiptFromTx(
       // Persen tidak disimpan di database (UI-only), jadi struk cetak ulang
       // menulis "Pot/Diskon" tanpa persen — lebih baik daripada menebak.
       discountPct: null,
+      // Sama seperti persen, label Diskon Paten tidak disimpan di database.
+      discountLabel: null,
       subtotal: i.subtotal,
     })),
     subtotal: tx.subtotal,
@@ -136,6 +140,8 @@ export type BarisStruk = {
   discount: number;
   /** Persen potongan bila diketahui (mode %), null untuk mode Rp. */
   discountPct: number | null;
+  /** Label dari Diskon Paten; null = tulis "Pot/Diskon". */
+  discountLabel: string | null;
   /** qty x harga - potongan. */
   net: number;
 };
@@ -154,6 +160,7 @@ export function barisStruk(d: ReceiptData): BarisStruk[] {
       gross,
       discount,
       discountPct: it.discountPct ?? null,
+      discountLabel: it.discountLabel ?? null,
       net: round2(gross - discount),
     };
   });
