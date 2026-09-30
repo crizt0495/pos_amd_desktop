@@ -19,7 +19,7 @@ import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { SatuanVarianTable } from '@/components/SatuanVarianTable';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
-import { rupiah } from '@/lib/format';
+import { angka, rupiah } from '@/lib/format';
 import type { Product, ProductInput } from '@/lib/types';
 
 type FormState = {
@@ -349,7 +349,7 @@ export default function ProdukScreen() {
         <div className="flex items-center gap-2 border-b border-[#ffe0b2] bg-[#fff9db] px-4 py-1.5 text-[12px] text-[#a35b00]">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">
-            Stok menipis: {lowStock.map((p) => `${p.name} (${p.stock})`).join(', ')}
+            Stok menipis: {lowStock.map((p) => `${p.name} (${angka(p.stock)})`).join(', ')}
           </span>
         </div>
       ) : null}
@@ -420,9 +420,9 @@ export default function ProdukScreen() {
                             <Minus className="h-3 w-3" />
                           </button>
                           <span
-                            className={`tnum w-10 text-center font-semibold ${tipis ? 'text-[#e03131]' : 'text-[#22374b]'}`}
+                            className={`tnum min-w-[44px] px-0.5 text-center font-semibold ${tipis ? 'text-[#e03131]' : 'text-[#22374b]'}`}
                           >
-                            {p.stock}
+                            {angka(p.stock)}
                           </span>
                           <button
                             type="button"
@@ -616,8 +616,8 @@ export default function ProdukScreen() {
 
           {editing ? (
             <p className="mt-3 rounded-md bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#4a5b70]">
-              Stok saat ini {editing.stock} {editing.unit}. Transaksi yang sudah tersimpan tidak ikut
-              berubah.
+              Stok saat ini {angka(editing.stock)} {editing.unit}. Transaksi yang sudah tersimpan tidak
+              ikut berubah.
             </p>
           ) : null}
         </form>

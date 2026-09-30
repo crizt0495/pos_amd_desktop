@@ -19,6 +19,7 @@ import { customersApi, nextInvoicePreview, productsApi, settingsApi, transaction
 import { useCart } from '@/lib/cart-store';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
+  angka,
   cariProdukByBarcodeVarian,
   cariVarian,
   gabungKeranjang,
@@ -918,7 +919,7 @@ export default function KasirScreen() {
                     >
                       <span className="ac-kode">{p.barcode || '—'}</span>
                       <span className="ac-nama">{p.name}</span>
-                      <span className="ac-meta">Stok {p.stock}</span>
+                      <span className="ac-meta">Stok {angka(p.stock)}</span>
                       <span className="ac-harga">{rupiah(p.price)}</span>
                     </button>
                   </li>
