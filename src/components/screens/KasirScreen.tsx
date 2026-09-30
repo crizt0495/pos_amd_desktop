@@ -38,7 +38,7 @@ import { ModalBayar, type ShortcutBayar } from '@/components/ModalBayar';
 import { ModalListBarang } from '@/components/ModalListBarang';
 import { ModalPelanggan } from '@/components/ModalPelanggan';
 import { ReceiptView } from '@/components/Receipt';
-import { UangInput } from '@/components/UangInput';
+import { RupiahInput } from '@/components/RupiahInput';
 import {
   PAYMENT_METHOD_LABEL,
   type CartLine,
@@ -1093,7 +1093,7 @@ export default function KasirScreen() {
                   </td>
                   <td className="td tnum text-right text-[#9fb0c4]">{rupiah(l.cost)}</td>
                   <td className="td p-0">
-                    <UangInput
+                    <RupiahInput
                       dataCell="price"
                       ariaLabel={`Harga jual ${l.name}`}
                       className="cell text-right"
@@ -1114,7 +1114,7 @@ export default function KasirScreen() {
                     />
                   </td>
                   <td className="td p-0">
-                    <UangInput
+                    <RupiahInput
                       dataCell="disc"
                       ariaLabel={`Potongan ${l.name}`}
                       className="cell text-right"
@@ -1204,6 +1204,8 @@ export default function KasirScreen() {
         onClose={() => setListBarangOpen(false)}
         products={products}
         onPilih={(p) => masukkanProduk(p)}
+        jumlahItem={lines.length}
+        totalKeranjang={totalTagihan}
       />
 
       {/* ========================= MODAL TAMBAH PELANGGAN ============== */}
