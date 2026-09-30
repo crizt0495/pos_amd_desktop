@@ -424,6 +424,14 @@
   gap: 8px;
 }
 
+.receipt .rows > div.total {
+  font-size: 14px;
+  font-weight: 700;
+  border-top: 1px dashed #000;
+  margin-top: 3px;
+  padding-top: 5px;
+}
+
 .receipt .item,
 .receipt .item-head {
   display: flex;

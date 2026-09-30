@@ -49,17 +49,13 @@ export function ReceiptView({ data }: { data: ReceiptData }) {
         <hr />
 
         <div className="rows">
-          <div>
-            <span>Subtotal</span>
-            <span>{rupiah(data.subtotal)}</span>
-          </div>
           {data.discountAmount > 0 ? (
             <div>
               <span>Diskon</span>
               <span>-{rupiah(data.discountAmount)}</span>
             </div>
           ) : null}
-          <div style={{ fontWeight: 700 }}>
+          <div className="total">
             <span>TOTAL</span>
             <span>{rupiah(data.total)}</span>
           </div>

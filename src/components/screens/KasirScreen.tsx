@@ -1385,21 +1385,7 @@ export default function KasirScreen() {
           </>
         }
       >
-        {success ? (
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between rounded-lg border border-[#b7e0c1] bg-[#ebfbee] px-3 py-2">
-              <div>
-                <p className="tnum text-[13px] font-bold text-[#1b3a5c]">{success.receipt.invoiceNo}</p>
-                <p className="text-[11px] text-[#4a5b70]">{success.receipt.storeName}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] uppercase tracking-wide text-[#7a8ba0]">Kembalian</p>
-                <p className="tnum text-[20px] font-bold text-accent-600">{rupiah(success.change)}</p>
-              </div>
-            </div>
-            <ReceiptView data={success.receipt} />
-          </div>
-        ) : null}
+        {success ? <ReceiptView data={success.receipt} /> : null}
       </Modal>
     </div>
   );
