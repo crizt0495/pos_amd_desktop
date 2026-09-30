@@ -179,6 +179,13 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
   const omzetMax = Math.max(1, ...daily.map((d) => d.omzet));
 
+  // Diskon transaksi = potongan tiap item + diskon level transaksi (hanya
+  // transaksi lama yang memakainya). Transaksi baru diskonnya per item.
+  const potonganDetail = detail
+    ? detail.items.reduce((s, it) => s + (Number(it.discount) || 0), 0) +
+      (Number(detail.tx.discount_amount) || 0)
+    : 0;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* ------------------------- SUB-RIBBON -------------------------- */}
@@ -253,9 +260,10 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {/* ---------------------------- summary -------------------------- */}
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
           <Stat label="Omzet" value={rupiah(summary?.total_omzet ?? 0)} icon={<TrendingUp className="h-3.5 w-3.5" />} />
           <Stat label="Laba Kotor" value={rupiah(summary?.total_laba ?? 0)} tone="green" />
+          <Stat label="Diskon" value={rupiah(summary?.total_diskon ?? 0)} tone="red" />
           <Stat label="Transaksi" value={angka(summary?.jumlah_transaksi ?? 0)} />
           <Stat label="Item Terjual" value={angka(summary?.total_item ?? 0)} />
         </div>
@@ -633,10 +641,10 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                 <dt className="text-[#5b6b80]">Subtotal</dt>
                 <dd className="tnum">{rupiah(detail.tx.subtotal)}</dd>
               </div>
-              {detail.tx.discount_amount > 0 ? (
+              {potonganDetail > 0 ? (
                 <div className="flex justify-between">
                   <dt className="text-[#5b6b80]">Diskon</dt>
-                  <dd className="tnum text-[#e03131]">-{rupiah(detail.tx.discount_amount)}</dd>
+                  <dd className="tnum text-[#e03131]">-{rupiah(potonganDetail)}</dd>
                 </div>
               ) : null}
               <div className="flex justify-between border-t border-dashed border-[#d8e0ec] pt-1 text-[14px] font-bold">
@@ -733,19 +741,16 @@ function Stat({
   label: string;
   value: string;
   icon?: React.ReactNode;
-  tone?: 'green';
+  tone?: 'green' | 'red';
 }) {
+  const warna = tone === 'green' ? 'text-[#2f9e44]' : tone === 'red' ? 'text-[#c92a2a]' : 'text-[#1b3a5c]';
   return (
     <div className="card p-3.5">
       <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#5b6b80]">
         {icon}
         {label}
       </p>
-      <p
-        className={`tnum mt-1 text-[20px] font-bold ${tone === 'green' ? 'text-[#2f9e44]' : 'text-[#1b3a5c]'}`}
-      >
-        {value}
-      </p>
+      <p className={`tnum mt-1 text-[20px] font-bold ${warna}`}>{value}</p>
     </div>
   );
 }

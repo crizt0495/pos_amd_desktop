@@ -40,8 +40,6 @@ export function ModalBayar({
   total,
   subtotal,
   discount,
-  diskonGlobal,
-  diskonGlobalLabel,
   method,
   onMethod,
   bayar,
@@ -63,10 +61,6 @@ export function ModalBayar({
   subtotal: number;
   /** Total potongan per baris. */
   discount: number;
-  /** Diskon transaksi global (sudah dibatasi, Rp). */
-  diskonGlobal: number;
-  /** Label ringkas diskon global untuk tampilan, mis. "15%". */
-  diskonGlobalLabel?: string;
   method: PaymentMethod;
   onMethod: (m: PaymentMethod) => void;
   /** Teks input Bayar (diformat ribuan saat diketik di RupiahInput). */
@@ -144,17 +138,6 @@ export function ModalBayar({
                   {discount > 0 ? `- ${rupiah(discount)}` : rupiah(0)}
                 </dd>
               </div>
-              {diskonGlobal > 0 ? (
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-[#5b6b80]">
-                    Diskon
-                    {diskonGlobalLabel ? (
-                      <span className="ml-1 text-[10px] text-[#93a5b9]">({diskonGlobalLabel})</span>
-                    ) : null}
-                  </dt>
-                  <dd className="tnum font-semibold text-[#c92a2a]">- {rupiah(diskonGlobal)}</dd>
-                </div>
-              ) : null}
               <div className="flex items-center justify-between gap-4 border-t border-[#d8e0ec] pt-1.5">
                 <dt className="font-bold text-[#22374b]">Total</dt>
                 <dd className="tnum text-[15px] font-bold text-accent-600">{rupiah(total)}</dd>

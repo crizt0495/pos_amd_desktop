@@ -737,13 +737,14 @@ as $$
 declare
   v_row record;
   v_item numeric;
+  v_diskon_item numeric;
   v_rata numeric;
 begin
   select
     count(*)                       as jumlah_transaksi,
     coalesce(sum(total), 0)        as total_omzet,
     coalesce(sum(total - total_cost), 0) as total_laba,
-    coalesce(sum(discount_amount), 0)    as total_diskon,
+    coalesce(sum(discount_amount), 0)    as total_diskon_transaksi,
     coalesce(sum(paid), 0)         as total_terima
   into v_row
   from public.kasir_transactions t
@@ -760,6 +761,17 @@ begin
     and (p_from is null or t.created_at >= p_from::timestamptz)
     and (p_to   is null or t.created_at <= p_to::timestamptz);
 
+  -- Diskon sekarang disimpan per item (kolom Potongan di keranjang kasir),
+  -- bukan lagi di level transaksi — jadi keduanya harus dijumlahkan supaya
+  -- angka "Diskon" di laporan tetap benar untuk transaksi lama & baru.
+  select coalesce(sum(i.discount), 0) into v_diskon_item
+  from public.kasir_transaction_items i
+  join public.kasir_transactions t on t.id = i.transaction_id
+  where t.user_id = auth.uid()
+    and t.status = 'completed'
+    and (p_from is null or t.created_at >= p_from::timestamptz)
+    and (p_to   is null or t.created_at <= p_to::timestamptz);
+
   v_rata := case when v_row.jumlah_transaksi > 0
     then round(v_row.total_omzet / v_row.jumlah_transaksi, 2) else 0 end;
 
@@ -767,7 +779,7 @@ begin
     'jumlah_transaksi', v_row.jumlah_transaksi,
     'total_omzet',       round(v_row.total_omzet, 2),
     'total_laba',        round(v_row.total_laba, 2),
-    'total_diskon',      round(v_row.total_diskon, 2),
+    'total_diskon',      round(v_row.total_diskon_transaksi + v_diskon_item, 2),
     'total_terima',      round(v_row.total_terima, 2),
     'total_item',        round(v_item, 2),
     'rata_rata',         v_rata

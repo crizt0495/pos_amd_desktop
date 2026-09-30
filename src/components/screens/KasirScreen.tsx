@@ -29,6 +29,8 @@ import {
   jumlahBaris,
   normalisasiVarian,
   parseRupiah,
+  persenPotongan,
+  potonganDariDefault,
   potonganDariPct,
   potonganEfektif,
   potonganMax,
@@ -196,18 +198,22 @@ export default function KasirScreen() {
   const [shiftExpected, setShiftExpected] = React.useState<number | null>(null);
   const shiftGuard = useButtonGuard();
 
-  /* ---------------------------- diskon global ------------------------ */
-  // Diskon transaksi: 'fixed' (Rp) atau 'percent' (%). Nilai 0 = tanpa diskon.
+  /* ------------------ diskon default (isi kolom Potongan) -------------- */
+  // 'fixed' (Rp) atau 'percent' (%). Nilai ini TIDAL dipotong di level total
+  // transaksi — ia hanya mengisi kolom POTONGAN tiap item yang baru masuk
+  // keranjang, jadi kasir tak perlu edit manual kolom itu lagi.
   const [diskonTipe, setDiskonTipe] = React.useState<'fixed' | 'percent'>('fixed');
   const [diskonNilai, setDiskonNilai] = React.useState<number>(0);
-  // Mode kolom POTONGAN di tabel: terisi nominal Rp atau persen (per baris).
-  const [modePotongan, setModePotongan] = React.useState<'rp' | 'pct'>('rp');
+  // Kolom POTONGAN di tabel mengikuti mode diskon header (satu toggle untuk
+  // form atas & tabel), sehingga nilai yang tampil selalu dalam satuan yang
+  // sedang diketik kasir.
+  const modePotongan: 'rp' | 'pct' = diskonTipe === 'percent' ? 'pct' : 'rp';
 
   const flashTimer = React.useRef<number | null>(null);
   const [flashKey, setFlashKey] = React.useState<string | null>(null);
 
   /* ------------------------------ turunan ----------------------------- */
-  const totals = hitungTotal(lines, diskonTipe, diskonNilai);
+  const totals = hitungTotal(lines);
   const subtotalKotor = React.useMemo(() => lines.reduce((s, l) => s + l.price * l.qty, 0), [lines]);
   // Potongan sekarang flat per baris (bukan per satuan).
   const totalPotongan = totals.potonganBaris;
@@ -224,21 +230,14 @@ export default function KasirScreen() {
       ),
     [lines],
   );
-  // Diskon global: nilai mentah saat diketik, efektif = dibatasi ke maksimum
-  // (fixed: ≤ subtotal; percent: ≤ 100). Total tak pernah minus.
-  const diskonEfektif = React.useMemo(() => {
-    if (!diskonNilai) return 0;
-    if (diskonTipe === 'percent') return Math.min(diskonNilai, 100);
-    return Math.min(diskonNilai, totals.subtotal);
-  }, [diskonTipe, diskonNilai, totals.subtotal]);
-  const diskonGlobalTidakSah = React.useMemo(() => {
-    if (!diskonNilai) return false;
-    return diskonTipe === 'percent' ? diskonNilai > 100 : diskonNilai > totals.subtotal;
-  }, [diskonTipe, diskonNilai, totals.subtotal]);
-  // Label ringkas untuk tampilan: "10%" saat percent, "" saat Rp.
-  const labelDiskonGlobal =
-    diskonTipe === 'percent' && diskonNilai > 0 ? `${diskonEfektif}%` : '';
-  const diskonTidakSah = diskonGlobalTidakSah || potonganBarisTidakSah;
+  // Ringkasan diskon default yang sedang aktif, buat info di bawah input.
+  const labelDiskonDefault =
+    diskonNilai > 0
+      ? diskonTipe === 'percent'
+        ? `${Math.min(Math.floor(diskonNilai), 100)}% per item baru`
+        : `${rupiah(diskonNilai)} per item baru`
+      : '';
+  const diskonTidakSah = potonganBarisTidakSah;
   const isTunai = method === 'cash';
   const bayarNominal = parseRupiah(bayarTeks) || 0;
   // Tunai: Kembalian = Bayar - Total (Bayar boleh lebih/tepat).
@@ -323,6 +322,11 @@ export default function KasirScreen() {
    * Masukkan satu produk ke keranjang.
    * `satuanAwal` dipakai saat barcode yang dipindai milik satuan non-dasar
    * (mis. barcode Dus) supaya baris langsung memakai harga varian itu.
+   *
+   * Potongan baris langsung diisi dari "Diskon" form header: Rp 500 -> setiap
+   * item baru masuk dengan Potongan 500, % 10 -> 10% dari harga x qty. Nilai
+   * dibatasi ke harga x qty sehingga baris tak pernah jadi minus. Baris yang
+   * SUDAH ada di tabel tidak ikut berubah saat kasir mengubah diskon header.
    */
   function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
     const units = satuanOptions(p);
@@ -333,6 +337,7 @@ export default function KasirScreen() {
       : (v0?.satuan ?? units[0] ?? p.unit);
     const harga = v0 ?? { harga_jual: p.price, harga_beli: p.cost };
     const q = Math.max(1, Math.floor(qty ?? itemQty) || 1);
+    const nilaiBaris = { price: harga.harga_jual, qty: q };
 
     setLines((prev) =>
       gabungKeranjang(prev, {
@@ -342,7 +347,13 @@ export default function KasirScreen() {
         price: harga.harga_jual,
         cost: harga.harga_beli,
         qty: q,
-        discount: 0,
+        discount: potonganDariDefault(nilaiBaris, diskonTipe, diskonNilai),
+        // Mode %: simpan persennya supaya kolom tabel menampilkan satuan yang
+        // sama (dan tetap ikut terhitung ulang saat qty/harga berubah).
+        potonganPct:
+          modePotongan === 'pct' && diskonNilai > 0
+            ? Math.min(100, Math.max(0, Math.floor(diskonNilai)))
+            : null,
         unit: satuan,
         satuanList: units,
         variants: varian,
@@ -542,9 +553,11 @@ export default function KasirScreen() {
   }, []);
 
   /**
-   * Ketik Potongan di tabel keranjang.
+   * Ketik Potongan di tabel keranjang (mode Rp).
    * Nilai mentah disimpan dulu (supaya border merah + helper "Max: …" muncul
    * saat melebihi harga x qty), lalu dikunci jadi nilai sah saat blur/Enter.
+   * `potonganPct` dibuang: nominal yang diketik kasir yang berlaku, sehingga
+   * perubahan qty/harga berikutnya tidak ikut memakai persen lama.
    */
   const ubahPotongan = React.useCallback(
     (i: number, diskon: number) => {
@@ -560,7 +573,7 @@ export default function KasirScreen() {
         const cur = prev[i];
         if (!cur) return prev;
         const copy = [...prev];
-        copy[i] = { ...cur, discount: d };
+        copy[i] = { ...cur, discount: d, potonganPct: null };
         return copy;
       });
     },
@@ -580,23 +593,9 @@ export default function KasirScreen() {
     });
   }, []);
 
-  /** Ganti mode kolom POTONGAN (Rp / %). Saat masuk %: isi nilai awal tiap baris. */
-  const pilihModePotongan = React.useCallback((m: 'rp' | 'pct') => {
-    setModePotongan(m);
-    if (m === 'pct') {
-      setLines((prev) =>
-        prev.map((l) => {
-          const max = potonganMax(l);
-          return {
-            ...l,
-            potonganPct: max > 0 ? Math.min(100, Math.round((potonganEfektif(l) / max) * 100)) : null,
-          };
-        }),
-      );
-    }
-  }, []);
-
-  /** Ketik Potongan % (mode %): simpan mentah + diskon = min(pct,100)% dari subtotal. */
+  /**
+   * Ketik Potongan % (mode %): simpan mentah + diskon = min(pct,100)% dari subtotal.
+   */
   const ubahPotonganPct = React.useCallback(
     (i: number, pct: number) => {
       const l = lines[i];
@@ -617,16 +616,27 @@ export default function KasirScreen() {
     [lines, toast],
   );
 
-  /** Kunci % ke 0..100 saat blur/Enter (diskon ikut dikunci ke 100% maksimum). */
+  /**
+   * Kunci % ke 0..100 saat blur/Enter (diskon ikut dikunci ke 100% maksimum).
+   * Baris yang potongannya masih nominal (diisi dari diskon Rp / hasil scan)
+   * belum punya `potonganPct`; persen yang ditampilkan di layar diturunkan dari
+   * nominal itu, jadi blur tanpa mengetik TIDAK boleh menghapus potongannya.
+   */
   const komitPotonganPct = React.useCallback((i: number) => {
     setLines((prev) => {
       const cur = prev[i];
       if (!cur) return prev;
-      const pct = Math.min(Math.max(0, Math.floor(Number(cur.potonganPct) || 0)), 100);
+      const dariPct = cur.potonganPct != null;
+      const pct = Math.min(
+        Math.max(0, Math.floor(cur.potonganPct ?? persenPotongan(cur) ?? 0)),
+        100,
+      );
       const next = {
         ...cur,
         potonganPct: pct || null,
-        discount: potonganDariPct(cur, pct),
+        // Nominal yang sudah ada dipertahankan (bukan dibulatkan ulang dari
+        // persen) supaya blur tidak mengubah uang yang dipotong.
+        discount: dariPct ? potonganDariPct(cur, pct) : cur.discount,
       };
       if (next.potonganPct === cur.potonganPct && next.discount === cur.discount) return prev;
       const copy = [...prev];
@@ -635,20 +645,28 @@ export default function KasirScreen() {
     });
   }, []);
 
-  /** Ganti mode diskon global (Rp / %); nilai direset agar tidak rancu. */
+  /**
+   * Ganti mode diskon (Rp / %) pada form header. Sekaligus mengganti satuan
+   * kolom POTONGAN di tabel, karena keduanya satu toggle. Nilai direset ke 0
+   * supaya tidak salah baca sisa nominal jadi persen.
+   * Baris yang sudah ada di tabel TIDAK diubah — nominalnya tetap.
+   */
   const pilihDiskonTipe = React.useCallback((t: 'fixed' | 'percent') => {
     setDiskonTipe(t);
     setDiskonNilai(0);
   }, []);
 
-  /** Kunci diskon global ke nilai sah saat blur/Enter (Rp: ≤ subtotal, %: ≤ 100). */
-  const komitDiskonGlobal = React.useCallback(() => {
+  /**
+   * Kunci nilai diskon saat blur/Enter: minimal 0, persen maksimal 100.
+   * Nominal TIDAK dibatasi ke subtotal keranjang — diskon sering diketik dulu
+   * (sebelum barang di-scan) dan otomatis dipotong ke harga x qty per baris.
+   */
+  const komitDiskonDefault = React.useCallback(() => {
     setDiskonNilai((prev) => {
       const v = Math.max(0, Math.floor(Number(prev) || 0));
-      if (diskonTipe === 'percent') return Math.min(v, 100);
-      return Math.min(v, totals.subtotal);
+      return diskonTipe === 'percent' ? Math.min(v, 100) : v;
     });
-  }, [diskonTipe, totals.subtotal]);
+  }, [diskonTipe]);
 
   /** Ganti satuan: H. Jual & H. Pokok ikut berubah sesuai varian satuan itu. */
   const ubahSatuan = React.useCallback((i: number, satuan: string) => {
@@ -690,7 +708,6 @@ export default function KasirScreen() {
     setCatatanModal('');
     setDiskonTipe('fixed');
     setDiskonNilai(0);
-    setModePotongan('rp');
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
   }, [resetCart, fokusKode]);
@@ -844,8 +861,11 @@ export default function KasirScreen() {
 
       const res = await transactionsApi.create({
         lines: linesAman,
-        discountType: diskonEfektif > 0 ? diskonTipe : 'none',
-        discountValue: diskonEfektif,
+        // Diskon sudah dipotong per baris (kolom POTONGAN), jadi transaksi
+        // ini tidak punya diskon level transaksi — supaya tidak terpotong dua
+        // kali. Nominal potongannya tersimpan di tiap item.
+        discountType: 'none',
+        discountValue: 0,
         paymentMethod: method,
         paid: bayarAkhir,
         note: catatan || null,
@@ -865,7 +885,7 @@ export default function KasirScreen() {
         store,
         lines: linesAman,
         subtotal: totals.subtotal,
-        discountAmount: totals.discountAmount,
+        discountAmount: totalPotongan,
         total: totalTagihan,
         paid: bayarAkhir,
         changeDue: kembalian,
@@ -1295,7 +1315,7 @@ export default function KasirScreen() {
           </div>
 
           <div className="w-[200px]">
-            <span className="frm-label">Diskon</span>
+            <span className="frm-label">Diskon Item</span>
             <div className="flex items-stretch gap-1">
               <div className="flex shrink-0 overflow-hidden rounded border border-[#cdd8e6] bg-white text-[11px] font-bold">
                 {(['fixed', 'percent'] as const).map((t) => (
@@ -1304,7 +1324,11 @@ export default function KasirScreen() {
                     type="button"
                     onClick={() => pilihDiskonTipe(t)}
                     aria-pressed={diskonTipe === t}
-                    title={t === 'fixed' ? 'Diskon nominal (Rp)' : 'Diskon persen (%)'}
+                    title={
+                      t === 'fixed'
+                        ? 'Potongan nominal (Rp) untuk item baru'
+                        : 'Potongan persen (%) untuk item baru'
+                    }
                     className={`px-2 transition ${
                       diskonTipe === t
                         ? 'bg-[#1b5fa8] text-white'
@@ -1319,37 +1343,29 @@ export default function KasirScreen() {
               {diskonTipe === 'fixed' ? (
                 <RupiahInput
                   id="diskon"
-                  ariaLabel="Diskon transaksi nominal"
-                  className={`h-8 min-w-0 flex-1 rounded border ${
-                    diskonGlobalTidakSah
-                      ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
-                      : 'border-[#cdd8e6]'
-                  } px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]`}
+                  ariaLabel="Diskon default item baru (nominal)"
+                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]"
                   value={diskonNilai}
                   onChange={(v) => setDiskonNilai(Math.max(0, v))}
-                  onBlur={komitDiskonGlobal}
-                  onEnter={komitDiskonGlobal}
+                  onBlur={komitDiskonDefault}
+                  onEnter={komitDiskonDefault}
                   placeholder="0"
                 />
               ) : (
                 <input
                   id="diskon"
-                  aria-label="Diskon transaksi persen"
+                  aria-label="Diskon default item baru (persen)"
                   type="number"
                   min={0}
                   max={100}
-                  className={`h-8 min-w-0 flex-1 rounded border ${
-                    diskonGlobalTidakSah
-                      ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
-                      : 'border-[#cdd8e6]'
-                  } px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]`}
+                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8]"
                   value={diskonNilai || ''}
                   onChange={(e) => setDiskonNilai(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                  onBlur={komitDiskonGlobal}
+                  onBlur={komitDiskonDefault}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      komitDiskonGlobal();
+                      komitDiskonDefault();
                     }
                   }}
                   onFocus={(e) => e.currentTarget.select()}
@@ -1357,9 +1373,9 @@ export default function KasirScreen() {
                 />
               )}
             </div>
-            {diskonGlobalTidakSah ? (
-              <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
-                {diskonTipe === 'percent' ? 'Max: 100%' : `Max: ${rupiah(totals.subtotal)}`}
+            {labelDiskonDefault ? (
+              <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#1b5fa8]">
+                {labelDiskonDefault}
               </p>
             ) : null}
           </div>
@@ -1394,14 +1410,20 @@ export default function KasirScreen() {
               <th className="th w-[128px] text-right">
                 <span className="inline-flex items-center justify-end gap-1">
                   <span>Potongan</span>
+                  {/* Satu toggle untuk form Diskon di atas & kolom ini, jadi
+                      satuan yang diketik kasir selalu sama di keduanya. */}
                   <span className="inline-flex overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold">
                     {(['rp', 'pct'] as const).map((m) => (
                       <button
                         key={m}
                         type="button"
-                        onClick={() => pilihModePotongan(m)}
+                        onClick={() => pilihDiskonTipe(m === 'rp' ? 'fixed' : 'percent')}
                         aria-pressed={modePotongan === m}
-                        title={m === 'rp' ? 'Potongan nominal (Rp)' : 'Potongan persen (%)'}
+                        title={
+                          m === 'rp'
+                            ? 'Kolom Potongan nominal (Rp)'
+                            : 'Kolom Potongan persen (%)'
+                        }
                         className={`px-1.5 transition ${
                           modePotongan === m
                             ? 'bg-[#1b5fa8] text-white'
@@ -1433,6 +1455,10 @@ export default function KasirScreen() {
               const jumlah = jumlahBaris(l);
               const rugi = l.price < l.cost;
               const kilat = l.product_id === flashKey;
+              // Persen yang tampil di mode %: pakai yang tersimpan di baris,
+              // atau diturunkan dari nominal yang sudah ada (baris lama tak
+              // diubah hanya karena kasir menukar Rp <-> % di form atas).
+              const persen = l.potonganPct ?? persenPotongan(l);
               return (
                 <tr
                   key={`${l.product_id ?? l.name}-${i}`}
@@ -1500,11 +1526,11 @@ export default function KasirScreen() {
                             min={0}
                             max={100}
                             className={`cell tnum w-full pr-6 text-right ${
-                              (l.potonganPct ?? 0) > 100
+                              (persen ?? 0) > 100
                                 ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
                                 : ''
                             }`}
-                            value={l.potonganPct ?? ''}
+                            value={persen ?? ''}
                             onChange={(e) => ubahPotonganPct(i, Number(e.target.value))}
                             onBlur={() => komitPotonganPct(i)}
                             onKeyDown={(e) => {
@@ -1520,7 +1546,7 @@ export default function KasirScreen() {
                             %
                           </span>
                         </div>
-                        {(l.potonganPct ?? 0) > 100 ? (
+                        {(persen ?? 0) > 100 ? (
                           <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
                             Max: 100%
                           </p>
@@ -1591,19 +1617,13 @@ export default function KasirScreen() {
               <dt className="text-[#5b6b80]">Subtotal</dt>
               <dd className="tnum font-semibold text-[#35485c]">{rupiah(subtotalKotor)}</dd>
             </div>
-            {totals.discountAmount > 0 ? (
-              <div className="flex items-center gap-2">
-                <dt className="text-[#5b6b80]">
-                  Diskon
-                  {labelDiskonGlobal ? (
-                    <span className="ml-1 text-[10px] text-[#93a5b9]">({labelDiskonGlobal})</span>
-                  ) : null}
-                </dt>
-                <dd className="tnum font-semibold text-[#c92a2a]">- {rupiah(totals.discountAmount)}</dd>
-              </div>
-            ) : null}
             <div className="flex items-center gap-2">
-              <dt className="text-[#5b6b80]">Total Potongan</dt>
+              <dt className="text-[#5b6b80]">
+                Potongan
+                {labelDiskonDefault ? (
+                  <span className="ml-1 text-[10px] text-[#93a5b9]">(default item baru)</span>
+                ) : null}
+              </dt>
               <dd className="tnum font-semibold text-[#c92a2a]">
                 {totalPotongan > 0 ? `- ${rupiah(totalPotongan)}` : rupiah(0)}
               </dd>
@@ -1648,7 +1668,12 @@ export default function KasirScreen() {
         open={listBarangOpen}
         onClose={() => setListBarangOpen(false)}
         products={products}
-        onPilih={(p) => masukkanProduk(p)}
+        onPilih={(p) => {
+          masukkanProduk(p);
+          // Jumlah kembali ke 1 supaya item berikutnya scan cepat lagi
+          // (fokus sengaja tidak diambil: cursor masih di modal Cari Barang).
+          setItemQty(1);
+        }}
         jumlahItem={lines.length}
         totalKeranjang={totalTagihan}
       />
@@ -1677,8 +1702,6 @@ export default function KasirScreen() {
         total={totalTagihan}
         subtotal={subtotalKotor}
         discount={totalPotongan}
-        diskonGlobal={totals.discountAmount}
-        diskonGlobalLabel={labelDiskonGlobal}
         method={method}
         onMethod={pilihMetode}
         bayar={bayarTeks}

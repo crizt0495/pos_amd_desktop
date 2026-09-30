@@ -1,4 +1,4 @@
-import type { CartLine, CartTotals, DiscountType, ProductVariant } from './types';
+import type { CartLine, CartTotals, ProductVariant } from './types';
 
 /** Format & perhitungan lokal (salinan dari KasirPro Desktop). */
 
@@ -285,38 +285,53 @@ export function potonganDariPct(l: Pick<CartLine, 'price' | 'qty'>, pct: number)
   return round2((Math.min(Math.max(Number(pct) || 0, 0), 100) / 100) * potonganMax(l));
 }
 
+/**
+ * "Diskon" pada form header -> nominal potongan satu baris (default Potongan
+ * item yang baru di-scan).
+ * - 'fixed'   -> Rp, dibatasi ke harga x qty (baris gratis bila >= nilai baris)
+ * - 'percent' -> % dari harga x qty, dibatasi 100%
+ * Nilai 0 = tanpa potongan.
+ */
+export function potonganDariDefault(
+  l: Pick<CartLine, 'price' | 'qty'>,
+  tipe: 'fixed' | 'percent',
+  nilai: number,
+): number {
+  const v = Math.max(Number(nilai) || 0, 0);
+  if (!v) return 0;
+  return tipe === 'percent' ? potonganDariPct(l, v) : round2(Math.min(v, potonganMax(l)));
+}
+
+/** Persentase potongan yang sedang berlaku pada satu baris (untuk mode %). */
+export function persenPotongan(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number | null {
+  const max = potonganMax(l);
+  const d = Math.max(Number(l.discount) || 0, 0);
+  if (max <= 0 || d <= 0) return null;
+  return Math.min(100, Math.round((d / max) * 100));
+}
+
 /** Jumlah satu baris: qty x H. Jual - Potongan efektif (tak pernah negatif). */
 export function jumlahBaris(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number {
   return round2(potonganMax(l) - potonganEfektif(l));
 }
 
-export function hitungTotal(
-  lines: CartLine[],
-  discountType: DiscountType,
-  discountValue: number,
-): CartTotals {
+/** Total transaksi = jumlah seluruh baris (potongan sudah dipotong per baris).
+ *  Tidak ada diskon level transaksi lagi: diskon form header dipakai sebagai
+ *  default Potongan tiap item baru, jadi dipotong lagi di sini akan membuat
+ *  nominal terpotong dua kali. */
+export function hitungTotal(lines: CartLine[]): CartTotals {
   const subtotal = round2(lines.reduce((sum, l) => sum + jumlahBaris(l), 0));
   const totalCost = round2(lines.reduce((sum, l) => sum + l.cost * l.qty, 0));
   // Potongan dihitung dari nilai efektif (min(discount, harga x qty)) supaya
   // angka yang ditampilkan = yang benar-benar dipotong, bukan angka mentah.
   const potonganBaris = round2(lines.reduce((sum, l) => sum + potonganEfektif(l), 0));
 
-  let discountAmount = 0;
-  if (discountType === 'percent') {
-    discountAmount = round2((subtotal * Math.min(Math.max(discountValue || 0, 0), 100)) / 100);
-  } else if (discountType === 'fixed') {
-    discountAmount = round2(Math.min(Math.max(discountValue || 0, 0), subtotal));
-  }
-
-  const total = round2(Math.max(0, subtotal - discountAmount));
-
   return {
     subtotal,
-    discountAmount,
-    total,
+    total: subtotal,
     totalCost,
     itemCount: lines.reduce((n, l) => n + l.qty, 0),
-    profit: round2(total - totalCost),
+    profit: round2(subtotal - totalCost),
     potonganBaris,
   };
 }

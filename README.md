@@ -11,7 +11,7 @@ manajemen produk, laporan & pembatalan (void). Di-host di **Vercel**, data di
 
 | Layar   | Kemampuan                                                                 |
 | ------- | ------------------------------------------------------------------------- |
-| Kasir   | Scan barcode / cari produk, keranjang, diskon % / Rp **global + per baris**, tunai & QRIS, struk 58mm (cetak web), **shift kasir** (buka/tutup + setoran laci & selisih live) |
+| Kasir   | Scan barcode / cari produk, keranjang, **diskon default per item baru** (Rp / %, isi otomatis kolom Potongan, masih bisa diedit per baris), tunai & QRIS, struk 58mm (cetak web), **shift kasir** (buka/tutup + setoran laci & selisih live) |
 | Produk  | Tambah / ubah / hapus, stok ±, status non-aktif, peringatan stok menipis, **ekspor/impor CSV** (BOM UTF-8, angka ala Indonesia, upsert per barcode), **kartu stok** (mutasi terjual/retur/void/stok masuk-keluar) & **stok masuk** |
 | Laporan | Omzet & laba, grafik harian, produk terlaris, metode bayar, riwayat + void (stok kembali), **retur penjualan** (refund proporsional + riwayat retur), **laporan per kasir & riwayat shift** |
 
@@ -57,7 +57,7 @@ npm run dev                  # http://localhost:3001
 2. **SQL Editor** → *New query* → tempel seluruh isi `supabase/schema.sql` → **RUN**
    *(idempotent; berisi tabel+rpc semua fitur: produk, transaksi, shift kasir, retur penjualan, kartu stok).*
    Alternatif bertahap: jalankan `supabase/migrations/` urut sesuai tanggal
-   (`20260929_varian...` → `20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok`).
+   (`20260929_varian...` → `20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok` → `20261002_total_diskon_item`).
 3. Verifikasi:
 
 ```bash
@@ -73,7 +73,7 @@ fungsi/tabel baru tanpa perlu reload manual dari dashboard.
 Artinya RPC yang dipanggil aplikasi belum terdaftar di database. Dua sebab:
 
 1. **Migrasi belum dijalankan** → jalankan file migrasinya di SQL Editor
-   (`20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok`).
+   (`20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok` → `20261002_total_diskon_item`).
 2. **Fungsi sudah ada tapi cache PostgREST belum sinkron** → jalankan sekali:
    ```sql
    notify pgrst, 'reload schema';

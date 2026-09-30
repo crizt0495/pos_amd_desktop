@@ -230,12 +230,11 @@ export interface StockLog {
 
 export interface CartTotals {
   subtotal: number;
-  discountAmount: number;
   total: number;
   totalCost: number;
   itemCount: number;
   profit: number;
-  /** Total seluruh potongan per baris (flat), sebelum diskon header. */
+  /** Total seluruh potongan per baris (flat). */
   potonganBaris: number;
 }
 

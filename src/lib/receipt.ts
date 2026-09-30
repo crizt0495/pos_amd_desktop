@@ -1,4 +1,4 @@
-import { jumlahBaris, rupiah } from './format';
+import { jumlahBaris, round2, rupiah } from './format';
 import { settingsApi } from './api';
 import type { CartLine, ReceiptData, Transaction, TransactionItem } from './types';
 
@@ -58,6 +58,11 @@ export function buildReceiptFromTx(
   items: TransactionItem[],
   store: StoreMeta,
 ): ReceiptData {
+  // Diskon struk = potongan tiap baris + diskon level transaksi (yang masih
+  // dipakai transaksi lama). Transaksi baru menyimpan diskonnya per item,
+  // jadi kolom `discount_amount`-nya 0.
+  const potonganItem = round2(items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0));
+
   return {
     invoiceNo: tx.invoice_no,
     createdAt: tx.created_at,
@@ -73,7 +78,7 @@ export function buildReceiptFromTx(
       subtotal: i.subtotal,
     })),
     subtotal: tx.subtotal,
-    discountAmount: tx.discount_amount,
+    discountAmount: round2((Number(tx.discount_amount) || 0) + potonganItem),
     total: tx.total,
     paid: tx.paid,
     changeDue: tx.change_due,
