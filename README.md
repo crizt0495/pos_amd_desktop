@@ -64,6 +64,22 @@ npm run dev                  # http://localhost:3001
 npm run check:supabase
 ```
 
+Setiap file (schema.sql & seluruh migrations) **otomatis** memuat
+`notify pgrst, 'reload schema';` di bagian akhir, jadi PostgREST langsung membaca
+fungsi/tabel baru tanpa perlu reload manual dari dashboard.
+
+### Troubleshooting: "Could not find the function … in the schema cache"
+
+Artinya RPC yang dipanggil aplikasi belum terdaftar di database. Dua sebab:
+
+1. **Migrasi belum dijalankan** → jalankan file migrasinya di SQL Editor
+   (`20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok`).
+2. **Fungsi sudah ada tapi cache PostgREST belum sinkron** → jalankan sekali:
+   ```sql
+   notify pgrst, 'reload schema';
+   ```
+   Tunggu ~1 menit, lalu hard-refresh aplikasi.
+
 Login POS memakai **Serial Key** (format `KPRO-XXXX-XXXX-XXXX`) yang dibuat di KasirPro
 Portal (halaman *Aktivasi*). Satu key = satu perangkat/browser (dicatat oleh RPC
 `activate_license`). Key demo `KPRO-DEMO-AAAA-0001` selalu bisa masuk tanpa kunci perangkat.

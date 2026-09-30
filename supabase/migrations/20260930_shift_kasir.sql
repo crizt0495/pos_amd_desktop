@@ -378,6 +378,10 @@ $$;
 
 commit;
 
+-- Muat ulang schema cache PostgREST. Tanpa ini, RPC/tabel baru bisa belum
+-- terlihat dari aplikasi ("Could not find the function ... in the schema cache").
+notify pgrst, 'reload schema';
+
 -- ============================================================================
 --  Verifikasi (jalankan terpisah setelah commit)
 -- ============================================================================

@@ -41,6 +41,20 @@ function msg(e: unknown): string {
   return e instanceof Error ? e.message : 'Terjadi kesalahan.';
 }
 
+/**
+ * Pesan error dari PostgREST yang bisa ditindaklanjuti. Bila RPC/tabel belum
+ * ada di database (migrasi belum dijalankan, atau schema cache PostgREST
+ * belum reload), PostgREST mengembalikan kalimat teknis — diterjemahkan jadi
+ * arahan singkat supaya tidak confusing di layar kasir.
+ */
+function rpcMsg(error: { message: string } | null, fitur: string): string {
+  const m = error?.message ?? 'Terjadi kesalahan.';
+  if (/could not find the function|schema cache|does not exist/i.test(m)) {
+    return `Database belum mendukung ${fitur}. Jalankan migrasi terkait di Supabase → SQL Editor, lalu muat ulang aplikasi.`;
+  }
+  return m;
+}
+
 const num = (v: unknown): number => Number(v ?? 0);
 
 function mapProduct(r: Record<string, unknown>): Product {
@@ -278,7 +292,7 @@ export const stockApi = {
       const { data, error } = await createClient().rpc('kasir_stock_logs_list', {
         p_product_id: productId,
       });
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'kartu stok') };
       const list = Array.isArray(data) ? data : [];
       return {
         ok: true,
@@ -510,7 +524,7 @@ export const shiftsApi = {
   async active(): Promise<Result<KasirShift | null>> {
     try {
       const { data, error } = await createClient().rpc('kasir_active_shift');
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       return { ok: true, data: data ? mapShift(data as Record<string, unknown>) : null };
     } catch (e) {
       return { ok: false, error: msg(e) };
@@ -523,7 +537,7 @@ export const shiftsApi = {
         p_opening_cash: num(openingCash),
         p_cashier_name: cashierName || 'Kasir',
       });
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       return { ok: true, data: mapShift(data as Record<string, unknown>) };
     } catch (e) {
       return { ok: false, error: msg(e) };
@@ -533,7 +547,7 @@ export const shiftsApi = {
   async preview(id: string): Promise<Result<{ expected: number }>> {
     try {
       const { data, error } = await createClient().rpc('kasir_shift_preview', { p_shift_id: id });
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       const r = (data ?? {}) as Record<string, unknown>;
       return { ok: true, data: { expected: num(r.expected) } };
     } catch (e) {
@@ -547,7 +561,7 @@ export const shiftsApi = {
         p_shift_id: id,
         p_actual_cash: num(actualCash),
       });
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       const r = (data ?? {}) as Record<string, unknown>;
       return {
         ok: true,
@@ -569,7 +583,7 @@ export const shiftsApi = {
       if (filter.from) q = q.gte('opened_at', `${filter.from}T00:00:00.000Z`);
       if (filter.to) q = q.lte('opened_at', `${filter.to}T23:59:59.999Z`);
       const { data, error } = await q.order('opened_at', { ascending: false }).limit(limit);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'riwayat shift') };
       return { ok: true, data: (data ?? []).map((r) => mapShift(r as Record<string, unknown>)) };
     } catch (e) {
       return { ok: false, error: msg(e) };
@@ -668,7 +682,7 @@ export const reportsApi = {
   async byCashier(range: { from?: string; to?: string } = {}): Promise<Result<CashierReport[]>> {
     try {
       const { data, error } = await createClient().rpc('kasir_report_by_cashier', rangePayload(range.from, range.to));
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'laporan per kasir') };
       const rows = (data ?? []) as Record<string, unknown>[];
       return {
         ok: true,
@@ -826,7 +840,7 @@ export const returnsApi = {
       if (filter.from) q = q.gte('created_at', `${filter.from}T00:00:00.000Z`);
       if (filter.to) q = q.lte('created_at', `${filter.to}T23:59:59.999Z`);
       const { data, error } = await q.order('created_at', { ascending: false }).limit(limit);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'riwayat retur') };
       return { ok: true, data: (data ?? []).map((r) => mapReturn(r as Record<string, unknown>)) };
     } catch (e) {
       return { ok: false, error: msg(e) };
@@ -839,7 +853,7 @@ export const returnsApi = {
         .from('kasir_return_items')
         .select('*')
         .eq('return_id', returnId);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'rincian retur') };
       return { ok: true, data: (data ?? []).map((r) => mapReturnItem(r as Record<string, unknown>)) };
     } catch (e) {
       return { ok: false, error: msg(e) };
@@ -859,7 +873,7 @@ export const returnsApi = {
           .map((it) => ({ transaction_item_id: it.transaction_item_id, qty: num(it.qty) })),
         p_note: data.note ?? null,
       });
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: rpcMsg(error, 'retur penjualan') };
       const body = result as { return: Record<string, unknown>; total?: number };
       return {
         ok: true,

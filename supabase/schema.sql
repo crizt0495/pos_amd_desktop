@@ -1076,3 +1076,12 @@ select 'KPRO-DEMO-AAAA-0001', p.id, 'unused', 'bundle', 'sekali', 'Demo POS Web'
 from public.partners p
 where p.username = 'demo'
 on conflict (serial_key) do nothing;
+
+-- ============================================================================
+--  5. RELOAD SCHEMA CACHE
+-- ============================================================================
+--  Paksa PostgREST membaca ulang definisi fungsi/tabel di atas, supaya RPC baru
+--  (mis. kasir_open_shift) langsung terlihat dari aplikasi. Tanpa baris ini
+--  aplikasi bisa menampilkan:
+--    "Could not find the function public.kasir_open_shift(...) in the schema cache"
+notify pgrst, 'reload schema';
