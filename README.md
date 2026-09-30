@@ -11,9 +11,9 @@ manajemen produk, laporan & pembatalan (void). Di-host di **Vercel**, data di
 
 | Layar   | Kemampuan                                                                 |
 | ------- | ------------------------------------------------------------------------- |
-| Kasir   | Scan barcode / cari produk, keranjang, diskon % / Rp, tunai & QRIS, struk 58mm (cetak web) |
-| Produk  | Tambah / ubah / hapus, stok ±, status non-aktif, peringatan stok menipis   |
-| Laporan | Omzet & laba, grafik harian, produk terlaris, metode bayar, riwayat + void (stok kembali) |
+| Kasir   | Scan barcode / cari produk, keranjang, diskon % / Rp **global + per baris**, tunai & QRIS, struk 58mm (cetak web), **shift kasir** (buka/tutup + setoran laci & selisih live) |
+| Produk  | Tambah / ubah / hapus, stok ±, status non-aktif, peringatan stok menipis, **ekspor/impor CSV** (BOM UTF-8, angka ala Indonesia, upsert per barcode), **kartu stok** (mutasi terjual/retur/void/stok masuk-keluar) & **stok masuk** |
+| Laporan | Omzet & laba, grafik harian, produk terlaris, metode bayar, riwayat + void (stok kembali), **retur penjualan** (refund proporsional + riwayat retur), **laporan per kasir & riwayat shift** |
 
 ## Stack
 
@@ -38,8 +38,9 @@ src/
     (app)/kasir            layar kasir
     (app)/produk           layar produk
     (app)/laporan          layar laporan
-supabase/schema.sql        skema + RLS + RPC (wajib dijalankan sekali)
-scripts/check-supabase.mjs verifikasi skema
+supabase/schema.sql        skema + RLS + RPC (kanonik, idempotent — satu file utuh)
+supabase/migrations/       migrasi bertahap per fitur (retur, shift kasir, kartu stok)
+scripts/check-supabase.mjs verifikasi skema (tabel + RPC semua fitur)
 ```
 
 ## Menjalankan lokal
@@ -50,10 +51,13 @@ cp .env.example .env.local   # lalu isi nilai Supabase (sama dengan portal)
 npm run dev                  # http://localhost:3001
 ```
 
-## Menyiapkan Supabase (sekali saja)
+## Menyiapkan Supabase
 
 1. Buka <https://supabase.com/dashboard> → proyek KasirPro.
-2. **SQL Editor** → *New query* → tempel seluruh isi `supabase/schema.sql` → **RUN**.
+2. **SQL Editor** → *New query* → tempel seluruh isi `supabase/schema.sql` → **RUN**
+   *(idempotent; berisi tabel+rpc semua fitur: produk, transaksi, shift kasir, retur penjualan, kartu stok).*
+   Alternatif bertahap: jalankan `supabase/migrations/` urut sesuai tanggal
+   (`20260929_varian...` → `20260930_retur_penjualan` → `20260930_shift_kasir` → `20261001_kartu_stok`).
 3. Verifikasi:
 
 ```bash
