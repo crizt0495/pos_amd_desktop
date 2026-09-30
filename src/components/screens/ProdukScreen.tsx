@@ -4,6 +4,7 @@ import * as React from 'react';
 import {
   AlertTriangle,
   Boxes,
+  Download,
   Loader2,
   Minus,
   Pencil,
@@ -11,9 +12,12 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Upload,
 } from 'lucide-react';
 
 import { productsApi } from '@/lib/api';
+import { exportProductsCsv, produkInputDariBaris, unduhTeks, type ParsedProdukRow } from '@/lib/csv';
+import { CsvImportModal, type ImportResult } from '@/components/CsvImportModal';
 import { normalisasiVarian, varianKeJson, validasiVarian, type VarianBaris } from '@/lib/format';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
@@ -73,6 +77,7 @@ export default function ProdukScreen() {
   const [open, setOpen] = React.useState(false);
   const [removing, setRemoving] = React.useState<Product | null>(null);
   const [hapusBusy, setHapusBusy] = React.useState(false);
+  const [csvOpen, setCsvOpen] = React.useState(false);
 
   /* ------------------------- kategori baru ---------------------------- */
   const [kategoriList, setKategoriList] = React.useState<string[]>([]);
@@ -125,6 +130,59 @@ export default function ProdukScreen() {
       varian: varianKeBaris(p.variants ?? []),
     });
     setOpen(true);
+  }
+
+  /* ------------------------------ CSV (Fitur #4) ---------------------- */
+  /** Ekspor SEMUA produk (termasuk non-aktif) ke berkas CSV. */
+  async function exportCsv() {
+    const res = await productsApi.list('', true);
+    if (!res.ok) {
+      toast.error('Gagal mengekspor', res.error);
+      return;
+    }
+    const tgl = new Date().toISOString().slice(0, 10);
+    unduhTeks(`produk-${tgl}.csv`, exportProductsCsv(res.data));
+    toast.ok('CSV diunduh', `${res.data.length} produk diekspor.`);
+  }
+
+  /** Impor baris CSV: upsert per barcode (barcode sama = update, baru = create). */
+  async function runImport(rows: ParsedProdukRow[]): Promise<ImportResult> {
+    const semua = await productsApi.list('', true);
+    if (!semua.ok) return { dibuat: 0, diperbarui: 0, gagal: [{ row: 1, pesan: semua.error }] };
+    const byBarcode = new Map<string, Product>();
+    const byNama = new Map<string, Product>();
+    for (const p of semua.data) {
+      if (p.barcode) byBarcode.set(p.barcode.trim().toLowerCase(), p);
+      byNama.set(p.name.trim().toLowerCase(), p);
+    }
+
+    const hasil: ImportResult = { dibuat: 0, diperbarui: 0, gagal: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const b = rows[i];
+      try {
+        const kunciBarcode = b.barcode.trim().toLowerCase();
+        const existing =
+          (kunciBarcode ? byBarcode.get(kunciBarcode) : undefined) ??
+          byNama.get(b.nama.trim().toLowerCase());
+        const input = produkInputDariBaris(b, existing ?? null);
+        if (existing) {
+          const r = await productsApi.update(existing.id, input);
+          if (!r.ok) hasil.gagal.push({ row: i + 2, pesan: r.error });
+          else hasil.diperbarui++;
+        } else {
+          const r = await productsApi.create(input);
+          if (!r.ok) hasil.gagal.push({ row: i + 2, pesan: r.error });
+          else hasil.dibuat++;
+        }
+      } catch (e) {
+        hasil.gagal.push({
+          row: i + 2,
+          pesan: e instanceof Error ? e.message : 'Gagal diproses.',
+        });
+      }
+    }
+    await load('', showInactive);
+    return hasil;
   }
 
   /* --------------------------- editor varian ------------------------- */
@@ -310,6 +368,23 @@ export default function ProdukScreen() {
           disabled={ui.locked('produk-bersihkan')}
         >
           <Search className="h-3.5 w-3.5" /> Bersihkan
+        </button>
+        <span className="rb-sep" />
+        <button
+          type="button"
+          className="rb-btn"
+          onClick={() => ui.run(() => void exportCsv(), 'produk-export')}
+          disabled={ui.locked('produk-export') || loading}
+        >
+          <Download className="h-3.5 w-3.5" /> Export CSV
+        </button>
+        <button
+          type="button"
+          className="rb-btn"
+          onClick={() => ui.run(() => setCsvOpen(true), 'produk-import')}
+          disabled={ui.locked('produk-import')}
+        >
+          <Upload className="h-3.5 w-3.5" /> Import CSV
         </button>
         <span className="ml-auto hidden shrink-0 pr-1 text-[11.5px] text-[#7a8ba0] sm:block">
           <b className="tnum text-[#35485c]">{products.length}</b> barang
@@ -709,6 +784,9 @@ export default function ProdukScreen() {
           Nama produk pada struk yang sudah tercetak tidak ikut berubah.
         </p>
       </Modal>
+
+      {/* -------------------------- impor CSV (Fitur #4) ------------------ */}
+      <CsvImportModal open={csvOpen} onClose={() => setCsvOpen(false)} onImport={runImport} />
     </div>
   );
 }
