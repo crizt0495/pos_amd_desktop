@@ -33,6 +33,7 @@ export function RupiahInput({
   onEnter,
   inputRef,
   autoFocus,
+  onBlur,
 }: {
   id?: string;
   /** Angka (bukan string terformat) — sumber kebenaran. */
@@ -50,6 +51,8 @@ export function RupiahInput({
   inputRef?: React.Ref<HTMLInputElement>;
   /** Fokus otomatis saat modal/komponen terbuka (buka keypad numerik di HP). */
   autoFocus?: boolean;
+  /** Dipanggil saat input kehilangan fokus (setelah format ulang). */
+  onBlur?: () => void;
 }) {
   const [teks, setTeks] = React.useState(() => format(String(value ?? '')));
   const elRef = React.useRef<HTMLInputElement | null>(null);
@@ -96,7 +99,10 @@ export function RupiahInput({
         onChange(n < min ? min : n);
         caretKeUjung();
       }}
-      onBlur={(e) => setTeks(format(e.target.value))}
+      onBlur={(e) => {
+        setTeks(format(e.target.value));
+        onBlur?.();
+      }}
     />
   );
 

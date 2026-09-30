@@ -267,9 +267,19 @@ export function varianKeJson(baris: VarianBaris[]): ProductVariant[] {
     });
 }
 
-/** Jumlah satu baris: qty x H. Jual - Potongan (flat per baris, minimal 0). */
+/** Batas potongan satu baris: harga x qty (potongan tak boleh melebihi nilai baris). */
+export function potonganMax(l: Pick<CartLine, 'price' | 'qty'>): number {
+  return round2(Math.max(0, (Number(l.price) || 0) * (Number(l.qty) || 0)));
+}
+
+/** Potongan efektif baris = diskon yang "dipotong" beneran = min(discount, harga x qty). */
+export function potonganEfektif(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number {
+  return round2(Math.min(Math.max(Number(l.discount) || 0, 0), potonganMax(l)));
+}
+
+/** Jumlah satu baris: qty x H. Jual - Potongan efektif (tak pernah negatif). */
 export function jumlahBaris(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number {
-  return round2(Math.max(0, (Number(l.price) || 0) * (Number(l.qty) || 0) - (Number(l.discount) || 0)));
+  return round2(potonganMax(l) - potonganEfektif(l));
 }
 
 export function hitungTotal(
@@ -279,7 +289,9 @@ export function hitungTotal(
 ): CartTotals {
   const subtotal = round2(lines.reduce((sum, l) => sum + jumlahBaris(l), 0));
   const totalCost = round2(lines.reduce((sum, l) => sum + l.cost * l.qty, 0));
-  const potonganBaris = round2(lines.reduce((sum, l) => sum + (Number(l.discount) || 0), 0));
+  // Potongan dihitung dari nilai efektif (min(discount, harga x qty)) supaya
+  // angka yang ditampilkan = yang benar-benar dipotong, bukan angka mentah.
+  const potonganBaris = round2(lines.reduce((sum, l) => sum + potonganEfektif(l), 0));
 
   let discountAmount = 0;
   if (discountType === 'percent') {

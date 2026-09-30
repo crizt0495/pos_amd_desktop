@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { CheckCircle2, Landmark, Loader2, QrCode, Wallet, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Landmark, Loader2, QrCode, Wallet, X } from 'lucide-react';
 
 import { RupiahInput } from '@/components/RupiahInput';
 import { rupiah } from '@/lib/format';
@@ -52,6 +52,7 @@ export function ModalBayar({
   busy,
   onBatal,
   onSimpan,
+  diskonTidakSah,
 }: {
   open: boolean;
   /** Total tagihan (setelah diskon). */
@@ -72,6 +73,8 @@ export function ModalBayar({
   busy: boolean;
   onBatal: () => void;
   onSimpan: () => void;
+  /** Ada baris yang potongannya melebihi subtotal -> Simpan Transaksi dikunci. */
+  diskonTidakSah?: boolean;
 }) {
   const bayarRef = React.useRef<HTMLInputElement>(null);
 
@@ -145,6 +148,15 @@ export function ModalBayar({
               <p className="grand-total text-[26px]">{rupiah(total)}</p>
             </div>
           </div>
+
+          {/* Potongan baris melebihi subtotal: transaksi TIDAK boleh disimpan. */}
+          {diskonTidakSah ? (
+            <p className="flex items-start gap-1.5 rounded-lg border border-[#ffc9c9] bg-[#fff5f5] px-3.5 py-2.5 text-[12px] leading-snug text-[#c92a2a]">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              Potongan tidak boleh lebih besar dari subtotal item. Periksa kolom Potongan di keranjang,
+              lalu kurangi atau ketik ulang nilainya.
+            </p>
+          ) : null}
 
           {/* Metode Pembayaran: 3 kartu tombol */}
           <div className="sm:col-span-2">
@@ -267,7 +279,7 @@ export function ModalBayar({
             type="button"
             className="btn-success h-11 flex-[1.6] !px-3"
             onClick={onSimpan}
-            disabled={busy || kurang > 0}
+            disabled={busy || kurang > 0 || diskonTidakSah}
             data-loading={busy}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

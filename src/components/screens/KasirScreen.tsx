@@ -28,6 +28,8 @@ import {
   jumlahBaris,
   normalisasiVarian,
   parseRupiah,
+  potonganEfektif,
+  potonganMax,
   rupiah,
   satuanOptions,
 } from '@/lib/format';
@@ -178,6 +180,12 @@ export default function KasirScreen() {
   // Potongan sekarang flat per baris (bukan per satuan).
   const totalPotongan = totals.potonganBaris;
   const totalTagihan = totals.total;
+  // Ada baris dengan potongan > harga x qty (ketikan terakhir belum dikunci).
+  // Saat begini: border merah + helper "Max: …", dan Simpan Transaksi dikunci.
+  const diskonTidakSah = React.useMemo(
+    () => lines.some((l) => (Number(l.discount) || 0) > potonganMax(l)),
+    [lines],
+  );
   const isTunai = method === 'cash';
   const bayarNominal = parseRupiah(bayarTeks) || 0;
   // Tunai: Kembalian = Bayar - Total (Bayar boleh lebih/tepat).
@@ -456,7 +464,9 @@ export default function KasirScreen() {
       if (!l) return prev;
       const copy = [...prev];
       const next = Math.max(1, Math.floor(Number(qty) || 1));
-      copy[i] = typeof l.stock === 'number' ? { ...l, qty: Math.min(next, Math.max(1, l.stock)) } : { ...l, qty: next };
+      const q = typeof l.stock === 'number' ? Math.min(next, Math.max(1, l.stock)) : next;
+      // Qty mengecil -> potongan ikut dibatasi ke harga x qty baru.
+      copy[i] = { ...l, qty: q, discount: potonganEfektif({ ...l, qty: q }) };
       return copy;
     });
   }, []);
@@ -465,8 +475,50 @@ export default function KasirScreen() {
     setLines((prev) => {
       const l = prev[i];
       if (!l) return prev;
+      const next = { ...l, ...patch };
+      // Harga berubah -> potongan otomatis dibatasi ke harga x qty baru.
+      if ('price' in patch) next.discount = potonganEfektif(next);
       const copy = [...prev];
-      copy[i] = { ...l, ...patch };
+      copy[i] = next;
+      return copy;
+    });
+  }, []);
+
+  /**
+   * Ketik Potongan di tabel keranjang.
+   * Nilai mentah disimpan dulu (supaya border merah + helper "Max: …" muncul
+   * saat melebihi harga x qty), lalu dikunci jadi nilai sah saat blur/Enter.
+   */
+  const ubahPotongan = React.useCallback(
+    (i: number, diskon: number) => {
+      const l = lines[i];
+      if (!l) return;
+      const d = Math.max(0, Number(diskon) || 0);
+      const max = potonganMax(l);
+      // Toast sekali saja saat baru MELEWATI batas, bukan tiap ketikan.
+      if (d > max && (Number(l.discount) || 0) <= max) {
+        toast.error('Potongan melebihi subtotal item', `${l.name}: maksimal Rp ${rupiah(max)}`);
+      }
+      setLines((prev) => {
+        const cur = prev[i];
+        if (!cur) return prev;
+        const copy = [...prev];
+        copy[i] = { ...cur, discount: d };
+        return copy;
+      });
+    },
+    [lines, toast],
+  );
+
+  /** Kunci potongan ke nilai sah (min(discount, harga x qty)) saat blur. */
+  const komitPotongan = React.useCallback((i: number) => {
+    setLines((prev) => {
+      const cur = prev[i];
+      if (!cur) return prev;
+      const d = potonganEfektif(cur);
+      if (d === cur.discount) return prev;
+      const copy = [...prev];
+      copy[i] = { ...cur, discount: d };
       return copy;
     });
   }, []);
@@ -479,7 +531,14 @@ export default function KasirScreen() {
       const v = cariVarian(l.variants, satuan);
       const copy = [...prev];
       copy[i] = v
-        ? { ...l, unit: v.satuan, price: v.harga_jual, cost: v.harga_beli, barcode: v.barcode || l.barcode }
+        ? {
+            ...l,
+            unit: v.satuan,
+            price: v.harga_jual,
+            cost: v.harga_beli,
+            barcode: v.barcode || l.barcode,
+            discount: potonganEfektif({ ...l, price: v.harga_jual, qty: l.qty }),
+          }
         : { ...l, unit: satuan };
       return copy;
     });
@@ -590,11 +649,18 @@ export default function KasirScreen() {
     }
   }
 
-  /** Tombol Simpan Transaksi: tolak klik ganda, kurang, dan keranjang kosong. */
+  /** Tombol Simpan Transaksi: tolak klik ganda, kurang, keranjang kosong, potongan liar. */
   function klikSimpanTransaksi() {
     if (!lines.length) return;
     if (bayarGuard.busy) {
       toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
+      return;
+    }
+    if (diskonTidakSah) {
+      toast.error(
+        'Potongan tidak boleh lebih dari subtotal',
+        'Periksa kolom Potongan di keranjang, lalu tekan Tab/Enter agar nilainya dikunci.',
+      );
       return;
     }
     if (kurang > 0) {
@@ -610,6 +676,13 @@ export default function KasirScreen() {
 
   async function bayar() {
     if (!lines.length) return;
+    if (diskonTidakSah) {
+      toast.error(
+        'Potongan tidak boleh lebih dari subtotal',
+        'Periksa kolom Potongan di tabel keranjang.',
+      );
+      return;
+    }
     if (kurang > 0) {
       toast.error('Pembayaran belum lunas', `Kurang ${rupiah(kurang)}.`);
       return;
@@ -627,8 +700,12 @@ export default function KasirScreen() {
         .filter(Boolean)
         .join(' — ');
 
+      // Jaga-jaga: potongan tiap baris dikunci ke nilai sah (harga x qty)
+      // agar tidak ada baris bernilai minus yang tersimpan ke database.
+      const linesAman = lines.map((l) => ({ ...l, discount: potonganEfektif(l) }));
+
       const res = await transactionsApi.create({
-        lines,
+        lines: linesAman,
         discountType: 'none',
         discountValue: 0,
         paymentMethod: method,
@@ -647,7 +724,7 @@ export default function KasirScreen() {
       const receipt = buildReceiptPreview({
         invoiceNo: tx.invoice_no,
         store,
-        lines,
+        lines: linesAman,
         subtotal: totals.subtotal,
         discountAmount: 0,
         total: totalTagihan,
@@ -1117,10 +1194,21 @@ export default function KasirScreen() {
                     <RupiahInput
                       dataCell="disc"
                       ariaLabel={`Potongan ${l.name}`}
-                      className="cell text-right"
+                      className={`cell text-right ${
+                        (Number(l.discount) || 0) > potonganMax(l)
+                          ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
+                          : ''
+                      }`}
                       value={l.discount || 0}
-                      onChange={(v) => ubah(i, { discount: Math.max(0, v) })}
+                      onChange={(v) => ubahPotongan(i, v)}
+                      onBlur={() => komitPotongan(i)}
+                      onEnter={() => komitPotongan(i)}
                     />
+                    {(Number(l.discount) || 0) > potonganMax(l) ? (
+                      <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
+                        Max: {rupiah(potonganMax(l))}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="td tnum text-right font-bold text-[#1b3a5c]">{rupiah(jumlah)}</td>
                   <td className="td text-center">
@@ -1159,13 +1247,13 @@ export default function KasirScreen() {
       {/* ===================== TOTAL + TOMBOL BAYAR ===================== */}
       <div className="shrink-0 border-t border-[#d8e0ec] bg-[#f6f9fd]">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 px-3 py-2.5 sm:px-4">
-          <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px]">
+          <dl className="flex flex-col gap-y-1 text-[12.5px]">
             <div className="flex items-center gap-2">
               <dt className="text-[#5b6b80]">Subtotal</dt>
               <dd className="tnum font-semibold text-[#35485c]">{rupiah(subtotalKotor)}</dd>
             </div>
             <div className="flex items-center gap-2">
-              <dt className="text-[#5b6b80]">Potongan</dt>
+              <dt className="text-[#5b6b80]">Total Potongan</dt>
               <dd className="tnum font-semibold text-[#c92a2a]">
                 {totalPotongan > 0 ? `- ${rupiah(totalPotongan)}` : rupiah(0)}
               </dd>
@@ -1176,17 +1264,24 @@ export default function KasirScreen() {
                 {rugiLines.length} barang jual rugi
               </p>
             ) : null}
+            {diskonTidakSah ? (
+              <p className="flex items-center gap-1.5 text-[11px] font-bold text-[#e03131]">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Potongan melebihi subtotal item — periksa kolom Potongan
+              </p>
+            ) : null}
           </dl>
 
           <div className="ml-auto flex items-center gap-3 sm:gap-4">
             <div className="text-right">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[#5b6b80]">Total</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#5b6b80]">Total Akhir</p>
               <p className="grand-total text-[30px] leading-none sm:text-[34px]">{rupiah(totalTagihan)}</p>
             </div>
             <button
               type="button"
               onClick={bukaBayar}
-              disabled={!lines.length || bayarGuard.busy || saving}
+              disabled={!lines.length || diskonTidakSah || bayarGuard.busy || saving}
+              title={diskonTidakSah ? 'Periksa potongan yang melebihi subtotal' : undefined}
               data-loading={bayarGuard.busy}
               className="rb-btn-go !h-11 !px-6"
             >
@@ -1231,6 +1326,7 @@ export default function KasirScreen() {
         note={catatanModal}
         onNote={setCatatanModal}
         busy={bayarGuard.busy || saving}
+        diskonTidakSah={diskonTidakSah}
         onBatal={() => setPayOpen(false)}
         onSimpan={klikSimpanTransaksi}
       />
