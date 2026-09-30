@@ -28,6 +28,7 @@ import {
   jumlahBaris,
   normalisasiVarian,
   parseRupiah,
+  potonganDariPct,
   potonganEfektif,
   potonganMax,
   rupiah,
@@ -57,6 +58,15 @@ const KOSONG_SAMPAI = 8;
 
 /** Maksimal saran autocomplete di bawah kolom Kode Item. */
 const MAX_SARAN = 10;
+
+/**
+ * Potongan baris saat harga/qty/satuan berubah:
+ * mode "%" -> diskon = min(pct,100)% dari subtotal baris baru;
+ * mode "Rp" -> potongan dikunci ke harga x qty (tak pernah lebih).
+ */
+function potonganAuto(l: CartLine): number {
+  return l.potonganPct != null ? potonganDariPct(l, l.potonganPct) : potonganEfektif(l);
+}
 
 const PENDING_KEY = 'kasirpro.pending.v1';
 
@@ -178,6 +188,8 @@ export default function KasirScreen() {
   // Diskon transaksi: 'fixed' (Rp) atau 'percent' (%). Nilai 0 = tanpa diskon.
   const [diskonTipe, setDiskonTipe] = React.useState<'fixed' | 'percent'>('fixed');
   const [diskonNilai, setDiskonNilai] = React.useState<number>(0);
+  // Mode kolom POTONGAN di tabel: terisi nominal Rp atau persen (per baris).
+  const [modePotongan, setModePotongan] = React.useState<'rp' | 'pct'>('rp');
 
   const flashTimer = React.useRef<number | null>(null);
   const [flashKey, setFlashKey] = React.useState<string | null>(null);
@@ -188,10 +200,16 @@ export default function KasirScreen() {
   // Potongan sekarang flat per baris (bukan per satuan).
   const totalPotongan = totals.potonganBaris;
   const totalTagihan = totals.total;
-  // Ada baris dengan potongan > harga x qty (ketikan terakhir belum dikunci).
-  // Saat begini: border merah + helper "Max: …", dan Simpan Transaksi dikunci.
+  // Ada baris dengan potongan > harga x qty (ketikan terakhir belum dikunci)
+  // atau persen potongan > 100 (mode %). Saat begini: border merah + helper
+  // "Max: …", dan Simpan Transaksi dikunci.
   const potonganBarisTidakSah = React.useMemo(
-    () => lines.some((l) => (Number(l.discount) || 0) > potonganMax(l)),
+    () =>
+      lines.some(
+        (l) =>
+          (Number(l.discount) || 0) > potonganMax(l) ||
+          (l.potonganPct != null && l.potonganPct > 100),
+      ),
     [lines],
   );
   // Diskon global: nilai mentah saat diketik, efektif = dibatasi ke maksimum
@@ -488,8 +506,8 @@ export default function KasirScreen() {
       const copy = [...prev];
       const next = Math.max(1, Math.floor(Number(qty) || 1));
       const q = typeof l.stock === 'number' ? Math.min(next, Math.max(1, l.stock)) : next;
-      // Qty mengecil -> potongan ikut dibatasi ke harga x qty baru.
-      copy[i] = { ...l, qty: q, discount: potonganEfektif({ ...l, qty: q }) };
+      // Qty mengecil -> potongan ikut dibatasi ke harga x qty baru (atau tetap %).
+      copy[i] = { ...l, qty: q, discount: potonganAuto({ ...l, qty: q }) };
       return copy;
     });
   }, []);
@@ -499,8 +517,8 @@ export default function KasirScreen() {
       const l = prev[i];
       if (!l) return prev;
       const next = { ...l, ...patch };
-      // Harga berubah -> potongan otomatis dibatasi ke harga x qty baru.
-      if ('price' in patch) next.discount = potonganEfektif(next);
+      // Harga berubah -> potongan otomatis dibatasi ke harga x qty baru (atau tetap %).
+      if ('price' in patch) next.discount = potonganAuto(next);
       const copy = [...prev];
       copy[i] = next;
       return copy;
@@ -546,6 +564,61 @@ export default function KasirScreen() {
     });
   }, []);
 
+  /** Ganti mode kolom POTONGAN (Rp / %). Saat masuk %: isi nilai awal tiap baris. */
+  const pilihModePotongan = React.useCallback((m: 'rp' | 'pct') => {
+    setModePotongan(m);
+    if (m === 'pct') {
+      setLines((prev) =>
+        prev.map((l) => {
+          const max = potonganMax(l);
+          return {
+            ...l,
+            potonganPct: max > 0 ? Math.min(100, Math.round((potonganEfektif(l) / max) * 100)) : null,
+          };
+        }),
+      );
+    }
+  }, []);
+
+  /** Ketik Potongan % (mode %): simpan mentah + diskon = min(pct,100)% dari subtotal. */
+  const ubahPotonganPct = React.useCallback(
+    (i: number, pct: number) => {
+      const l = lines[i];
+      if (!l) return;
+      const p = Math.max(0, Number(pct) || 0);
+      // Toast sekali saat baru MELEWATI 100%, bukan tiap ketikan.
+      if (p > 100 && (l.potonganPct ?? 0) <= 100) {
+        toast.error('Potongan maksimal 100%', `${l.name}: potongan per item tak boleh lebih dari 100%.`);
+      }
+      setLines((prev) => {
+        const cur = prev[i];
+        if (!cur) return prev;
+        const copy = [...prev];
+        copy[i] = { ...cur, potonganPct: p, discount: potonganDariPct(cur, p) };
+        return copy;
+      });
+    },
+    [lines, toast],
+  );
+
+  /** Kunci % ke 0..100 saat blur/Enter (diskon ikut dikunci ke 100% maksimum). */
+  const komitPotonganPct = React.useCallback((i: number) => {
+    setLines((prev) => {
+      const cur = prev[i];
+      if (!cur) return prev;
+      const pct = Math.min(Math.max(0, Math.floor(Number(cur.potonganPct) || 0)), 100);
+      const next = {
+        ...cur,
+        potonganPct: pct || null,
+        discount: potonganDariPct(cur, pct),
+      };
+      if (next.potonganPct === cur.potonganPct && next.discount === cur.discount) return prev;
+      const copy = [...prev];
+      copy[i] = next;
+      return copy;
+    });
+  }, []);
+
   /** Ganti mode diskon global (Rp / %); nilai direset agar tidak rancu. */
   const pilihDiskonTipe = React.useCallback((t: 'fixed' | 'percent') => {
     setDiskonTipe(t);
@@ -575,7 +648,7 @@ export default function KasirScreen() {
             price: v.harga_jual,
             cost: v.harga_beli,
             barcode: v.barcode || l.barcode,
-            discount: potonganEfektif({ ...l, price: v.harga_jual, qty: l.qty }),
+            discount: potonganAuto({ ...l, price: v.harga_jual, qty: l.qty }),
           }
         : { ...l, unit: satuan };
       return copy;
@@ -601,6 +674,7 @@ export default function KasirScreen() {
     setCatatanModal('');
     setDiskonTipe('fixed');
     setDiskonNilai(0);
+    setModePotongan('rp');
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
   }, [resetCart, fokusKode]);
@@ -746,7 +820,11 @@ export default function KasirScreen() {
 
       // Jaga-jaga: potongan tiap baris dikunci ke nilai sah (harga x qty)
       // agar tidak ada baris bernilai minus yang tersimpan ke database.
-      const linesAman = lines.map((l) => ({ ...l, discount: potonganEfektif(l) }));
+      // Field UI potonganPct (mode %) dibuang sebelum dikirim ke API/RPC.
+      const linesAman = lines.map((l) => {
+        const { potonganPct: _pct, ...rest } = l;
+        return { ...rest, discount: potonganEfektif(l) };
+      });
 
       const res = await transactionsApi.create({
         lines: linesAman,
@@ -1228,7 +1306,29 @@ export default function KasirScreen() {
               <th className="th w-[96px] text-right">H. Pokok</th>
               <th className="th w-[104px] text-right">H. Jual</th>
               <th className="th w-[88px] text-right">Jumlah</th>
-              <th className="th w-[104px] text-right">Potongan</th>
+              <th className="th w-[128px] text-right">
+                <span className="inline-flex items-center justify-end gap-1">
+                  <span>Potongan</span>
+                  <span className="inline-flex overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold">
+                    {(['rp', 'pct'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => pilihModePotongan(m)}
+                        aria-pressed={modePotongan === m}
+                        title={m === 'rp' ? 'Potongan nominal (Rp)' : 'Potongan persen (%)'}
+                        className={`px-1.5 transition ${
+                          modePotongan === m
+                            ? 'bg-[#1b5fa8] text-white'
+                            : 'text-[#5b6b80] hover:bg-[#eef4fb]'
+                        }`}
+                      >
+                        {m === 'rp' ? 'Rp' : '%'}
+                      </button>
+                    ))}
+                  </span>
+                </span>
+              </th>
               <th className="th w-[120px] text-right">Jumlah</th>
               <th className="th w-[64px] text-center">Aksi</th>
             </tr>
@@ -1305,24 +1405,64 @@ export default function KasirScreen() {
                     />
                   </td>
                   <td className="td p-0">
-                    <RupiahInput
-                      dataCell="disc"
-                      ariaLabel={`Potongan ${l.name}`}
-                      className={`cell text-right ${
-                        (Number(l.discount) || 0) > potonganMax(l)
-                          ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
-                          : ''
-                      }`}
-                      value={l.discount || 0}
-                      onChange={(v) => ubahPotongan(i, v)}
-                      onBlur={() => komitPotongan(i)}
-                      onEnter={() => komitPotongan(i)}
-                    />
-                    {(Number(l.discount) || 0) > potonganMax(l) ? (
-                      <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
-                        Max: {rupiah(potonganMax(l))}
-                      </p>
-                    ) : null}
+                    {modePotongan === 'pct' ? (
+                      <>
+                        <div className="relative">
+                          <input
+                            data-cell="disc"
+                            aria-label={`Potongan ${l.name}`}
+                            type="number"
+                            min={0}
+                            max={100}
+                            className={`cell tnum w-full pr-6 text-right ${
+                              (l.potonganPct ?? 0) > 100
+                                ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
+                                : ''
+                            }`}
+                            value={l.potonganPct ?? ''}
+                            onChange={(e) => ubahPotonganPct(i, Number(e.target.value))}
+                            onBlur={() => komitPotonganPct(i)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                komitPotonganPct(i);
+                              }
+                            }}
+                            onFocus={(e) => e.currentTarget.select()}
+                            placeholder="0"
+                          />
+                          <span className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center text-[10.5px] font-bold text-[#93a5b9]">
+                            %
+                          </span>
+                        </div>
+                        {(l.potonganPct ?? 0) > 100 ? (
+                          <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
+                            Max: 100%
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <RupiahInput
+                          dataCell="disc"
+                          ariaLabel={`Potongan ${l.name}`}
+                          className={`cell text-right ${
+                            (Number(l.discount) || 0) > potonganMax(l)
+                              ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
+                              : ''
+                          }`}
+                          value={l.discount || 0}
+                          onChange={(v) => ubahPotongan(i, v)}
+                          onBlur={() => komitPotongan(i)}
+                          onEnter={() => komitPotongan(i)}
+                        />
+                        {(Number(l.discount) || 0) > potonganMax(l) ? (
+                          <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
+                            Max: {rupiah(potonganMax(l))}
+                          </p>
+                        ) : null}
+                      </>
+                    )}
                   </td>
                   <td className="td tnum text-right font-bold text-[#1b3a5c]">{rupiah(jumlah)}</td>
                   <td className="td text-center">

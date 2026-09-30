@@ -83,6 +83,12 @@ export interface CartLine {
   qty: number;
   /** Potongan flat untuk satu baris (bukan per satuan): qty x price - discount. */
   discount: number;
+  /**
+   * Potongan bentuk persen (UI-only, TIDAK disimpan ke DB). Dipakai saat kolom
+   * Potongan dalam mode "%": discount = min(pct,100)% dari harga x qty. Saat
+   * "Rp", field ini null. Selalu di-strip sebelum dikirim ke API/RPC.
+   */
+  potonganPct?: number | null;
   unit: string;
   /** Daftar satuan yang bisa dipilih (dari produk atau default). */
   satuanList: string[];

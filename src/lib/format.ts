@@ -277,6 +277,14 @@ export function potonganEfektif(l: Pick<CartLine, 'price' | 'qty' | 'discount'>)
   return round2(Math.min(Math.max(Number(l.discount) || 0, 0), potonganMax(l)));
 }
 
+/**
+ * Potongan bentuk persen -> nominal: min(pct, 100)% dari harga x qty.
+ * (pct > 100 di-batas ke 100 sehingga diskon tak pernah melebihi nilai baris.)
+ */
+export function potonganDariPct(l: Pick<CartLine, 'price' | 'qty'>, pct: number): number {
+  return round2((Math.min(Math.max(Number(pct) || 0, 0), 100) / 100) * potonganMax(l));
+}
+
 /** Jumlah satu baris: qty x H. Jual - Potongan efektif (tak pernah negatif). */
 export function jumlahBaris(l: Pick<CartLine, 'price' | 'qty' | 'discount'>): number {
   return round2(potonganMax(l) - potonganEfektif(l));
