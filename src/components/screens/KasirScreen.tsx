@@ -6,16 +6,12 @@ import {
   BookOpen,
   BookmarkPlus,
   CornerDownLeft,
-  CreditCard,
   FilePlus2,
-  Landmark,
   List,
   Loader2,
   Pencil,
   Printer,
-  QrCode,
   Trash2,
-  Wallet,
   X,
 } from 'lucide-react';
 
@@ -37,20 +33,20 @@ import {
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { ModalBayar, type ShortcutBayar } from '@/components/ModalBayar';
 import { ModalListBarang } from '@/components/ModalListBarang';
 import { ModalPelanggan } from '@/components/ModalPelanggan';
 import { ReceiptView } from '@/components/Receipt';
 import { UangInput } from '@/components/UangInput';
-import type { CartLine, Customer, CustomerInput, PaymentMethod, Product, ReceiptData } from '@/lib/types';
-
-/** Metode pembayaran — urut & label mengikuti kolom bayar iPOS. */
-const PAY_FIELDS: { key: PaymentMethod; label: string; Icon: typeof Wallet }[] = [
-  { key: 'cash', label: 'Tunai', Icon: Wallet },
-  { key: 'qris', label: 'QRIS', Icon: QrCode },
-  { key: 'transfer', label: 'Transfer', Icon: Landmark },
-  { key: 'debit', label: 'Kartu Debit', Icon: CreditCard },
-  { key: 'credit', label: 'Kredit', Icon: CreditCard },
-];
+import {
+  PAYMENT_METHOD_LABEL,
+  type CartLine,
+  type Customer,
+  type CustomerInput,
+  type PaymentMethod,
+  type Product,
+  type ReceiptData,
+} from '@/lib/types';
 
 /** Baris kosong sebagai penutup grid — ala iPOS. */
 const KOSONG_SAMPAI = 8;
@@ -104,8 +100,9 @@ function RbBtn({
 export default function KasirScreen() {
   const toast = useToast();
   const cart = useCart();
-  // Kunci tombol Bayar/Simpan agar satu klik = satu transaksi.
-  const bayarGuard = useButtonGuard();
+  // Kunci tombol Simpan Transaksi agar satu klik = satu transaksi.
+  // Cooldown 2 detik (sesuai permintaan) supaya tidak bisa diklik berulang.
+  const bayarGuard = useButtonGuard(2000);
   const pendingGuard = useButtonGuard();
   // Kunci tombol UI (buka modal, pindah fokus, cetak) 1,5 detik tanpa spinner.
   const ui = useClickCooldown(1500);
@@ -150,14 +147,12 @@ export default function KasirScreen() {
   const [saranIdx, setSaranIdx] = React.useState(0);
 
   /* ------------------------------ pembayaran -------------------------- */
-  const [pay, setPay] = React.useState<Record<PaymentMethod, string>>({
-    cash: '',
-    qris: '',
-    transfer: '',
-    debit: '',
-    credit: '',
-  });
+  const [payOpen, setPayOpen] = React.useState(false);
   const [method, setMethod] = React.useState<PaymentMethod>('cash');
+  /** Nominal yang diketik user di field Bayar (string mentah; diformat ribuan). */
+  const [bayarTeks, setBayarTeks] = React.useState('');
+  /** Catatan tambahan dari modal bayar (digabung ke keterangan saat simpan). */
+  const [catatanModal, setCatatanModal] = React.useState('');
 
   /* ------------------------------ pending ----------------------------- */
   const [pending, setPending] = React.useState<Pending[]>([]);
@@ -181,9 +176,16 @@ export default function KasirScreen() {
   const subtotalKotor = React.useMemo(() => lines.reduce((s, l) => s + l.price * l.qty, 0), [lines]);
   // Potongan sekarang flat per baris (bukan per satuan).
   const totalPotongan = totals.potonganBaris;
-  const totalBayar = PAY_FIELDS.reduce((s, f) => s + (parseRupiah(pay[f.key]) || 0), 0);
-  const kurang = Math.max(0, totals.total - totalBayar);
-  const change = hitungKembali(totals.total, totalBayar);
+  const totalTagihan = totals.total;
+  const isTunai = method === 'cash';
+  const bayarNominal = parseRupiah(bayarTeks) || 0;
+  // Tunai: Kembalian = Bayar - Total (Bayar boleh lebih/tepat).
+  // Transfer/QRIS: Bayar otomatis = Total, Kembalian selalu 0.
+  const { kurang, kembalian, bayarAkhir } = React.useMemo(() => {
+    if (!isTunai) return { kurang: 0, kembalian: 0, bayarAkhir: totalTagihan };
+    const kurang = Math.max(0, totalTagihan - bayarNominal);
+    return { kurang, kembalian: hitungKembali(totalTagihan, bayarNominal), bayarAkhir: bayarNominal };
+  }, [isTunai, totalTagihan, bayarNominal]);
   const rugiLines = lines.filter((l) => l.price < l.cost);
 
   /* ------------------------------ memuat data ------------------------- */
@@ -250,11 +252,6 @@ export default function KasirScreen() {
   React.useEffect(() => () => {
     if (flashTimer.current) window.clearTimeout(flashTimer.current);
   }, []);
-
-  function resetBayar() {
-    setPay({ cash: '', qris: '', transfer: '', debit: '', credit: '' });
-    setMethod('cash');
-  }
 
   /**
    * Masukkan satu produk ke keranjang.
@@ -500,7 +497,10 @@ export default function KasirScreen() {
     setActiveRow(null);
     setSaran([]);
     setSaranTampil(false);
-    resetBayar();
+    setPayOpen(false);
+    setMethod('cash');
+    setBayarTeks('');
+    setCatatanModal('');
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
   }, [resetCart, fokusKode]);
@@ -547,14 +547,50 @@ export default function KasirScreen() {
     simpanPending(pending.filter((p) => p.id !== id));
   }
 
-  /** Cash register untuk isi otomatis Tunai (sisa hutang). */
-  function setTunaiOtomatis() {
-    setPay((prev) => ({ ...prev, cash: String(totals.total) }));
+  /** Buka modal pembayaran. State disetel ulang tiap kali dibuka. */
+  function bukaBayar() {
+    if (!lines.length) return;
+    if (bayarGuard.busy || saving) {
+      toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
+      return;
+    }
     setMethod('cash');
+    setBayarTeks('');
+    setCatatanModal('');
+    setPayOpen(true);
   }
 
-  /** Tombol Bayar: tolak klik ganda, kurang, dan keranjang kosong. */
-  function klikBayar() {
+  /** Pilih kartu metode: Tunai, Transfer, atau QRIS. */
+  function pilihMetode(m: PaymentMethod) {
+    setMethod(m);
+    // Transfer / QRIS: Bayar otomatis = total tagihan (kembalian 0).
+    if (m !== 'cash') setBayarTeks(String(totalTagihan));
+    else setBayarTeks('');
+  }
+
+  /** Tombol pintasan nominal Bayar: Uang Pas / 50rb / 100rb / +10rb / +50rb. */
+  function shortcutBayar(s: ShortcutBayar) {
+    switch (s) {
+      case 'pas':
+        setBayarTeks(String(totalTagihan));
+        break;
+      case '50':
+        setBayarTeks('50000');
+        break;
+      case '100':
+        setBayarTeks('100000');
+        break;
+      case '+10':
+        setBayarTeks(String(bayarNominal + 10000));
+        break;
+      case '+50':
+        setBayarTeks(String(bayarNominal + 50000));
+        break;
+    }
+  }
+
+  /** Tombol Simpan Transaksi: tolak klik ganda, kurang, dan keranjang kosong. */
+  function klikSimpanTransaksi() {
     if (!lines.length) return;
     if (bayarGuard.busy) {
       toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
@@ -565,7 +601,7 @@ export default function KasirScreen() {
       return;
     }
     void bayarGuard.guard(bayar, {
-      cooldownMs: 1500,
+      cooldownMs: 2000,
       pesanTunggu: 'Transaksi sedang diproses…',
       onBlocked: (pesan) => toast.info('Mohon tunggu…', pesan),
     });
@@ -580,10 +616,12 @@ export default function KasirScreen() {
 
     setSaving(true);
     try {
-      // API tidak punya kolom sales, jadi digabung ke keterangan (ala iPOS: Sales & Keterangan).
+      // API tidak punya kolom sales, jadi digabung ke keterangan
+      // (ala iPOS: Sales & Keterangan) + Catatan dari modal bayar.
       const catatan = [
         sales.trim() ? `Sales: ${sales.trim()}` : '',
         keterangan.trim(),
+        catatanModal.trim(),
       ]
         .filter(Boolean)
         .join(' — ');
@@ -593,7 +631,7 @@ export default function KasirScreen() {
         discountType: 'none',
         discountValue: 0,
         paymentMethod: method,
-        paid: totalBayar,
+        paid: bayarAkhir,
         note: catatan || null,
         cashierName: cashier,
         customerName: customer,
@@ -611,13 +649,14 @@ export default function KasirScreen() {
         lines,
         subtotal: totals.subtotal,
         discountAmount: 0,
-        total: totals.total,
-        paid: totalBayar,
-        changeDue: change,
-        paymentMethod: PAY_FIELDS.find((p) => p.key === method)?.label ?? 'Tunai',
+        total: totalTagihan,
+        paid: bayarAkhir,
+        changeDue: kembalian,
+        paymentMethod: PAYMENT_METHOD_LABEL[method],
+        note: catatan || null,
       });
 
-      setSuccess({ receipt, change });
+      setSuccess({ receipt, change: kembalian });
       resetForm();
 
       const pRes = await productsApi.list('');
@@ -642,18 +681,30 @@ export default function KasirScreen() {
 
   /* ------------------------------ hotkey ------------------------------ */
   /**
-   * `klikBayar` membaca `lines` / `pay` / `kurang` yang berubah tiap render, tapi
-   * listener global sengaja tidak didaftarkan ulang tiap ketikan. Simpan
-   * closure terbaru di ref supaya tombol End selalu memakai data terkini dan
-   * tetap lewat penjaga klik-ganda yang sama dengan tombolnya.
+   * `bukaBayar` / `klikSimpanTransaksi` membaca `lines` / `kurang` yang berubah
+   * tiap render, tapi listener global sengaja tidak didaftarkan ulang tiap
+   * ketikan. Simpan closure terbaru di ref supaya tombol End selalu memakai
+   * data terkini dan tetap lewat penjaga klik-ganda yang sama dengan tombolnya.
    */
-  const hotkeyRef = React.useRef({ lines: 0, bayar: klikBayar });
+  const hotkeyRef = React.useRef({ lines: 0, bayar: bukaBayar, simpan: klikSimpanTransaksi });
   React.useEffect(() => {
-    hotkeyRef.current = { lines: lines.length, bayar: klikBayar };
+    hotkeyRef.current = { lines: lines.length, bayar: bukaBayar, simpan: klikSimpanTransaksi };
   });
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Saat modal pembayaran terbuka: hanya Esc (ditutup oleh ModalBayar)
+      // dan End (Simpan Transaksi) yang bermakna; F-key/Delete lain dinonaktifkan
+      // supaya tidak menimpa data bayar yang sedang diisi.
+      if (payOpen) {
+        if (e.key === 'Escape') return; // ModalBayar punya penutup Esc sendiri
+        if (e.key === 'End') {
+          e.preventDefault();
+          hotkeyRef.current.simpan();
+        }
+        return;
+      }
+
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName ?? '';
       const editable = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || el?.isContentEditable;
@@ -728,6 +779,7 @@ export default function KasirScreen() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [
+    payOpen,
     lines.length,
     zone,
     cancelOpen,
@@ -788,7 +840,7 @@ export default function KasirScreen() {
 
         <button
           type="button"
-          onClick={klikBayar}
+          onClick={bukaBayar}
           disabled={!lines.length || bayarGuard.busy || saving}
           data-loading={bayarGuard.busy}
           className="rb-btn-go"
@@ -1103,101 +1155,43 @@ export default function KasirScreen() {
         </table>
       </div>
 
-      {/* ===================== TOTAL + PEMBAYARAN ====================== */}
+      {/* ===================== TOTAL + TOMBOL BAYAR ===================== */}
       <div className="shrink-0 border-t border-[#d8e0ec] bg-[#f6f9fd]">
-        <div className="grid items-end gap-3 px-3 py-2.5 lg:grid-cols-[1fr_auto]">
-          {/* ringkasan */}
-          <dl className="space-y-1 text-[12.5px]">
-            <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 px-3 py-2.5 sm:px-4">
+          <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px]">
+            <div className="flex items-center gap-2">
               <dt className="text-[#5b6b80]">Subtotal</dt>
-              <dd className="tnum w-32 font-semibold text-[#35485c]">{rupiah(subtotalKotor)}</dd>
+              <dd className="tnum font-semibold text-[#35485c]">{rupiah(subtotalKotor)}</dd>
             </div>
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
               <dt className="text-[#5b6b80]">Potongan</dt>
-              <dd className="tnum w-32 font-semibold text-[#c92a2a]">
+              <dd className="tnum font-semibold text-[#c92a2a]">
                 {totalPotongan > 0 ? `- ${rupiah(totalPotongan)}` : rupiah(0)}
               </dd>
             </div>
             {rugiLines.length > 0 ? (
               <p className="flex items-center gap-1.5 text-[11px] font-bold text-[#e03131]">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                {rugiLines.length} barang dijual di bawah harga pokok
+                {rugiLines.length} barang jual rugi
               </p>
             ) : null}
           </dl>
 
-          {/* grand total */}
-          <div className="text-right">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#5b6b80]">Total</p>
-            <p className="grand-total text-[34px]">{rupiah(totals.total)}</p>
-          </div>
-        </div>
-
-        {/* kotak pembayaran ala iPOS */}
-        <div className="flex flex-wrap items-end gap-2 px-3 pb-2">
-          {PAY_FIELDS.map(({ key, label, Icon }) => {
-            const aktif = method === key;
-            return (
-              <div key={key} className={`pay-box ${aktif ? 'pay-box-active' : ''}`}>
-                <label
-                  className="mb-0.5 flex items-center gap-1 text-[9.5px] font-bold uppercase tracking-wide text-[#5b6b80]"
-                  htmlFor={`pay-${key}`}
-                >
-                  <Icon className="h-3 w-3" />
-                  {label}
-                </label>
-                <UangInput
-                  id={`pay-${key}`}
-                  className="tnum h-7 w-full border-transparent bg-[#f6f9fd] px-1.5 text-right text-[13px] font-semibold text-[#22374b] focus:border-[#1b5fa8] focus:bg-white"
-                  value={pay[key]}
-                  onChange={(v) => {
-                    setPay((prev) => ({ ...prev, [key]: v ? String(v) : '' }));
-                    if (v > 0) setMethod(key);
-                  }}
-                />
-              </div>
-            );
-          })}
-
-          <div className="flex min-w-[150px] flex-col rounded border border-[#cdd8e6] bg-white px-2 py-1.5">
-            <span className="mb-0.5 text-[9.5px] font-bold uppercase tracking-wide text-[#5b6b80]">
-              Kembalian
-            </span>
-            <span
-              className={`tnum text-right text-[13px] font-bold leading-7 ${
-                kurang > 0 ? 'text-[#e03131]' : 'text-[#2f9e44]'
-              }`}
-            >
-              {kurang > 0 ? `Kurang ${rupiah(kurang)}` : rupiah(change)}
-            </span>
-          </div>
-
-          <div className="flex gap-1.5">
+          <div className="ml-auto flex items-center gap-3 sm:gap-4">
+            <div className="text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#5b6b80]">Total</p>
+              <p className="grand-total text-[30px] leading-none sm:text-[34px]">{rupiah(totalTagihan)}</p>
+            </div>
             <button
               type="button"
-              className="rb-btn h-11"
-              onClick={() => ui.run(setTunaiOtomatis, 'kasir-uang-pas')}
-              disabled={!lines.length || ui.locked('kasir-uang-pas')}
-            >
-              Uang Pas
-            </button>
-            <button
-              type="button"
-              className="rb-btn h-11"
-              onClick={() => ui.run(resetBayar, 'kasir-kosongkan')}
-              disabled={totalBayar === 0 || ui.locked('kasir-kosongkan')}
-            >
-              Kosongkan
-            </button>
-            <button
-              type="button"
-              className="rb-btn-go !h-11 !px-6"
-              onClick={klikBayar}
-              disabled={!lines.length || bayarGuard.busy || saving || kurang > 0}
+              onClick={bukaBayar}
+              disabled={!lines.length || bayarGuard.busy || saving}
               data-loading={bayarGuard.busy}
+              className="rb-btn-go !h-11 !px-6"
             >
               {bayarGuard.busy || saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {bayarGuard.busy || saving ? 'Menyimpan…' : 'Simpan & Bayar'}
+              Bayar
+              <span className="kbd !border-white/40 !bg-white/20 !text-white">End</span>
             </button>
           </div>
         </div>
@@ -1216,6 +1210,26 @@ export default function KasirScreen() {
         open={tambahPlgOpen}
         onClose={() => setTambahPlgOpen(false)}
         onSave={simpanPelanggan}
+      />
+
+      {/* ======================= MODAL PEMBAYARAN ===================== */}
+      <ModalBayar
+        open={payOpen}
+        total={totalTagihan}
+        subtotal={totals.subtotal}
+        discount={totalPotongan}
+        method={method}
+        onMethod={pilihMetode}
+        bayar={bayarTeks}
+        onBayar={setBayarTeks}
+        onShortcut={shortcutBayar}
+        kembalian={kembalian}
+        kurang={kurang}
+        note={catatanModal}
+        onNote={setCatatanModal}
+        busy={bayarGuard.busy || saving}
+        onBatal={() => setPayOpen(false)}
+        onSimpan={klikSimpanTransaksi}
       />
 
       {/* ====================== MODAL SIMPAN PENDING ==================== */}

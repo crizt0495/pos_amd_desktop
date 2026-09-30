@@ -27,6 +27,8 @@ export function RupiahInput({
   min = 0,
   onKeyDown,
   onEnter,
+  inputRef,
+  autoFocus,
 }: {
   id?: string;
   /** Angka (bukan string terformat) — sumber kebenaran. */
@@ -41,6 +43,9 @@ export function RupiahInput({
   min?: number;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   onEnter?: () => void;
+  inputRef?: React.Ref<HTMLInputElement>;
+  /** Fokus otomatis saat modal/komponen terbuka (buka keypad numerik di HP). */
+  autoFocus?: boolean;
 }) {
   const [teks, setTeks] = React.useState(() => format(String(value ?? '')));
 
@@ -52,10 +57,12 @@ export function RupiahInput({
   return (
     <input
       id={id}
+      ref={inputRef}
       data-cell={dataCell}
       type="text"
       inputMode="numeric"
       autoComplete="off"
+      autoFocus={autoFocus}
       disabled={disabled}
       aria-label={ariaLabel}
       className={`uang-input ${className}`}
