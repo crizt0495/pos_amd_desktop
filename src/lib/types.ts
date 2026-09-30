@@ -214,6 +214,20 @@ export interface CashierReport {
   laba: number;
 }
 
+/** Mutasi stok di kartu stok (kasir_stock_logs). qty BERTANDA: +masuk, -keluar. */
+export interface StockLog {
+  id: string;
+  product_id: string;
+  tipe: 'terjual' | 'retur' | 'stok_masuk' | 'stok_keluar' | 'void';
+  qty: number;
+  stok_sebelum: number | null;
+  stok_sesudah: number | null;
+  keterangan: string | null;
+  ref_id: string | null;
+  ref_tipe: 'transaksi' | 'retur' | null;
+  created_at: string;
+}
+
 export interface CartTotals {
   subtotal: number;
   discountAmount: number;

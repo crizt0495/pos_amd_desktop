@@ -13,6 +13,7 @@ import type {
   ReturnItem,
   ReturnLineInput,
   ReturnRecord,
+  StockLog,
   TopProduct,
   Transaction,
   TransactionItem,
@@ -247,11 +248,47 @@ export const productsApi = {
     }
   },
 
-  async adjustStock(id: string, delta: number): Promise<Result<Product>> {
+  async adjustStock(id: string, delta: number, keterangan?: string): Promise<Result<Product>> {
     try {
+      // RPC atomik (update + catat kartu stok) jika migrasi sudah dijalankan.
+      const r = await createClient().rpc('kasir_adjust_stock', {
+        p_product_id: id,
+        p_delta: num(delta),
+        p_keterangan: keterangan ?? null,
+      });
+      if (!r.error) return { ok: true, data: mapProduct(r.data as Record<string, unknown>) };
+      // PGRST202 = fungsi belum ada (migrasi belum dijalankan) -> fallback lambat
+      // lewat get+update agar ± stok tetap jalan tanpa update database.
+      if ((r.error as { code?: string }).code !== 'PGRST202') {
+        return { ok: false, error: r.error.message };
+      }
       const cur = await productsApi.get(id);
       if (!cur.ok || !cur.data) return { ok: false, error: 'Produk tidak ditemukan.' };
       return productsApi.update(id, { stock: Math.max(0, num(cur.data.stock) + num(delta)) });
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
+/** Kartu stok (Fitur #5): riwayat mutasi stok per produk. */
+export const stockApi = {
+  async logs(productId: string): Promise<Result<StockLog[]>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_stock_logs_list', {
+        p_product_id: productId,
+      });
+      if (error) return { ok: false, error: error.message };
+      const list = Array.isArray(data) ? data : [];
+      return {
+        ok: true,
+        data: list.map((x) => ({
+          ...(x as unknown as Omit<StockLog, 'qty' | 'stok_sebelum' | 'stok_sesudah'>),
+          qty: num((x as Record<string, unknown>).qty),
+          stok_sebelum: (x as Record<string, unknown>).stok_sebelum == null ? null : num((x as Record<string, unknown>).stok_sebelum),
+          stok_sesudah: (x as Record<string, unknown>).stok_sesudah == null ? null : num((x as Record<string, unknown>).stok_sesudah),
+        })),
+      };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

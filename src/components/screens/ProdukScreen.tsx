@@ -3,10 +3,12 @@
 import * as React from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   Boxes,
   Download,
   Loader2,
   Minus,
+  PackagePlus,
   Pencil,
   Plus,
   RefreshCw,
@@ -15,16 +17,18 @@ import {
   Upload,
 } from 'lucide-react';
 
-import { productsApi } from '@/lib/api';
+import { productsApi, stockApi } from '@/lib/api';
 import { exportProductsCsv, produkInputDariBaris, unduhTeks, type ParsedProdukRow } from '@/lib/csv';
 import { CsvImportModal, type ImportResult } from '@/components/CsvImportModal';
+import { KartuStokModal } from '@/components/KartuStokModal';
+import { StokMasukModal } from '@/components/StokMasukModal';
 import { normalisasiVarian, varianKeJson, validasiVarian, type VarianBaris } from '@/lib/format';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { SatuanVarianTable } from '@/components/SatuanVarianTable';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import { angka, rupiah } from '@/lib/format';
-import type { Product, ProductInput } from '@/lib/types';
+import type { Product, ProductInput, StockLog } from '@/lib/types';
 
 type FormState = {
   barcode: string;
@@ -78,6 +82,11 @@ export default function ProdukScreen() {
   const [removing, setRemoving] = React.useState<Product | null>(null);
   const [hapusBusy, setHapusBusy] = React.useState(false);
   const [csvOpen, setCsvOpen] = React.useState(false);
+  const [stokMasuk, setStokMasuk] = React.useState<Product | null>(null);
+  const stokMasukGuard = useButtonGuard();
+  const [kartu, setKartu] = React.useState<Product | null>(null);
+  const [kartuLogs, setKartuLogs] = React.useState<StockLog[]>([]);
+  const [kartuLoading, setKartuLoading] = React.useState(false);
 
   /* ------------------------- kategori baru ---------------------------- */
   const [kategoriList, setKategoriList] = React.useState<string[]>([]);
@@ -332,6 +341,59 @@ export default function ProdukScreen() {
     bukaHapus.run(() => setRemoving(p), `hapus-${p.id}`);
   }
 
+  /* --------------------------- stok & kartu stok ---------------------- */
+  /** Buka modal penyesuaian stok (masuk/keluar + keterangan). */
+  function bukaStokMasuk(p: Product) {
+    setStokMasuk(p);
+  }
+
+  /** Simpan penyesuaian stok — atomik via RPC `kasir_adjust_stock` (tercatat
+   *  di kartu stok); fallback get+update bila migrasi belum dijalankan. */
+  function simpanStokMasuk(delta: number, keterangan: string) {
+    if (!stokMasuk) return;
+    void stokMasukGuard.guard(
+      async () => {
+        const res = await productsApi.adjustStock(stokMasuk.id, delta, keterangan);
+        if (!res.ok) {
+          toast.error('Gagal mengubah stok', res.error);
+          return;
+        }
+        setProducts((prev) => prev.map((x) => (x.id === res.data.id ? res.data : x)));
+        setStokMasuk(null);
+        toast.ok(
+          delta > 0 ? 'Stok masuk' : 'Stok keluar',
+          `${stokMasuk.name} — ${angka(Math.abs(delta))} ${stokMasuk.unit || ''}${
+            keterangan ? ` (${keterangan})` : ''
+          }`,
+        );
+      },
+      { pesanTunggu: 'Menyimpan…' },
+    );
+  }
+
+  /** Buka kartu stok + muat riwayat mutasi produk. */
+  function bukaKartu(p: Product) {
+    setKartu(p);
+    void muatKartu(p);
+  }
+
+  async function muatKartu(p?: Product) {
+    const target = p ?? kartu;
+    if (!target) return;
+    setKartuLoading(true);
+    try {
+      const res = await stockApi.logs(target.id);
+      if (!res.ok) {
+        toast.error('Gagal memuat kartu stok', res.error);
+        setKartuLogs([]);
+        return;
+      }
+      setKartuLogs(res.data);
+    } finally {
+      setKartuLoading(false);
+    }
+  }
+
   const lowStock = products.filter((p) => p.is_active && p.stock <= p.min_stock);
 
   return (
@@ -512,6 +574,26 @@ export default function ProdukScreen() {
                       </td>
                       <td className="td">
                         <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            className="btn-ghost px-2 py-1 text-[11.5px] text-[#5b6b80] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]"
+                            onClick={() => ui.run(() => bukaKartu(p), `kartu-${p.id}`)}
+                            disabled={ui.locked(`kartu-${p.id}`)}
+                            aria-label={`Kartu stok ${p.name}`}
+                            title="Kartu stok (riwayat mutasi)"
+                          >
+                            <BookOpen className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost px-2 py-1 text-[11.5px] text-[#5b6b80] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]"
+                            onClick={() => ui.run(() => bukaStokMasuk(p), `stok-${p.id}`)}
+                            disabled={ui.locked(`stok-${p.id}`)}
+                            aria-label={`Atur stok ${p.name}`}
+                            title="Stok masuk / keluar"
+                          >
+                            <PackagePlus className="h-3.5 w-3.5" />
+                          </button>
                           <button
                             type="button"
                             className="btn-outline px-2 py-1 text-[11.5px]"
@@ -787,6 +869,25 @@ export default function ProdukScreen() {
 
       {/* -------------------------- impor CSV (Fitur #4) ------------------ */}
       <CsvImportModal open={csvOpen} onClose={() => setCsvOpen(false)} onImport={runImport} />
+
+      {/* -------------------- stok masuk/keluar (Fitur #5) -------------- */}
+      <StokMasukModal
+        open={Boolean(stokMasuk)}
+        product={stokMasuk}
+        busy={stokMasukGuard.busy}
+        onClose={() => setStokMasuk(null)}
+        onAdjust={simpanStokMasuk}
+      />
+
+      {/* ------------------------- kartu stok (Fitur #5) ---------------- */}
+      <KartuStokModal
+        open={Boolean(kartu)}
+        product={kartu}
+        logs={kartuLogs}
+        loading={kartuLoading}
+        onClose={() => setKartu(null)}
+        onRefresh={() => void muatKartu()}
+      />
     </div>
   );
 }
