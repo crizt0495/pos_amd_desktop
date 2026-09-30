@@ -40,6 +40,8 @@ export function ModalBayar({
   total,
   subtotal,
   discount,
+  diskonGlobal,
+  diskonGlobalLabel,
   method,
   onMethod,
   bayar,
@@ -57,9 +59,14 @@ export function ModalBayar({
   open: boolean;
   /** Total tagihan (setelah diskon). */
   total: number;
+  /** Subtotal KOTOR = sebelum potongan item & diskon. */
   subtotal: number;
   /** Total potongan per baris. */
   discount: number;
+  /** Diskon transaksi global (sudah dibatasi, Rp). */
+  diskonGlobal: number;
+  /** Label ringkas diskon global untuk tampilan, mis. "15%". */
+  diskonGlobalLabel?: string;
   method: PaymentMethod;
   onMethod: (m: PaymentMethod) => void;
   /** Teks input Bayar (diformat ribuan saat diketik di RupiahInput). */
@@ -132,11 +139,22 @@ export function ModalBayar({
                 <dd className="tnum font-semibold text-[#35485c]">{rupiah(subtotal)}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-[#5b6b80]">Diskon</dt>
+                <dt className="text-[#5b6b80]">Potongan Item</dt>
                 <dd className="tnum font-semibold text-[#c92a2a]">
                   {discount > 0 ? `- ${rupiah(discount)}` : rupiah(0)}
                 </dd>
               </div>
+              {diskonGlobal > 0 ? (
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-[#5b6b80]">
+                    Diskon
+                    {diskonGlobalLabel ? (
+                      <span className="ml-1 text-[10px] text-[#93a5b9]">({diskonGlobalLabel})</span>
+                    ) : null}
+                  </dt>
+                  <dd className="tnum font-semibold text-[#c92a2a]">- {rupiah(diskonGlobal)}</dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-4 border-t border-[#d8e0ec] pt-1.5">
                 <dt className="font-bold text-[#22374b]">Total</dt>
                 <dd className="tnum text-[15px] font-bold text-accent-600">{rupiah(total)}</dd>
@@ -149,12 +167,12 @@ export function ModalBayar({
             </div>
           </div>
 
-          {/* Potongan baris melebihi subtotal: transaksi TIDAK boleh disimpan. */}
+          {/* Diskon/potongan melebihi subtotal: transaksi TIDAK boleh disimpan. */}
           {diskonTidakSah ? (
             <p className="flex items-start gap-1.5 rounded-lg border border-[#ffc9c9] bg-[#fff5f5] px-3.5 py-2.5 text-[12px] leading-snug text-[#c92a2a]">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Potongan tidak boleh lebih besar dari subtotal item. Periksa kolom Potongan di keranjang,
-              lalu kurangi atau ketik ulang nilainya.
+              Diskon tidak boleh lebih besar dari subtotal. Periksa kolom Diskon/Potongan di
+              keranjang, lalu kurangi atau ketik ulang nilainya.
             </p>
           ) : null}
 
