@@ -1,5 +1,6 @@
 import { createClient } from './supabase/client';
 import { isoHariIni, normalisasiVarian } from './format';
+import { bersihkanTelepon } from './telepon';
 import type {
   CashierReport,
   Customer,
@@ -757,7 +758,9 @@ export const customersApi = {
     const raw: CustomerInput = typeof input === 'string' ? { name: input } : input;
     const clean = String(raw.name ?? '').trim();
     if (!clean) return { ok: false, error: 'Nama pelanggan wajib diisi.' };
-    const phone = String(raw.phone ?? '').trim() || null;
+    // Lapisan terakhir sebelum write: apa pun yang lolos dari UI (paste, autofill,
+    // panggilan API lain) tetap disimpan sebagai angka murni saja.
+    const phone = bersihkanTelepon(String(raw.phone ?? '')) || null;
     const address = String(raw.address ?? '').trim() || null;
 
     try {

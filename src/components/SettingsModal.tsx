@@ -26,8 +26,10 @@ import {
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { rupiah } from '@/lib/format';
+import { bersihkanTelepon } from '@/lib/telepon';
 import { Modal } from './Modal';
 import { RupiahInput } from './RupiahInput';
+import { TeleponInput } from './TeleponInput';
 import { useToast } from './Toast';
 
 type Form = {
@@ -70,7 +72,9 @@ export function SettingsModal({
         settingsApi.get<string>('storePhone', ''),
         settingsApi.get<string>('cashierName', ''),
       ]);
-      setForm({ storeName, storeAddress, storePhone, cashierName });
+      // Nilai lama bisa berisi tanda hubung/spasi (mis. "0812-3456-7890"). Bersihkan
+      // saat dibaca supaya yang tampil di input — lalu ikut tersimpan — angka murni.
+      setForm({ storeName, storeAddress, storePhone: bersihkanTelepon(storePhone), cashierName });
     })();
   }, [open]);
 
@@ -91,7 +95,7 @@ export function SettingsModal({
     const res = [];
     res.push(await settingsApi.set('storeName', form.storeName.trim() || 'Toko Saya'));
     res.push(await settingsApi.set('storeAddress', form.storeAddress.trim()));
-    res.push(await settingsApi.set('storePhone', form.storePhone.trim()));
+    res.push(await settingsApi.set('storePhone', bersihkanTelepon(form.storePhone)));
     res.push(await settingsApi.set('cashierName', form.cashierName.trim() || 'Kasir'));
     const failed = res.filter((r) => !r.ok);
     if (failed.length) {
@@ -537,13 +541,16 @@ export function SettingsModal({
             <label className="label" htmlFor="s-phone">
               Telepon
             </label>
-            <input
+            <TeleponInput
               id="s-phone"
               className="input tnum"
               value={form.storePhone}
-              onChange={(e) => setForm({ ...form, storePhone: e.target.value })}
-              placeholder="0812-3456-7890"
+              onChange={(v) => setForm({ ...form, storePhone: v })}
+              placeholder="081234567890"
             />
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Hanya angka, tanpa tanda hubung. Tampil sebagai &ldquo;Telp&rdquo; di struk.
+            </p>
           </div>
 
           <div>

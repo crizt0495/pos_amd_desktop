@@ -4,14 +4,10 @@ import * as React from 'react';
 import { AlertTriangle, Loader2, UserPlus } from 'lucide-react';
 
 import { Modal } from '@/components/Modal';
+import { TeleponInput } from '@/components/TeleponInput';
+import { POLA_HP, hanyaAngka } from '@/lib/telepon';
 import { useButtonGuard } from '@/lib/useButtonGuard';
 import type { CustomerInput } from '@/lib/types';
-
-/** Nomor HP Indonesia: 08 + 8..11 digit (mis. 081234567890). */
-const POLA_HP = /^08[0-9]{8,11}$/;
-
-/** Buang semua karakter non-digit supaya "0812-3456" tetap bisa lolos. */
-const hanyaDigit = (s: string) => s.replace(/[^\d+]/g, '');
 
 /**
  * Form Tambah Pelanggan — dipakai dari tombol `+` di dropdown Pelanggan.
@@ -49,7 +45,7 @@ export function ModalPelanggan({
 
   /* ----------------------------- validasi ------------------------------ */
   const namaPendek = nama.trim().length > 0 && nama.trim().length < 3;
-  const hpAngka = hanyaDigit(noHp);
+  const hpAngka = hanyaAngka(noHp);
   const hpAda = hpAngka.length > 0;
   const hpSalah = hpAda && !POLA_HP.test(hpAngka);
 
@@ -155,19 +151,17 @@ export function ModalPelanggan({
 
           <div>
             <label className="frm-label" htmlFor="plg-hp">
-              No HP
+              No HP <span className="font-normal text-zinc-400">(angka saja)</span>
             </label>
-            <input
+            <TeleponInput
               id="plg-hp"
               className={`frm-input tnum h-9 ${hpSalah ? 'input-invalid' : ''}`}
               value={noHp}
-              onChange={(e) => {
-                setNoHp(e.target.value);
+              onChange={(v) => {
+                setNoHp(v);
                 setError('');
               }}
-              onKeyDown={enter}
-              placeholder="08xxxxxxxxxx"
-              inputMode="tel"
+              onEnter={() => submit()}
               aria-invalid={hpSalah}
             />
             {hpSalah ? (
