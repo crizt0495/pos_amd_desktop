@@ -18,13 +18,21 @@ jobs:
   deploy:
     name: Deploy ke Vercel
     runs-on: ubuntu-latest
+    # Step deploy di-skip kalau VERCEL_TOKEN belum ada. Pakai continue-on-error
+    # supaya job tidak dilaporkan "hijau" padahal tidak ada yang ter-deploy.
+    continue-on-error: true
+    env:
+      VERCEL_ORG_ID: team_1kqnB2pZeH0WBhuUGvqje7UL
+      VERCEL_PROJECT_ID: prj_03XexlGJyhMpAZPoWGvaZ6WWLQfC
     steps:
       - uses: actions/checkout@v4
 
       - name: Cek VERCEL_TOKEN
         id: token
+        env:
+          TOKEN_VALUE: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+          if [ -n "$TOKEN_VALUE" ]; then
             echo "ready=yes" >> "$GITHUB_OUTPUT"
           else
             echo "ready=no" >> "$GITHUB_OUTPUT"
@@ -44,3 +52,14 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx --yes vercel deploy --prod --yes --token "$VERCEL_TOKEN"
+
+      - name: Laporkan hasil
+        if: always()
+        run: |
+          if [ "${{ steps.token.outputs.ready }}" = 'yes' ]; then
+            echo "Deploy dijalankan."
+          else
+            echo "::warning::VERCEL_TOKEN belum di-set — TIDAK ADA yang di-deploy." >&2
+            echo "Isi di: GitHub repo ${{ github.repository }} > Settings > Secrets > VERCEL_TOKEN" >&2
+            echo "Lalu trigger ulang: Actions > workflow ini > Run workflow" >&2
+          fi
