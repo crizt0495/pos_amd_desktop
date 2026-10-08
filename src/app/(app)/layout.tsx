@@ -17,7 +17,12 @@ import {
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
-import { autoSambungBluetooth } from '@/lib/bluetoothPrinter';
+import {
+  autoSambungBluetooth,
+  dengarStatusBluetooth,
+  type StatusBluetooth,
+} from '@/lib/bluetoothPrinter';
+import { bacaPrinterSettings } from '@/lib/printerSettings';
 import { CartProvider } from '@/lib/cart-store';
 import { ToastProvider } from '@/components/Toast';
 import { SettingsModal } from '@/components/SettingsModal';
@@ -43,13 +48,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [cashierName, setCashierName] = React.useState('Kasir');
   const [openSettings, setOpenSettings] = React.useState(false);
   const [clock, setClock] = React.useState('');
+  const [btStatus, setBtStatus] = React.useState<StatusBluetooth>('nonaktif');
+  const [btName, setBtName] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     void ensureSeeded();
     void settingsApi.get<string>('storeName', 'Toko').then((n) => setStoreName(n || 'Toko'));
+    void settingsApi.get<string>('cashierName', 'Kasir').then((n) => setCashierName(n || 'Kasir'));
     // Sambung otomatis printer Bluetooth yang pernah dipasang (Web Bluetooth).
     void autoSambungBluetooth();
-    void settingsApi.get<string>('cashierName', 'Kasir').then((n) => setCashierName(n || 'Kasir'));
+    setBtName(bacaPrinterSettings().btDeviceName);
 
     const tick = () =>
       setClock(
@@ -65,7 +73,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       );
     tick();
     const t = window.setInterval(tick, 1000);
-    return () => window.clearInterval(t);
+    const stopBt = dengarStatusBluetooth((s) => {
+      setBtStatus(s);
+      // Ikut perbarui nama perangkat (mis. setelah pasang baru / putus).
+      setBtName(bacaPrinterSettings().btDeviceName);
+    });
+    return () => {
+      window.clearInterval(t);
+      stopBt();
+    };
   }, []);
 
   async function logout() {
@@ -98,6 +114,34 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <span className="ml-auto hidden text-[11px] tabular-nums text-white/75 lg:block">{clock}</span>
+
+          {btName ? (
+            <span
+              title={`Printer Bluetooth: ${btName}`}
+              className={`hidden items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold sm:flex ${
+                btStatus === 'tersambung'
+                  ? 'bg-[#0ca678]/25 text-[#b2f2bb]'
+                  : btStatus === 'mencoba'
+                    ? 'bg-white/15 text-white/80'
+                    : 'bg-[#c92a2a]/35 text-[#ffc9c9]'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  btStatus === 'tersambung'
+                    ? 'bg-[#51cf66]'
+                    : btStatus === 'mencoba'
+                      ? 'animate-pulse bg-[#ffd43b]'
+                      : 'bg-[#ff6b6b]'
+                }`}
+              />
+              {btStatus === 'tersambung'
+                ? 'Printer ON'
+                : btStatus === 'mencoba'
+                  ? 'Menyambung…'
+                  : 'Printer OFF'}
+            </span>
+          ) : null}
 
           <span className="hidden items-center gap-0.5 sm:flex">
             <button

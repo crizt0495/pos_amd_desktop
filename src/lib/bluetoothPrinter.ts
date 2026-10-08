@@ -62,6 +62,9 @@ let perangkat: PerangkatBluetooth | null = null;
 let karakter: Karakter | null = null;
 let status: StatusBluetooth = 'nonaktif';
 let mencobaLagi = false;
+let sedangSambung = false;
+let timerUlang: number | null = null;
+const dipantau = new WeakSet<PerangkatBluetooth>();
 const pendengar = new Set<(s: StatusBluetooth) => void>();
 
 function api(): ApiBluetooth | null {
@@ -105,28 +108,35 @@ async function cariKarakter(server: Server): Promise<Karakter | null> {
 }
 
 async function sambung(dev: PerangkatBluetooth, percobaan = 3): Promise<boolean> {
-  if (!dev.gatt) return false;
+  if (!dev.gatt || sedangSambung) return tersambung();
+  sedangSambung = true;
   setStatus('mencoba');
-  for (let i = 0; i < percobaan; i++) {
-    try {
-      if (!dev.gatt.connected) await dev.gatt.connect();
-      const c = await cariKarakter(dev.gatt);
-      if (c) {
-        perangkat = dev;
-        karakter = c;
-        setStatus('tersambung');
-        return true;
+  try {
+    for (let i = 0; i < percobaan; i++) {
+      try {
+        if (!dev.gatt.connected) await dev.gatt.connect();
+        const c = await cariKarakter(dev.gatt);
+        if (c) {
+          perangkat = dev;
+          karakter = c;
+          setStatus('tersambung');
+          return true;
+        }
+      } catch {
+        /* coba lagi */
       }
-    } catch {
-      /* coba lagi */
+      if (i < percobaan - 1) await new Promise((r) => setTimeout(r, 1200));
     }
-    await new Promise((r) => setTimeout(r, 1200));
+    setStatus('gagal');
+    return false;
+  } finally {
+    sedangSambung = false;
   }
-  setStatus('gagal');
-  return false;
 }
 
 function pantau(dev: PerangkatBluetooth) {
+  if (dipantau.has(dev)) return;
+  dipantau.add(dev);
   dev.addEventListener?.('gattserverdisconnected', () => {
     karakter = null;
     if (mencobaLagi) return;
@@ -136,9 +146,36 @@ function pantau(dev: PerangkatBluetooth) {
       mencobaLagi = false;
     });
   });
+  // Printer mulai mengiklankan dirinya -> langsung sambung tanpa menunggu.
+  dev.addEventListener?.('advertisementreceived', () => {
+    if (!tersambung()) void sambung(dev, 1);
+  });
   dev.watchAdvertisements?.().catch(() => {
     /* izin iklan tidak tersedia — gatt.connect tetap dicoba */
   });
+}
+
+/**
+ * Pengulang latar belakang: selama "sambung otomatis" aktif dan belum
+ * tersambung, coba lagi tiap 6 detik (mis. printer baru dinyalakan
+ * setelah aplikasi terbuka).
+ */
+function mulaiPengulang() {
+  if (typeof window === 'undefined' || timerUlang != null) return;
+  timerUlang = window.setInterval(() => {
+    const pref = bacaPrinterSettings();
+    if (!pref.btAutoConnect || !pref.btDeviceId) {
+      hentikanPengulang();
+      return;
+    }
+    if (tersambung() || sedangSambung) return;
+    void autoSambungBluetooth();
+  }, 6000);
+}
+
+function hentikanPengulang() {
+  if (timerUlang != null && typeof window !== 'undefined') window.clearInterval(timerUlang);
+  timerUlang = null;
 }
 
 /** Pasangkan perangkat baru — HARUS dipanggil dari handler klik user. */
@@ -170,6 +207,7 @@ export async function pasangkanBluetooth(): Promise<{ ok: boolean; pesan: string
 }
 
 export function putusBluetooth() {
+  hentikanPengulang();
   karakter = null;
   try {
     if (perangkat?.gatt?.connected) perangkat.gatt.disconnect?.();
@@ -214,6 +252,8 @@ export async function autoSambungBluetooth(): Promise<StatusBluetooth> {
   } catch {
     setStatus('gagal');
   }
+  // Gagal sekali pun tetap diulang otomatis tiap 6 detik.
+  if (status !== 'tersambung') mulaiPengulang();
   return status;
 }
 
@@ -306,6 +346,11 @@ export async function kirimBytes(bytes: Uint8Array): Promise<boolean> {
 export async function cetakStrukBluetooth(data: ReceiptData): Promise<boolean> {
   const pref = bacaPrinterSettings();
   if (pref.ukuran === 'A4') return false;
+  if (pref.btDeviceId && pref.btAutoConnect) {
+    // Belum tersambung? Coba sambung dulu sekarang (tanpa dialog browser).
+    if (!tersambung()) await autoSambungBluetooth();
+    mulaiPengulang();
+  }
   if (!tersambung()) return false;
   const bytes = strukKeBytes(data, pref.ukuran);
   return kirimBytes(bytes);
