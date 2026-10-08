@@ -1,0 +1,119 @@
+IMPLEMENTASI pos_amd_desktop — tahap "lebih baik dari IPOS 5" (10 Okt 2026)
+===========================================================================
+
+1) Fix kritik kasir (msg: fkulmembagi-fkulmembagi...
+2) Modul Monitoring seluler (/monitoring)
+3) Modul Pembelian sederhana (/pembelian)
+4) Ringkasan Laba Rugi di Laporan
+
+---
+
+A. FIX KASIR (commit 8fe0fde)
+------------------------------------------------
+BUG: diskon manual baris tidak pernah nempel ke item baru
+  Lokasi: src/components/screens/KasirScreen.tsx
+  Sebelum: const nilaiSeed = dariPaten ? diskonNilai : 0;
+  Sesudah: const nilaiSeed = patenHidup ? (dariPaten ? diskonNilai : 0) : diskonNilai;
+  Artinya: kalau Diskon Paten nonaktif, diskon manual dari form tetap dipakai.
+
+BUG: gabungKeranjang menggabung baris satuan/harga berbeda
+  Lokasi: src/lib/format.ts
+  Sebelum: match cukup product_id / barcode / name
+  Sesudah: tambah syarat:
+      l.unit.toLowerCase() === incoming.unit.toLowerCase() &&
+      l.price === incoming.price
+  Sekaligus: potongan dalam mode % dihitung ulang saat merge:
+      discount = round2(price * qtyBaru * pct / 100)
+
+BUG: konversi varian satuan TIDAK pernah dipakai
+  Dimana: RPC kasir_create_transaction() potong stok pakai v_qty saja;
+          retur & void mengembalikan stok tanpa konversi
+  Sekarang:
+    - Tabel kasir_transaction_items: kolom baru `konversi numeric not null default 1`
+    - RPC create: v_qty := ...; v_qty_jual := ...; stok dipotong v_qty_jual * v_konversi
+    - KasirScreen mengisi `konversi` sesuai varian `l.unit` di dalam `variants`
+    - RPC void_transaction: restore stock dengan v_item.qty * coalesce(v_item.konversi,1)
+    - RPC create_return: restore stock dengan v_qty * coalesce(v_it.konversi,1)
+
+BUG: rentang tanggal dari/to memaksakan UTC
+  Lokasi: src/lib/api.ts (4 tempat) + rangePayload
+  Sebelum: `${filter.from}T00:00:00.000Z` / `T23:59:59.999Z`
+  Sesudah: new Date(`${filter.from}T00:00:00`).toISOString() / T23:59:59.999
+  RPC `kasir_report_*`: pengecekan p_from::timestamptz tetap menerima ISO string
+  nomor invoice/shift/retur: to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD')
+
+BUG: p_shift_id (PGRST202) membuat semua transaksi gagal di DB versi lama
+  Lokasi: transactionsApi.create
+  Sekarang: panggil(pakaiShift) — jika error cocok /p_shift_id|PGRST202|.../ maka
+  panggil ulang dengan pakaiShift = false.
+
+BUG: shift cash preview & void/retur tidak sinkron
+  Lokasi: supabase/schema.sql (kasir_shift_preview & kasir_close_shift)
+  Sebelum: v_expected := kas awal + sum(paid-change_due) cash completed
+  Sekarang: v_expected := kas awal + masuk - v_retur_cash
+  (v_retur_cash := sum(kasir_returns.total) untuk tx shift tsb bermetode cash)
+
+BUG: fallback adjustStock membungkus stok negatif ke 0 dan menghapus kartu stok
+  Lokasi: src/lib/api.ts productsApi.adjustStock (catch PGRST202)
+  Sekarang: tetap insert baris kasir_stock_logs walau RPC belum ada.
+
+---
+
+B. MODUL MONITORING (commit 8be92b2 — /monitoring)
+----------------------------------------------------
+File baru:
+  - src/app/(app)/monitoring/page.tsx
+  - src/components/screens/MonitoringScreen.tsx
+  - layout perubahan: MODULES menambahkan { href:'/monitoring', label:'Monitoring', Icon: Monitor }
+
+Apa fungsi: sama seperti IPOS Mobile, tapi langsung ke Supabase (PWA) —
+pemilik cukup buka di HP untuk lihat:
+  - ringkasan omzet / laba / transaksi / diskon hari ini
+  - status shift kasir aktif
+  - stok kritis (stock <= min_stock, min_stock > 0)
+  - produk terlaris hari ini
+
+---
+
+C. MODUL PEMBELIAN (commit a3c3ed4 — /pembelian)
+------------------------------------------------
+Schema baru (supabase/schema.sql):
+  - kasir_suppliers(id, user_id, name, phone, address, created_at)
+  - kasir_purchases(id, user_id, supplier_id, supplier_name, total, note, created_at)
+  - kasir_purchase_items(id, purchase_id, user_id, product_id, product_name, qty, cost, subtotal)
+  - semua enable RLS, service_role grant
+
+RPC baru: public.kasir_create_purchase(text, uuid, jsonb, text)
+  - insert head pembelian
+  - loop items: insert purchase_items, update kasir_products.stock += qty,
+    insert kasir_stock_logs tipe 'stok_masuk'
+  - update total pembelian
+
+File UI:
+  - src/app/(app)/pembelian/page.tsx
+  - src/components/screens/PembelianScreen.tsx (supplier name, baris produk
+    dengan qty & harga beli, total, note)
+  - layout: MODULES menambahkan { href:'/pembelian', label:'Pembelian', Icon: Truck }
+  - api: purchasesApi.create(...) => rpc
+
+---
+
+D. RANGKUMAN LABA RUGI (commit a3c3ed4)
+---------------------------------------
+Lokasi: src/components/screens/LaporanScreen.tsx
+Menambah baris kartu di bawah ringkasan:
+  - Total Retur          = sum(kasir_returns.total) pada range
+  - Omzet Bersih         = max(0, summary.total_omzet - total_retur)
+  - Kas Masuk (Tunai)    = byPayment.metode==='cash'.omzet
+  - Non Tunai            = omzet - kas tunai
+
+---
+
+E. STATUS AKHIR (verifikasi di repo)
+------------------------------------
+- npx tsc --noEmit   : bersih
+- npm run build     : sukses (semua route compile)
+- schema.sql        : OK, dijalankan ke db.ttkaihcucmpbfbuixayg.supabase.co
+- /monitoring       : 200 (server test)
+- /pembelian        : 200 (server test)
+- pos-amd-desktop production: READY, /login 200
