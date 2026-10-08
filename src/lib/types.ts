@@ -57,6 +57,14 @@ export type ProductInput = {
   is_active?: boolean;
 };
 
+/** Satuan baku dari tabel `master_satuan` (satu baris = satu satuan). */
+export type SatuanMaster = {
+  id: string;
+  nama: string;
+  /** Kode singkatan untuk struk/nota, mis. Dus -> DS. */
+  kode: string;
+};
+
 /** Baris PO pembelian (PO + supplier + total). */
 export type PurchaseRecord = {
   id: string;
@@ -153,6 +161,8 @@ export interface TransactionItem {
   qty: number;
   discount: number;
   subtotal: number;
+  /** Nama satuan jual ("Dus"); '' untuk transaksi sebelum kolom ini ada. */
+  unit?: string;
 }
 
 export interface ReportSummary {
@@ -274,6 +284,8 @@ export interface ReceiptData {
     name: string;
     price: number;
     qty: number;
+    /** Nama satuan jual ("Dus") — dipakai menulis kode singkatan di struk. */
+    unit?: string;
     discount: number;
     /** Persen potongan bila kasir memakai mode % (null = mode Rp / tidak diketahui). */
     discountPct?: number | null;

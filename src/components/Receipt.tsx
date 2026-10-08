@@ -1,5 +1,8 @@
+import * as React from 'react';
+
 import { PAYMENT_METHOD_LABEL, type ReceiptData } from '@/lib/types';
-import { barisStruk, formatTanggalStruk, ringkasanStruk } from '@/lib/receipt';
+import { barisStruk, formatTanggalStruk, judulBaris, ringkasanStruk } from '@/lib/receipt';
+import { daftarSatuan, satuanApi } from '@/lib/api';
 import { rupiah } from '@/lib/format';
 
 /**
@@ -7,10 +10,13 @@ import { rupiah } from '@/lib/format';
  * yang terlihat — lihat @media print di app/globals.css.
  *
  * Format item sengaja 4 baris supaya potongan per item terlihat jelas:
- *   Nama Item
- *     2 x Rp. 3.500              Rp. 7.000
- *     Pot/Diskon 10%             -Rp. 700
- *                                Rp. 6.300
+ *   2 DS Indomie                        <- qty + kode satuan + nama
+ *     @ Rp. 3.500             Rp. 7.000 <- harga satuan ... qty x harga
+ *     Pot/Diskon 10%           -Rp. 700
+ *                               Rp. 6.300
+ *
+ * Kode satuan diambil dari master_satuan (mis. Dus -> DS) supaya struk lebih
+ * ramping; transaksi lama tanpa kolom `unit` tetap menulis nama barang saja.
  *
  * Label baris potongan mengikuti `items[].discountLabel` (mis. "Diskon Toko"
  * dari Pengaturan > Diskon > Diskon Paten), Persen menambahannya otomatis.
@@ -18,6 +24,14 @@ import { rupiah } from '@/lib/format';
  * jadi jatuh ke teks bawaan "Pot/Diskon".
  */
 export function ReceiptView({ data }: { data: ReceiptData }) {
+  // Pastikan peta kode satuan termuat sebelum judul item ditulis. Kalau sudah
+  // ada di cache (kasir sudah memuatnya), tanpa query & tanpa render ulang.
+  const [, setKodeSiap] = React.useState(0);
+  React.useEffect(() => {
+    if (daftarSatuan().length) return;
+    void satuanApi.list().then(() => setKodeSiap((v) => v + 1));
+  }, []);
+
   const baris = barisStruk(data);
   const { subtotalKotor, totalPotongan, total } = ringkasanStruk(data, baris);
 
@@ -49,15 +63,13 @@ export function ReceiptView({ data }: { data: ReceiptData }) {
 
         <div className="item-head">
           <span>Item</span>
-          <span>Jumlah</span>
+          <span>Nilai</span>
         </div>
         {baris.map((b, i) => (
           <div key={i} className="item">
-            <span className="name">{b.name}</span>
+            <span className="name">{judulBaris(b)}</span>
             <span className="line">
-              <span>
-                {b.qty} x {rupiah(b.price)}
-              </span>
+              <span>@ {rupiah(b.price)}</span>
               <span>{rupiah(b.gross)}</span>
             </span>
             {b.discount > 0 ? (

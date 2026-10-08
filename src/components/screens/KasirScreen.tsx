@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 
-import { customersApi, nextInvoicePreview, productsApi, settingsApi, shiftsApi, transactionsApi } from '@/lib/api';
+import { customersApi, nextInvoicePreview, productsApi, satuanApi, settingsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
@@ -37,6 +37,7 @@ import {
   potonganMax,
   rupiah,
   satuanOptions,
+  seragamkanSatuan,
 } from '@/lib/format';
 import {
   bacaDiskonPaten,
@@ -168,6 +169,8 @@ export default function KasirScreen() {
 
   /* ------------------------------ item entry -------------------------- */
   const [products, setProducts] = React.useState<Product[]>([]);
+  /** Nama satuan dari master_satuan — pilihan kolom SATUAN di keranjang. */
+  const [opsiSatuan, setOpsiSatuan] = React.useState<string[]>([]);
   const [produkDimuat, setProdukDimuat] = React.useState(false);
   /** Resolver penanda daftar produk sudah selesai dimuat. */
   const produkSiapRef = React.useRef<(() => void) | null>(null);
@@ -312,15 +315,18 @@ export default function KasirScreen() {
   React.useEffect(() => {
     setTanggal(new Date().toISOString().slice(0, 10));
     void (async () => {
-      const [storeRes, pRes, cRes, invRes] = await Promise.all([
+      const [storeRes, pRes, cRes, invRes, sRes] = await Promise.all([
         loadStoreMeta('Toko'),
         productsApi.list(''),
         customersApi.list(),
         nextInvoicePreview(),
+        // Master satuan: sumber pilihan kolom SATUAN & kode struk ("DS").
+        satuanApi.list(),
       ]);
       setStore(storeRes);
       setCashier(storeRes.cashier || 'Kasir');
       if (pRes.ok) setProducts(pRes.data);
+      if (sRes.ok) setOpsiSatuan(sRes.data.map((s) => s.nama));
       setProdukDimuat(true);
       produkSiapRef.current?.();
       produkSiapRef.current = null;
@@ -396,7 +402,7 @@ export default function KasirScreen() {
    * cakupan (mis. kategori lain) masuk dengan Potongan 0.
    */
   function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
-    const units = satuanOptions(p);
+    const units = satuanOptions(p, opsiSatuan);
     const varian = normalisasiVarian(p.variants);
     const v0 = satuanAwal ? cariVarian(varian, satuanAwal) : varian[0];
     const satuan = satuanAwal && units.some((u) => u.toLowerCase() === satuanAwal.toLowerCase())
@@ -1592,7 +1598,12 @@ export default function KasirScreen() {
             ) : null}
 
             {lines.map((l, i) => {
-              const units = l.satuanList.length ? l.satuanList : [l.unit];
+              // Pilihan SATUAN diseragamkan dengan ejaan master_satuan.
+              const units = seragamkanSatuan(
+                l.satuanList.length ? l.satuanList : [l.unit],
+                opsiSatuan,
+              );
+              const satuanBaris = seragamkanSatuan([l.unit], opsiSatuan)[0] ?? l.unit;
               const jumlah = jumlahBaris(l);
               const rugi = l.price < l.cost;
               const kilat = l.product_id === flashKey;
@@ -1624,9 +1635,12 @@ export default function KasirScreen() {
                   <td className="td p-0">
                     <select
                       className="cell !w-[84px]"
-                      value={units.includes(l.unit) ? l.unit : units[0]}
+                      value={units.includes(satuanBaris) ? satuanBaris : units[0]}
                       onChange={(e) => ubahSatuan(i, e.target.value)}
                     >
+                      {!units.includes(satuanBaris) && satuanBaris ? (
+                        <option value={satuanBaris}>{satuanBaris}</option>
+                      ) : null}
                       {units.map((u) => (
                         <option key={u} value={u}>
                           {u}

@@ -30,12 +30,15 @@ export function SatuanVarianTable({
   onChange,
   errors,
   onTambah,
+  opsiSatuan = [],
 }: {
   baris: VarianBaris[];
   onChange: (next: VarianBaris[]) => void;
   /** Pesan error per indeks baris (dihasilkan `validasiVarian`). */
   errors?: VarianError[];
   onTambah: () => void;
+  /** Pilihan satuan dari `master_satuan`; kolom SATUAN jadi dropdown. */
+  opsiSatuan?: string[];
 }) {
   const errUmum = errors?.find((e) => e.index === -1)?.pesan;
   const errRow = React.useCallback(
@@ -119,17 +122,33 @@ export function SatuanVarianTable({
               return (
                 <tr key={`baris-${i}`} className={isKembar ? 'bg-[#fff5f5]' : undefined}>
                   <td className="td p-1.5">
-                    <input
+                    {/* Kolom satuan: TIDAK BOLEH teks bebas — hanya pilihan
+                        dari master_satuan (baris lama di luar master tetap
+                        tampil bertanda agar tidak hilang saat disimpan). */}
+                    <select
                       className={`input h-8 rounded-md text-[12.5px] ${
-                        salah || isKembar ? '!border-[#e03131]' : ''
+                        salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
                       }`}
                       value={b.satuan}
-                      placeholder={i === 0 ? 'btl' : 'Dus'}
                       aria-label={`Satuan baris ${i + 1}`}
                       onChange={(e) => ubah(i, { satuan: e.target.value })}
-                    />
+                    >
+                      <option value="">— pilih satuan —</option>
+                      {opsiSatuan.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                      {b.satuan &&
+                      !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
+                        <option value={b.satuan}>{b.satuan} (di luar master)</option>
+                      ) : null}
+                    </select>
                     {i === 0 ? (
                       <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
+                    ) : null}
+                    {!b.satuan.trim() ? (
+                      <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">pilih satuan</span>
                     ) : null}
                     {isKembar ? (
                       <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
@@ -211,7 +230,7 @@ export function SatuanVarianTable({
         disabled={aksi.locked('tambah')}
         className="rb-btn mt-2"
       >
-        <Plus className="h-3.5 w-3.5" /> Tambah Satuan
+        <Plus className="h-3.5 w-3.5" /> Tambah Baris Satuan
       </button>
 
       {errUmum ? (

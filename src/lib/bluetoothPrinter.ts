@@ -1,5 +1,6 @@
 import { bacaPrinterSettings, setPrinterSettings } from './printerSettings';
-import { barisStruk, formatTanggalStruk, ringkasanStruk } from './receipt';
+import { barisStruk, formatTanggalStruk, judulBaris, ringkasanStruk } from './receipt';
+import { daftarSatuan, satuanApi } from './api';
 import { rupiah } from './format';
 import type { ReceiptData } from './types';
 
@@ -297,8 +298,9 @@ export function strukKeBytes(data: ReceiptData, ukuran: string): Uint8Array {
   teks.push(pad('Kasir', data.cashierName, lebar));
   teks.push(garis);
   for (const b of baris) {
-    teks.push(b.name.slice(0, lebar));
-    teks.push(pad(`  ${b.qty} x ${rupiah(b.price)}`, rupiah(b.gross), lebar));
+    // "2 DS Indomie" — qty + kode satuan + nama, biar struk lebih ramping.
+    teks.push(judulBaris(b).slice(0, lebar));
+    teks.push(pad(`  @ ${rupiah(b.price)}`, rupiah(b.gross), lebar));
     if (b.discount > 0) {
       const label = `${b.discountLabel || 'Pot/Diskon'}${b.discountPct != null ? ` ${b.discountPct}%` : ''}`;
       teks.push(pad(`  ${label}`, `-${rupiah(b.discount)}`, lebar));
@@ -346,6 +348,8 @@ export async function kirimBytes(bytes: Uint8Array): Promise<boolean> {
 export async function cetakStrukBluetooth(data: ReceiptData): Promise<boolean> {
   const pref = bacaPrinterSettings();
   if (pref.ukuran === 'A4') return false;
+  // Peta kode satuan harus sudah termuat sebelum baris struk disusun.
+  if (!daftarSatuan().length) await satuanApi.list();
   if (pref.btDeviceId && pref.btAutoConnect) {
     // Belum tersambung? Coba sambung dulu sekarang (tanpa dialog browser).
     if (!tersambung()) await autoSambungBluetooth();

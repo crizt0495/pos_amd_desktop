@@ -16,6 +16,7 @@ import type {
   ReturnItem,
   ReturnLineInput,
   ReturnRecord,
+  SatuanMaster,
   StockLog,
   TopProduct,
   Transaction,
@@ -1040,3 +1041,179 @@ export const returnsApi = {
 };
 
 export type { Product, Transaction, TransactionItem };
+/* ---------------------------- master satuan ---------------------------- */
+
+/**
+ * 12 satuan bawaan. Disuntik oleh `satuanApi.list()` saat daftar milik user
+ * masih kosong — supaya baris benih selalu memakai `user_id` yang login
+ * (RLS menolak insert tanpa user sendiri).
+ */
+export const SATUAN_DEFAULT: { nama: string; kode: string }[] = [
+  { nama: 'Dus', kode: 'DS' },
+  { nama: 'Pcs', kode: 'PCS' },
+  { nama: 'Pack', kode: 'PK' },
+  { nama: 'Box', kode: 'BOX' },
+  { nama: 'Kg', kode: 'KG' },
+  { nama: 'Gram', kode: 'GR' },
+  { nama: 'Liter', kode: 'L' },
+  { nama: 'Botol', kode: 'BTL' },
+  { nama: 'Sachet', kode: 'SCH' },
+  { nama: 'Karton', kode: 'KRT' },
+  { nama: 'Roll', kode: 'RL' },
+  { nama: 'Lusin', kode: 'LS' },
+];
+
+/** Cache in-memory master satuan — dipakai cetak struk tanpa query berulang. */
+let cacheSatuan: SatuanMaster[] | null = null;
+
+/** Daftar satuan dari cache; kosong bila belum pernah dipanggil `satuanApi.list()`. */
+export function daftarSatuan(): SatuanMaster[] {
+  return cacheSatuan ?? [];
+}
+
+/** Kode singkatan ("DS") untuk nama satuan ("Dus"); '' bila tak dikenal. */
+export function kodeSatuan(nama?: string | null): string {
+  const kunci = String(nama ?? '').trim().toLowerCase();
+  if (!kunci || !cacheSatuan) return '';
+  return cacheSatuan.find((s) => s.nama.trim().toLowerCase() === kunci)?.kode ?? '';
+}
+
+/** Hapus cache (dipanggil setelah CRUD supaya konsumen lain muat ulang). */
+function buangCacheSatuan() {
+  cacheSatuan = null;
+}
+
+/** Jumlah produk yang masih memakai sebuah satuan (nama satuan dasar/varian). */
+async function hitungPemakaian(nama: string): Promise<Result<number>> {
+  const kunci = String(nama ?? '').trim().toLowerCase();
+  if (!kunci) return { ok: true, data: 0 };
+  const { data, error } = await createClient().from('kasir_products').select('unit, variants');
+  if (error) return { ok: false, error: error.message };
+  const n = (data ?? []).filter((p) => {
+    const row = p as { unit?: string | null; variants?: unknown };
+    if (String(row.unit ?? '').trim().toLowerCase() === kunci) return true;
+    return normalisasiVarian(row.variants).some(
+      (v) => v.satuan.trim().toLowerCase() === kunci,
+    );
+  }).length;
+  return { ok: true, data: n };
+}
+
+export const satuanApi = {
+  /**
+   * Daftar satuan milik user (urut nama). Daftar kosong -> disuntik 12 satuan
+   * bawaan dulu, lalu dibaca ulang. Hasilnya di-cache untuk `kodeSatuan()`.
+   */
+  async list(): Promise<Result<SatuanMaster[]>> {
+    try {
+      const c = createClient();
+      const uid = await currentUserId();
+      const baca = async () => {
+        const { data, error } = await c
+          .from('master_satuan')
+          .select('id, nama, kode')
+          .eq('user_id', uid)
+          .order('nama', { ascending: true });
+        return { rows: (data ?? []) as SatuanMaster[], error };
+      };
+
+      const awal = await baca();
+      if (awal.error) return { ok: false, error: awal.error.message };
+
+      let rows = awal.rows;
+      if (rows.length === 0) {
+        const { error: e2 } = await c
+          .from('master_satuan')
+          .insert(SATUAN_DEFAULT.map((s) => ({ user_id: uid, nama: s.nama, kode: s.kode })));
+        // 23505 = dua perangkat menyuntik bersamaan; daftar tetap terbaca.
+        if (e2 && !/duplicate key|23505/i.test(e2.message)) return { ok: false, error: e2.message };
+        const ulang = await baca();
+        if (ulang.error) return { ok: false, error: ulang.error.message };
+        rows = ulang.rows;
+      }
+
+      cacheSatuan = rows;
+      return { ok: true, data: rows };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async create(input: { nama: string; kode: string }): Promise<Result<SatuanMaster>> {
+    const nama = String(input.nama ?? '').trim();
+    const kode = String(input.kode ?? '').trim().toUpperCase();
+    if (!nama) return { ok: false, error: 'Nama satuan wajib diisi.' };
+    if (!kode) return { ok: false, error: 'Kode singkatan wajib diisi.' };
+    try {
+      const row = { user_id: await currentUserId(), nama, kode };
+      const { data, error } = await createClient()
+        .from('master_satuan')
+        .insert(row)
+        .select('id, nama, kode')
+        .single();
+      if (error) {
+        if (/duplicate key|23505/i.test(error.message)) {
+          return { ok: false, error: `Nama atau kode "${nama}" / "${kode}" sudah dipakai satuan lain.` };
+        }
+        return { ok: false, error: error.message };
+      }
+      buangCacheSatuan();
+      return { ok: true, data: data as SatuanMaster };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  async update(id: string, input: { nama: string; kode: string }): Promise<Result<SatuanMaster>> {
+    const nama = String(input.nama ?? '').trim();
+    const kode = String(input.kode ?? '').trim().toUpperCase();
+    if (!nama) return { ok: false, error: 'Nama satuan wajib diisi.' };
+    if (!kode) return { ok: false, error: 'Kode singkatan wajib diisi.' };
+    try {
+      const { data, error } = await createClient()
+        .from('master_satuan')
+        .update({ nama, kode })
+        .eq('id', id)
+        .select('id, nama, kode')
+        .single();
+      if (error) {
+        if (/duplicate key|23505/i.test(error.message)) {
+          return { ok: false, error: `Nama atau kode "${nama}" / "${kode}" sudah dipakai satuan lain.` };
+        }
+        return { ok: false, error: error.message };
+      }
+      buangCacheSatuan();
+      return { ok: true, data: data as SatuanMaster };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Berapa produk masih memakai satuan ini (untuk konfirmasi hapus). */
+  async dipakai(nama: string): Promise<Result<number>> {
+    return hitungPemakaian(nama);
+  },
+
+  /**
+   * Hapus satu satuan. Ditolak (dengan pesan) bila masih dipakai produk —
+   * aturan dari user: "jangan hapus kalau masih dipakai produk".
+   */
+  async hapus(id: string, nama: string): Promise<Result<void>> {
+    try {
+      const pakai = await hitungPemakaian(nama);
+      if (!pakai.ok) return { ok: false, error: pakai.error };
+      if (pakai.data > 0) {
+        return {
+          ok: false,
+          error: `Satuan "${nama}" masih dipakai ${pakai.data} produk. Ubah satuan produk itu dulu.`,
+        };
+      }
+      const { error } = await createClient().from('master_satuan').delete().eq('id', id);
+      if (error) return { ok: false, error: error.message };
+      buangCacheSatuan();
+      return { ok: true, data: undefined };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};

@@ -1,9 +1,20 @@
 'use client';
 
 import * as React from 'react';
-import { BadgePercent, Eye, Loader2, Monitor, Printer as PrinterIcon, Store } from 'lucide-react';
+import {
+  BadgePercent,
+  Eye,
+  Loader2,
+  Monitor,
+  Pencil,
+  Plus,
+  Printer as PrinterIcon,
+  Ruler,
+  Store,
+  Trash2,
+} from 'lucide-react';
 
-import { productsApi, settingsApi } from '@/lib/api';
+import { productsApi, satuanApi, settingsApi } from '@/lib/api';
 import { useButtonGuard } from '@/lib/useButtonGuard';
 import {
   bacaTampilan,
@@ -35,6 +46,7 @@ import {
 } from '@/lib/bluetoothPrinter';
 import { rupiah } from '@/lib/format';
 import { bersihkanTelepon } from '@/lib/telepon';
+import type { SatuanMaster } from '@/lib/types';
 import { Modal } from './Modal';
 import { RupiahInput } from './RupiahInput';
 import { TeleponInput } from './TeleponInput';
@@ -47,7 +59,7 @@ type Form = {
   cashierName: string;
 };
 
-type Tab = 'toko' | 'diskon' | 'tampilan' | 'printer';
+type Tab = 'toko' | 'diskon' | 'tampilan' | 'printer' | 'satuan';
 
 /** Pengaturan toko (tersimpan per akun) + preferensi tampilan layar kasir. */
 export function SettingsModal({
@@ -229,7 +241,99 @@ export function SettingsModal({
       });
   }, [open, tab, kategoriMuat]);
 
+  /* --------------------------- master satuan --------------------------- */
+  // Sumber tunggal pilihan SATUAN untuk Produk, Pembelian, dan Kasir.
+  // Setelah fitur ini tidak ada lagi input teks satuan di aplikasi.
+  const [satuanList, setSatuanList] = React.useState<SatuanMaster[]>([]);
+  const [satuanMuat, setSatuanMuat] = React.useState(false);
+  const [satuanBusy, setSatuanBusy] = React.useState(false);
+  /** null = modal tertutup | 'baru' = tambah | id = ubah. */
+  const [satuanModal, setSatuanModal] = React.useState<'baru' | string | null>(null);
+  const [satuanForm, setSatuanForm] = React.useState({ nama: '', kode: '' });
+  /** null = konfirmasi tertutup | satuan = siap dikonfirmasi dihapus. */
+  const [satuanHapus, setSatuanHapus] = React.useState<SatuanMaster | null>(null);
+
+  async function muatSatuan() {
+    const res = await satuanApi.list();
+    if (res.ok) setSatuanList(res.data);
+    else toast.error('Master Satuan', res.error);
+  }
+
+  React.useEffect(() => {
+    if (!open || satuanMuat) return;
+    setSatuanMuat(true);
+    void muatSatuan();
+  }, [open, satuanMuat]);
+
+  function bukaSatuanBaru() {
+    setSatuanForm({ nama: '', kode: '' });
+    setSatuanModal('baru');
+  }
+
+  function bukaSatuanUbah(s: SatuanMaster) {
+    setSatuanForm({ nama: s.nama, kode: s.kode });
+    setSatuanModal(s.id);
+  }
+
+  async function simpanSatuan() {
+    if (satuanBusy) return;
+    if (!satuanForm.nama.trim() || !satuanForm.kode.trim()) {
+      toast.error('Master Satuan', 'Nama dan kode singkatan wajib diisi.');
+      return;
+    }
+    setSatuanBusy(true);
+    const res =
+      satuanModal === 'baru'
+        ? await satuanApi.create(satuanForm)
+        : await satuanApi.update(String(satuanModal ?? ''), satuanForm);
+    setSatuanBusy(false);
+    if (!res.ok) {
+      toast.error('Master Satuan', res.error);
+      return;
+    }
+    setSatuanModal(null);
+    toast.ok('Master Satuan', `Satuan "${res.data.nama}" (${res.data.kode}) tersimpan.`);
+    await muatSatuan();
+  }
+
+  /**
+   * Langkah pertama hapus: cek pemakaian. Kalau masih dipakai produk, batalkan
+   * di sini (tanpa konfirmasi) sesuai aturan "jangan hapus kalau masih dipakai".
+   */
+  async function mintaHapusSatuan(s: SatuanMaster) {
+    if (satuanBusy) return;
+    const res = await satuanApi.dipakai(s.nama);
+    if (!res.ok) {
+      toast.error('Master Satuan', res.error);
+      return;
+    }
+    if (res.data > 0) {
+      toast.error(
+        'Tidak bisa menghapus',
+        `Satuan "${s.nama}" masih dipakai ${res.data} produk. Ubah satuan produk itu dulu.`,
+      );
+      return;
+    }
+    setSatuanHapus(s);
+  }
+
+  async function konfirmasiHapusSatuan() {
+    const target = satuanHapus;
+    if (!target || satuanBusy) return;
+    setSatuanBusy(true);
+    const res = await satuanApi.hapus(target.id, target.nama);
+    setSatuanBusy(false);
+    setSatuanHapus(null);
+    if (!res.ok) {
+      toast.error('Tidak bisa menghapus', res.error);
+      return;
+    }
+    toast.ok('Master Satuan', `Satuan "${target.nama}" dihapus.`);
+    await muatSatuan();
+  }
+
   return (
+    <>
     <Modal
       open={open}
       title="Pengaturan"
@@ -276,6 +380,7 @@ export function SettingsModal({
             { id: 'diskon' as const, label: 'Diskon', Icon: BadgePercent },
             { id: 'tampilan' as const, label: 'Tampilan', Icon: Monitor },
             { id: 'printer' as const, label: 'Printer', Icon: PrinterIcon },
+            { id: 'satuan' as const, label: 'Satuan', Icon: Ruler },
           ] satisfies { id: Tab; label: string; Icon: typeof Store }[]
         ).map((t) => (
           <button
@@ -283,13 +388,13 @@ export function SettingsModal({
             type="button"
             onClick={() => setTab(t.id)}
             aria-pressed={tab === t.id}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-bold transition ${
+            className={`flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md px-1 py-1.5 text-[11px] font-bold transition ${
               tab === t.id
                 ? 'bg-white text-[#1b5fa8] shadow-sm'
                 : 'text-[#5b6b80] hover:bg-white/60'
             }`}
           >
-            <t.Icon className="h-3.5 w-3.5" />
+            <t.Icon className="h-3 w-3" />
             {t.label}
           </button>
         ))}
@@ -577,6 +682,83 @@ export function SettingsModal({
             ) : null}
           </div>
         </div>
+      ) : tab === 'satuan' ? (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
+            <Ruler className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Satuan baku untuk Produk, Pembelian, dan Kasir. Semua kolom satuan di aplikasi
+              hanya menyimpan pilihan dari daftar ini — tidak ada lagi ketikan bebas, jadi
+              laporan stok tetap konsisten.
+            </span>
+          </div>
+
+          <button type="button" className="rb-btn-primary" onClick={bukaSatuanBaru}>
+            <Plus className="h-3.5 w-3.5" /> Tambah Satuan
+          </button>
+
+          <div className="overflow-hidden rounded-lg border border-[#d8e0ec]">
+            <table className="w-full border-collapse">
+              <thead className="bg-[#f6f9fd]">
+                <tr>
+                  <th className="th w-9 text-center">No</th>
+                  <th className="th">Nama Satuan</th>
+                  <th className="th w-16">Kode</th>
+                  <th className="th w-24 text-center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#eef2f7]">
+                {!satuanMuat ? (
+                  <tr>
+                    <td colSpan={4} className="td text-center text-[#9fb0c4]">
+                      <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" /> Memuat…
+                    </td>
+                  </tr>
+                ) : satuanList.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="td text-center text-[#9fb0c4]">
+                      Belum ada satuan. Klik Tambah Satuan.
+                    </td>
+                  </tr>
+                ) : (
+                  satuanList.map((s, i) => (
+                    <tr key={s.id} className="bg-white">
+                      <td className="td tnum text-center text-[#9fb0c4]">{i + 1}</td>
+                      <td className="td font-semibold text-[#1b3a5c]">{s.nama}</td>
+                      <td className="td font-mono text-[12px] text-[#5b6b80]">{s.kode}</td>
+                      <td className="td text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            className="rb-btn"
+                            aria-label={`Ubah ${s.nama}`}
+                            onClick={() => bukaSatuanUbah(s)}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rb-btn-danger"
+                            aria-label={`Hapus ${s.nama}`}
+                            disabled={satuanBusy}
+                            onClick={() => void mintaHapusSatuan(s)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-[11px] text-[#9fb0c4]">
+            {satuanList.length} satuan terdaftar. Kolom <b>Kode</b> dicetak di struk/nota,
+            misalnya &ldquo;2 DS Indomie&rdquo;.
+          </p>
+        </div>
       ) : tab === 'tampilan' ? (
         <div className="space-y-3">
           <div className="flex items-start gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
@@ -732,5 +914,108 @@ export function SettingsModal({
         </form>
       )}
     </Modal>
+
+    {/* ------------------- modal tambah/ubah master satuan ------------------- */}
+    <Modal
+      open={satuanModal !== null}
+      title={satuanModal === 'baru' ? 'Tambah Satuan' : 'Ubah Satuan'}
+      onClose={() => setSatuanModal(null)}
+      width="max-w-sm"
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={() => setSatuanModal(null)}
+            disabled={satuanBusy}
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => void simpanSatuan()}
+            disabled={satuanBusy}
+            data-loading={satuanBusy}
+          >
+            {satuanBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {satuanBusy ? 'Menyimpan…' : 'Simpan'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="label" htmlFor="ms-nama">
+            Nama Satuan
+          </label>
+          <input
+            id="ms-nama"
+            className="input"
+            value={satuanForm.nama}
+            onChange={(e) => setSatuanForm((p) => ({ ...p, nama: e.target.value }))}
+            placeholder="Dus"
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="ms-kode">
+            Kode Singkatan (untuk struk)
+          </label>
+          <input
+            id="ms-kode"
+            className="input uppercase"
+            value={satuanForm.kode}
+            onChange={(e) => setSatuanForm((p) => ({ ...p, kode: e.target.value }))}
+            placeholder="DS"
+            maxLength={8}
+          />
+          <p className="mt-1 text-[11px] text-[#9fb0c4]">
+            Dicetak di nota sebagai pengganti nama panjang, mis.{" "}
+            <span className="font-bold text-[#1b3a5c]">2 DS Indomie</span>.
+          </p>
+        </div>
+      </div>
+    </Modal>
+
+    {/* ---------------------- konfirmasi hapus satuan ---------------------- */}
+    <Modal
+      open={satuanHapus !== null}
+      title="Hapus Satuan"
+      onClose={() => setSatuanHapus(null)}
+      width="max-w-sm"
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={() => setSatuanHapus(null)}
+            disabled={satuanBusy}
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            className="btn-danger"
+            onClick={() => void konfirmasiHapusSatuan()}
+            disabled={satuanBusy}
+            data-loading={satuanBusy}
+          >
+            {satuanBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {satuanBusy ? 'Menghapus…' : 'Ya, Hapus'}
+          </button>
+        </>
+      }
+    >
+      <p className="text-[13px] text-[#35485c]">
+        Hapus satuan <b className="text-[#1b3a5c]">{satuanHapus?.nama}</b> (
+        <span className="font-mono">{satuanHapus?.kode}</span>) dari master satuan?
+      </p>
+      <p className="mt-2 text-[11.5px] text-[#9fb0c4]">
+        Satuan yang masih dipakai produk tidak bisa dihapus. Riwayat transaksi lama tidak
+        berubah.
+      </p>
+    </Modal>
+    </>
   );
 }

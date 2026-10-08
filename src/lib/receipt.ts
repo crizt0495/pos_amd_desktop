@@ -1,5 +1,5 @@
 import { jumlahBaris, potonganEfektif, round2, rupiah } from './format';
-import { settingsApi } from './api';
+import { kodeSatuan, settingsApi } from './api';
 import type { CartLine, ReceiptData, Transaction, TransactionItem } from './types';
 
 /** Penyusun data struk — angka selalu konsisten dengan database. */
@@ -16,6 +16,8 @@ function linesToItems(lines: CartLine[]) {
     name: l.name,
     price: l.price,
     qty: l.qty,
+    // Nama satuan jual ("Dus") — dicetak sebagai kode singkatan ("DS").
+    unit: l.unit || '',
     // Nilai efektif (dibatasi harga x qty) supaya angka yang dicetak sama
     // dengan yang dipotong di database; persennya ikut dibawa supaya struk
     // bisa menulis "Pot/Diskon 10%" saat kasir memakai mode %.
@@ -80,6 +82,9 @@ export function buildReceiptFromTx(
       name: i.product_name,
       price: i.price,
       qty: i.qty,
+      // Kolom `unit` baru diisi transaksi setelah migrasi master_satuan;
+      // transaksi lama bernilai '' sehingga struknya tetap tanpa kode.
+      unit: i.unit || '',
       discount: i.discount,
       // Persen tidak disimpan di database (UI-only), jadi struk cetak ulang
       // menulis "Pot/Diskon" tanpa persen — lebih baik daripada menebak.
@@ -134,6 +139,10 @@ export type BarisStruk = {
   name: string;
   qty: number;
   price: number;
+  /** Nama satuan jual ("Dus"); '' untuk transaksi lama. */
+  unit: string;
+  /** Kode singkatan dari master_satuan ("DS"); '' bila tak dikenal. */
+  kode: string;
   /** qty x harga sebelum potongan. */
   gross: number;
   /** Potongan baris (dibatasi ke harga x qty). */
@@ -157,6 +166,8 @@ export function barisStruk(d: ReceiptData): BarisStruk[] {
       name: it.name,
       qty,
       price,
+      unit: it.unit ?? '',
+      kode: kodeSatuan(it.unit),
       gross,
       discount,
       discountPct: it.discountPct ?? null,
@@ -164,6 +175,18 @@ export function barisStruk(d: ReceiptData): BarisStruk[] {
       net: round2(gross - discount),
     };
   });
+}
+
+/**
+ * Judul item di struk/nota: "2 DS Indomie" (qty + kode satuan + nama).
+ * Kode dan nama satuan sengaja tidak ditulis berbarengan — cukup kode.
+ * Bila kode/satuan tak diketahui (transaksi sebelum master satuan), judul
+ * jatuh kembali ke nama barang saja.
+ */
+export function judulBaris(b: Pick<BarisStruk, 'qty' | 'name' | 'unit' | 'kode'>): string {
+  const singkat = b.kode || b.unit || '';
+  if (!singkat) return b.name;
+  return `${b.qty} ${singkat} ${b.name}`;
 }
 
 /** Ringkasan footer struk: subtotal kotor, total potongan, total akhir. */

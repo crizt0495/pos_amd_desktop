@@ -94,6 +94,9 @@ alter table public.kasir_products     add column if not exists variants       js
 alter table public.kasir_transactions add column if not exists customer_name text;
 alter table public.kasir_transactions add column if not exists shift_id       uuid;
 alter table public.kasir_transaction_items add column if not exists konversi numeric not null default 1;
+-- Nama satuan jual saat transaksi dibuat (untuk cetak ulang struk/nota).
+-- Data lama bernilai '' — struk lama tetap tampil tanpa kode satuan.
+alter table public.kasir_transaction_items add column if not exists unit text not null default '';
 
 create index if not exists kasir_transactions_shift on public.kasir_transactions (user_id, shift_id);
 
@@ -409,7 +412,7 @@ begin
   for v_item in select * from jsonb_array_elements(p_lines) loop
     insert into public.kasir_transaction_items
       (user_id, transaction_id, product_id, barcode, product_name, price, cost,
-       qty, discount, subtotal, konversi)
+       qty, discount, subtotal, konversi, unit)
     values
       (v_user, v_tx_id,
        nullif(coalesce((v_item.value->>'product_id')::text, ''), '')::uuid,
@@ -422,7 +425,8 @@ begin
        greatest(round(coalesce((v_item.value->>'price')::numeric, 0)
             * greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0), 2)
             - coalesce((v_item.value->>'discount')::numeric, 0), 0),
-       coalesce((v_item.value->>'konversi')::numeric, 1));
+       coalesce((v_item.value->>'konversi')::numeric, 1),
+       coalesce((v_item.value->>'unit')::text, ''));
 
     -- potong stok hanya untuk produk terdaftar + catat mutasi ke kartu stok.
     -- Konversi dipakai: jual 1 Dus mengurangi stok sebanyak konversi-nya.
@@ -1265,3 +1269,51 @@ end;
 $$;
 
 grant execute on function public.kasir_create_purchase(text, uuid, jsonb, text) to authenticated, service_role;
+
+-- ============================================================================
+-- 12. MASTER SATUAN (GLOBAL)
+-- ----------------------------------------------------------------------------
+--    Satuan tidak lagi diketik manual per form. Semua pilihan satuan
+--    (Produk, Pembelian, Kasir) membaca tabel ini lewat `satuanApi.list()`.
+--
+--    1. Tabel  : master_satuan (per pengguna)
+--    2. RLS    : policies select/insert/update/delete berdasar user_id
+--    3. Benih  : 12 satuan bawaan disuntik oleh aplikasi saat daftar masih
+--                kosong (lihat SATUAN_DEFAULT di src/lib/api.ts) — supaya
+--                baris benih selalu milik user yang sedang login.
+--
+--    Kode singkatan (kolom `kode`) dipakai di struk/nota: "2 DS Indomie".
+-- ============================================================================
+
+create table if not exists public.master_satuan (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  nama       text not null,
+  kode       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists master_satuan_user on public.master_satuan (user_id, nama);
+
+alter table public.master_satuan enable row level security;
+revoke all on public.master_satuan from anon;
+grant select, insert, update, delete on public.master_satuan to service_role, authenticated;
+
+drop policy if exists master_satuan_select on public.master_satuan;
+create policy master_satuan_select on public.master_satuan
+  for select using (user_id = auth.uid());
+drop policy if exists master_satuan_insert on public.master_satuan;
+create policy master_satuan_insert on public.master_satuan
+  for insert with check (user_id = auth.uid());
+drop policy if exists master_satuan_update on public.master_satuan;
+create policy master_satuan_update on public.master_satuan
+  for update using (user_id = auth.uid());
+drop policy if exists master_satuan_delete on public.master_satuan;
+create policy master_satuan_delete on public.master_satuan
+  for delete using (user_id = auth.uid());
+
+-- Satuan kembar dicegah di tingkat database: nama unik (tanpa peduli huruf
+-- besar/kecil) dan kode singkatan unik (di hurufkan besar).
+create unique index if not exists master_satuan_user_nama
+  on public.master_satuan (user_id, lower(nama));
+create unique index if not exists master_satuan_user_kode
+  on public.master_satuan (user_id, upper(kode));

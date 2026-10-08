@@ -17,7 +17,7 @@ import {
   Upload,
 } from 'lucide-react';
 
-import { productsApi, stockApi } from '@/lib/api';
+import { productsApi, satuanApi, stockApi } from '@/lib/api';
 import { exportProductsCsv, produkInputDariBaris, unduhTeks, type ParsedProdukRow } from '@/lib/csv';
 import { CsvImportModal, type ImportResult } from '@/components/CsvImportModal';
 import { KartuStokModal } from '@/components/KartuStokModal';
@@ -90,6 +90,8 @@ export default function ProdukScreen() {
 
   /* ------------------------- kategori baru ---------------------------- */
   const [kategoriList, setKategoriList] = React.useState<string[]>([]);
+  /** Pilihan SATUAN di form produk — seragam dari `master_satuan`. */
+  const [opsiSatuan, setOpsiSatuan] = React.useState<string[]>([]);
   const [kategoriModal, setKategoriModal] = React.useState(false);
   const [kategoriBaru, setKategoriBaru] = React.useState('');
   const kategori = useButtonGuard();
@@ -118,6 +120,14 @@ export default function ProdukScreen() {
     void (async () => {
       const res = await productsApi.categories();
       if (res.ok) setKategoriList(res.data);
+    })();
+  }, []);
+
+  // Master satuan: satu-satunya sumber pilihan SATUAN di form produk.
+  React.useEffect(() => {
+    void (async () => {
+      const res = await satuanApi.list();
+      if (res.ok) setOpsiSatuan(res.data.map((s) => s.nama));
     })();
   }, []);
 
@@ -196,7 +206,13 @@ export default function ProdukScreen() {
 
   /* --------------------------- editor varian ------------------------- */
   function tambahVarianBaris() {
-    setForm((prev) => ({ ...prev, varian: [...prev.varian, { ...BARIS_BARU }] }));
+    // Baris baru langsung memakai satuan master yang belum terpakai di form
+    // ini — tetap bisa diganti lewat dropdown, tak ada lagi ketikan bebas.
+    setForm((prev) => {
+      const terpakai = new Set(prev.varian.map((b) => b.satuan.trim().toLowerCase()));
+      const pilih = opsiSatuan.find((s) => !terpakai.has(s.toLowerCase())) ?? '';
+      return { ...prev, varian: [...prev.varian, { ...BARIS_BARU, satuan: pilih }] };
+    });
   }
 
   /** Simpan kategori baru (hanya di memori — kategori hidup dari kolom produk). */
@@ -769,6 +785,7 @@ export default function ProdukScreen() {
             onChange={(next) => setForm((prev) => ({ ...prev, varian: next }))}
             onTambah={tambahVarianBaris}
             errors={varianErrors}
+            opsiSatuan={opsiSatuan}
           />
 
           {editing ? (

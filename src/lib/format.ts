@@ -140,17 +140,31 @@ export function cariProdukByBarcodeVarian(
 
 /** Daftar satuan yang bisa dipilih pada satu produk (baris keranjang).
  *  Prioritas: varian produk; lalu satuan_list; fallback default + unit. */
-export function satuanOptions(p: {
-  unit?: string | null;
-  satuanList?: string[];
-  variants?: ProductVariant[] | null;
-}): string[] {
+export function satuanOptions(
+  p: {
+    unit?: string | null;
+    satuanList?: string[];
+    variants?: ProductVariant[] | null;
+  },
+  /**
+   * Master satuan (`satuanApi.list()`), opsional. Dipakai saat produk tidak
+   * punya varian: pilihan jatuh ke daftar master, bukan teks bebas.
+   * Nama varian yang mirip master juga diseragamkan (dus -> Dus).
+   */
+  opsiMaster?: string[] | null,
+): string[] {
+  const master = (opsiMaster ?? []).map((s) => String(s).trim()).filter(Boolean);
+  const indeksMaster = new Map<string, string>();
+  for (const m of master) indeksMaster.set(m.toLowerCase(), m);
+
   const varian = normalisasiVarian(p.variants);
   const sumber = varian.length
     ? varian.map((v) => v.satuan)
     : Array.isArray(p.satuanList) && p.satuanList.length
       ? p.satuanList.map(String)
-      : ['Pcs', 'Dus/6', 'Pack'];
+      : master.length
+        ? master
+        : ['Pcs', 'Dus/6', 'Pack'];
 
   const key = (s: string) => s.trim().toLowerCase();
 
@@ -162,16 +176,31 @@ export function satuanOptions(p: {
   const unit = String(p.unit ?? '').trim();
   if (unit && !tercakup.has(key(unit))) base.unshift(unit);
 
+  // Seragamkan ke ejaan master supaya "dus" dan "Dus" tidak jadi dua satuan.
+  const rapi = base.map((s) => indeksMaster.get(key(s)) ?? s);
+
   // Buang duplikat yang lolos (mis. satuan_list sendiri berisi nama kembar).
   const unik = new Set<string>();
-  const hasil = base.filter((s) => {
+  const hasil = rapi.filter((s) => {
     const k = key(s);
     if (!k || unik.has(k)) return false;
     unik.add(k);
     return true;
   });
 
-  return hasil.length ? hasil : ['Pcs'];
+  return hasil.length ? hasil : master.length ? master : ['Pcs'];
+}
+
+/**
+ * Samakan ejaan satuan dengan daftar master (`dus` -> `Dus`).
+ * Elemen yang tidak ada di master dibiarkan apa adanya supaya data lama
+ * tidak hilang dari layar.
+ */
+export function seragamkanSatuan(daftar: string[], master?: string[] | null): string[] {
+  const m = (master ?? []).map((s) => String(s).trim()).filter(Boolean);
+  if (!m.length) return daftar;
+  const idx = new Map(m.map((s) => [s.toLowerCase(), s]));
+  return daftar.map((s) => idx.get(String(s ?? '').trim().toLowerCase()) ?? s);
 }
 
 /** Harga jual/modal untuk satu satuan; jatuh ke harga produk bila tanpa varian. */
@@ -226,6 +255,14 @@ export function validasiVarian(baris: VarianBaris[]): VarianError[] {
   }
 
   const kembar = satuanKembar(isi);
+  // Baris yang sudah diisi harganya tapi satuannya belum dipilih dari
+  // dropdown master — nilai kosong akan hilang diam-diam saat disimpan.
+  baris.forEach((b, i) => {
+    if (b.satuan.trim()) return;
+    if (b.harga_jual.trim() || b.harga_beli.trim()) {
+      err.push({ index: i, pesan: 'Pilih satuan dari daftar master_satuan.' });
+    }
+  });
   if (kembar) err.push({ index: -1, pesan: `Satuan "${kembar}" dipakai lebih dari sekali.` });
 
   // Modal induk (baris 1) = sumber konversi untuk semua baris turunan.

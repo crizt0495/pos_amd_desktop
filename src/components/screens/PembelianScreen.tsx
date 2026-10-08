@@ -3,8 +3,8 @@
 import * as React from 'react';
 import { ListChecks, PackageSearch, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
-import { productsApi, purchasesApi } from '@/lib/api';
-import { angka, rupiah } from '@/lib/format';
+import { productsApi, purchasesApi, satuanApi } from '@/lib/api';
+import { angka, rupiah, satuanOptions } from '@/lib/format';
 import { RupiahInput } from '@/components/RupiahInput';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
@@ -14,6 +14,8 @@ interface BarisPembelian {
   productId: string;
   name: string;
   unit: string;
+  /** Pilihan kolom SATUAN baris ini — satuan yang sudah di-link ke produk. */
+  opsi: string[];
   qty: number;
   cost: number;
 }
@@ -51,6 +53,15 @@ export default function PembelianScreen() {
 
   // supplier history (map productId -> last cost)
   const [supplierCostMap, setSupplierCostMap] = React.useState<Map<string, number>>(new Map());
+
+  // Master satuan: pilihan kolom SATUAN & modal "Barang Baru".
+  const [opsiSatuan, setOpsiSatuan] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    void satuanApi.list().then((r) => {
+      if (r.ok) setOpsiSatuan(r.data.map((s) => s.nama));
+    });
+  }, []);
 
   React.useEffect(() => {
     void productsApi.list().then((r) => {
@@ -128,12 +139,16 @@ export default function PembelianScreen() {
       if (i >= 0) {
         return prev.map((b, j) => (j === i ? { ...b, qty: b.qty + 1 } : b));
       }
+      // Kolom SATUAN hanya menampilkan satuan yang sudah di-link ke produk ini
+      // (satuan dasar + turunan `variants`), bukan semua master satuan.
+      const opsi = satuanOptions(p, opsiSatuan);
       return [
         ...prev,
         {
           productId: p.id,
           name: p.name,
-          unit: p.unit,
+          unit: p.unit && opsi.includes(p.unit) ? p.unit : (opsi[0] ?? p.unit),
+          opsi,
           qty: 1,
           cost: lastCost ?? p.cost,
         },
@@ -173,13 +188,26 @@ export default function PembelianScreen() {
     }
     setSupplierName(p.supplier_name);
     setBaris(
-      r.data.map((it) => ({
-        productId: it.product_id ?? '',
-        name: it.product_name,
-        unit: '',
-        qty: Number(it.qty) || 1,
-        cost: Number(it.cost) || 0,
-      })),
+      r.data.map((it) => {
+        // Cari dulu produk aslinya supaya pilihan SATUAN ikut ke-filter.
+        const prod =
+          products.find((x) => it.product_id && x.id === it.product_id) ??
+          products.find((x) => x.name.toLowerCase() === it.product_name.toLowerCase());
+        const opsi = prod ? satuanOptions(prod, opsiSatuan) : opsiSatuan;
+        const unit = prod
+          ? prod.unit && opsi.includes(prod.unit)
+            ? prod.unit
+            : (opsi[0] ?? '')
+          : (opsi[0] ?? '');
+        return {
+          productId: it.product_id ?? '',
+          name: it.product_name,
+          unit,
+          opsi: opsi.length ? opsi : opsiSatuan,
+          qty: Number(it.qty) || 1,
+          cost: Number(it.cost) || 0,
+        };
+      }),
     );
     setRiwayatOpen(false);
     toast.ok('PO dimuat', `${r.data.length} baris dari ${p.supplier_name}.`);
@@ -432,11 +460,32 @@ export default function PembelianScreen() {
                 </tr>
               </thead>
               <tbody>
-                {baris.map((b, i) => (
+                {baris.map((b, i) => {
+                  // Pilihan SATUAN di-filter ke satuan yang sudah di-link ke
+                  // produk ini; kalau produknya tak dikenal, pakai master penuh.
+                  const opsi = b.opsi.length ? b.opsi : opsiSatuan;
+                  const nilai = opsi.includes(b.unit) ? b.unit : b.unit || opsi[0] || '';
+                  return (
                   <tr key={b.productId + i} className="border-t border-zinc-100">
                     <td className="px-2 py-2 text-zinc-400">{i + 1}</td>
                     <td className="px-2 py-2 font-medium">{b.name}</td>
-                    <td className="px-2 py-2 text-zinc-600">{b.unit}</td>
+                    <td className="px-2 py-1">
+                      <select
+                        className="w-full cursor-pointer rounded-md border border-transparent bg-transparent px-1.5 py-1 text-zinc-600 transition hover:border-zinc-300 focus:border-[#1b5fa8] focus:bg-white"
+                        value={nilai}
+                        aria-label={`Satuan ${b.name}`}
+                        onChange={(e) => ubah(i, { unit: e.target.value })}
+                      >
+                        {nilai && !opsi.includes(nilai) ? (
+                          <option value={nilai}>{nilai}</option>
+                        ) : null}
+                        {opsi.map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-2 py-2">
                       <RupiahInput
                         value={b.cost}
@@ -467,7 +516,8 @@ export default function PembelianScreen() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {!baris.length ? (
                   <tr>
                     <td colSpan={7} className="px-2 py-6 text-center text-[12px] text-zinc-400">
@@ -562,7 +612,24 @@ export default function PembelianScreen() {
           </div>
           <div>
             <label className="label">Satuan</label>
-            <input className="input" value={baru.unit} onChange={(e) => setBaru({ ...baru, unit: e.target.value })} />
+            <select
+              className="input cursor-pointer"
+              value={baru.unit}
+              aria-label="Satuan"
+              onChange={(e) => setBaru({ ...baru, unit: e.target.value })}
+            >
+              {!opsiSatuan.includes(baru.unit) && baru.unit ? (
+                <option value={baru.unit}>{baru.unit}</option>
+              ) : null}
+              {opsiSatuan.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-zinc-400">
+              Diambil dari Pengaturan &gt; Satuan; tidak bisa diketik sendiri.
+            </p>
           </div>
           <div>
             <label className="label">Modal (Rp)</label>
