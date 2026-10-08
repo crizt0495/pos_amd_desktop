@@ -9,7 +9,6 @@ import {
   FilePlus2,
   List,
   Loader2,
-  Lock,
   Pencil,
   Printer,
   Trash2,
@@ -46,14 +45,12 @@ import {
   labelStrukPaten,
   patenAdaNilai,
   patenBerlaku,
-  ringkasanPaten,
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { bacaPrinterSettings } from '@/lib/printerSettings';
 import { cetakStrukBluetooth } from '@/lib/bluetoothPrinter';
 import { useToast } from '@/components/Toast';
-import { BigTotalDisplay } from '@/components/BigTotalDisplay';
 import { Modal } from '@/components/Modal';
 import { ModalBayar, type ShortcutBayar } from '@/components/ModalBayar';
 import { ModalListBarang } from '@/components/ModalListBarang';
@@ -66,7 +63,6 @@ import {
   type CartLine,
   type Customer,
   type CustomerInput,
-  type DiscountType,
   type KasirShift,
   type PaymentMethod,
   type Product,
@@ -96,8 +92,6 @@ type Pending = {
   at: string;
   customer: string;
   lines: CartLine[];
-  diskonTipe?: DiscountType;
-  diskonNilai?: number;
 };
 
 /* ------------------------------ komponen ------------------------------ */
@@ -225,35 +219,12 @@ export default function KasirScreen() {
   const [shiftExpected, setShiftExpected] = React.useState<number | null>(null);
   const shiftGuard = useButtonGuard();
 
-  /* ------------------ diskon default (isi kolom Potongan) -------------- */
-  // 'fixed' (Rp) atau 'percent' (%). Nilai ini TIDAL dipotong di level total
-  // transaksi — ia hanya mengisi kolom POTONGAN tiap item yang baru masuk
-  // keranjang, jadi kasir tak perlu edit manual kolom itu lagi.
-  const [diskonTipe, setDiskonTipe] = React.useState<'fixed' | 'percent'>('fixed');
-  const [diskonNilai, setDiskonNilai] = React.useState<number>(0);
-  // Kolom POTONGAN di tabel mengikuti mode diskon header (satu toggle untuk
-  // form atas & tabel), sehingga nilai yang tampil selalu dalam satuan yang
-  // sedang diketik kasir.
-  const modePotongan: 'rp' | 'pct' = diskonTipe === 'percent' ? 'pct' : 'rp';
-
   /* ------------------- diskon paten (dikunci dari Pengaturan) ----------- */
   // Owners toko bisa menetapkan diskon tetap di Pengaturan > Diskon. Kalau
-  // aktif, form "Diskon Item" di bawah terkunci (badge "Paten dari Setting")
-  // dan kolom Potongan tiap item baru langsung terisi nilai paten.
+  // aktif & produk masuk cakupan, kolom POTONGAN baris baru langsung terisi
+  // nilai paten. Satu-satunya tempat mengubah potongan adalah kolom POTONGAN
+  // di tabel — tidak ada lagi form "Diskon Item" di atas.
   const [paten, setPaten] = React.useState<DiskonPaten>(DISKON_PATEN_AWAL);
-  // Ref supaya resetForm & aset tombol tak perlu bergantung pada config.
-  const patenRef = React.useRef<DiskonPaten>(DISKON_PATEN_AWAL);
-  patenRef.current = paten;
-  /** Terapkan config paten ke form Diskon: aktif -> terkunci, nonaktif -> 0. */
-  const terapkanPaten = React.useCallback((c: DiskonPaten) => {
-    if (c.aktif) {
-      setDiskonTipe(c.tipe === 'pct' ? 'percent' : 'fixed');
-      setDiskonNilai(c.tipe === 'pct' ? Math.min(Math.max(Math.floor(c.nilai), 0), 100) : Math.max(c.nilai, 0));
-    } else {
-      setDiskonTipe('fixed');
-      setDiskonNilai(0);
-    }
-  }, []);
 
   const flashTimer = React.useRef<number | null>(null);
   const [flashKey, setFlashKey] = React.useState<string | null>(null);
@@ -262,14 +233,9 @@ export default function KasirScreen() {
   // kasir tak perlu reload, dan mematikan paten langsung mengembalikan form
   // ke mode manual (nilai 0).
   React.useEffect(() => {
-    const awal = bacaDiskonPaten();
-    setPaten(awal);
-    terapkanPaten(awal);
-    return dengarDiskonPaten((c) => {
-      setPaten(c);
-      terapkanPaten(c);
-    });
-  }, [terapkanPaten]);
+    setPaten(bacaDiskonPaten());
+    return dengarDiskonPaten((c) => setPaten(c));
+  }, []);
 
   /* ------------------------------ turunan ----------------------------- */
   const totals = hitungTotal(lines);
@@ -289,16 +255,6 @@ export default function KasirScreen() {
       ),
     [lines],
   );
-  // Ringkasan diskon default yang sedang aktif, buat info di bawah input.
-  const labelDiskonDefault =
-    diskonNilai > 0
-      ? diskonTipe === 'percent'
-        ? `${Math.min(Math.floor(diskonNilai), 100)}% per item baru`
-        : `${rupiah(diskonNilai)} per item baru`
-      : '';
-  // Paten aktif = form Diskon terkunci; teks badge di bawah input.
-  const patenHidup = paten.aktif;
-  const ringkasanPatenHeader = patenHidup ? ringkasanPaten(paten) : '';
   const diskonTidakSah = potonganBarisTidakSah;
   const isTunai = method === 'cash';
   const bayarNominal = parseRupiah(bayarTeks) || 0;
@@ -393,13 +349,10 @@ export default function KasirScreen() {
    * `satuanAwal` dipakai saat barcode yang dipindai milik satuan non-dasar
    * (mis. barcode Dus) supaya baris langsung memakai harga varian itu.
    *
-   * Potongan baris langsung diisi dari "Diskon" form header: Rp 500 -> setiap
-   * item baru masuk dengan Potongan 500, % 10 -> 10% dari harga x qty. Nilai
-   * dibatasi ke harga x qty sehingga baris tak pernah jadi minus. Baris yang
-   * SUDAH ada di tabel tidak ikut berubah saat kasir mengubah diskon header.
-   *
-   * Kalau Diskon Paten aktif, cakupannya yang menentukan: produk di luar
-   * cakupan (mis. kategori lain) masuk dengan Potongan 0.
+   * Potongan baris mengikuti Diskon Paten dari Pengaturan: kalau aktif dan
+   * produk masuk cakupan, kolom POTONGAN baris baru langsung terisi nilai
+   * paten (kasir tetap bisa mengubahnya manual di tabel). Produk di luar
+   * cakupan masuk tanpa potongan.
    */
   function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
     const units = satuanOptions(p, opsiSatuan);
@@ -412,11 +365,11 @@ export default function KasirScreen() {
     const q = Math.max(1, Math.floor(qty ?? itemQty) || 1);
     const nilaiBaris = { price: harga.harga_jual, qty: q };
 
-    // Diskon Paten: kalau produk ini di luar cakupan, baris masuk tanpa
-    // potongan (nilai 0) walau form diskonnya terisi. Saat Paten nonaktif,
-    // diskon manual dari form tetap harus diterapkan ke baris baru.
+    // Diskon Paten (Pengaturan > Diskon) langsung mengisi kolom POTONGAN
+    // baris baru; produk di luar cakupan masuk tanpa potongan.
     const dariPaten = patenAdaNilai(paten) && patenBerlaku(paten, p);
-    const nilaiSeed = patenHidup ? (dariPaten ? diskonNilai : 0) : diskonNilai;
+    const tipePaten: 'fixed' | 'percent' = paten.tipe === 'pct' ? 'percent' : 'fixed';
+    const nilaiPaten = Math.max(0, Number(paten.nilai) || 0);
 
     setLines((prev) =>
       gabungKeranjang(prev, {
@@ -426,12 +379,12 @@ export default function KasirScreen() {
         price: harga.harga_jual,
         cost: harga.harga_beli,
         qty: q,
-        discount: potonganDariDefault(nilaiBaris, diskonTipe, nilaiSeed),
+        discount: dariPaten ? potonganDariDefault(nilaiBaris, tipePaten, nilaiPaten) : 0,
         // Mode %: simpan persennya supaya kolom tabel menampilkan satuan yang
         // sama (dan tetap ikut terhitung ulang saat qty/harga berubah).
         potonganPct:
-          modePotongan === 'pct' && nilaiSeed > 0
-            ? Math.min(100, Math.max(0, Math.floor(diskonNilai)))
+          dariPaten && tipePaten === 'percent' && nilaiPaten > 0
+            ? Math.min(100, Math.max(0, Math.floor(nilaiPaten)))
             : null,
         // Struk item ini menulis label paten, bukan "Pot/Diskon" biasa.
         potonganLabel: dariPaten ? labelStrukPaten(paten) : null,
@@ -719,7 +672,7 @@ export default function KasirScreen() {
       );
       const next = {
         ...cur,
-        potonganPct: pct || null,
+        potonganPct: pct,
         // Nominal yang sudah ada dipertahankan (bukan dibulatkan ulang dari
         // persen) supaya blur tidak mengubah uang yang dipotong.
         discount: dariPct ? potonganDariPct(cur, pct) : cur.discount,
@@ -732,27 +685,26 @@ export default function KasirScreen() {
   }, []);
 
   /**
-   * Ganti mode diskon (Rp / %) pada form header. Sekaligus mengganti satuan
-   * kolom POTONGAN di tabel, karena keduanya satu toggle. Nilai direset ke 0
-   * supaya tidak salah baca sisa nominal jadi persen.
-   * Baris yang sudah ada di tabel TIDAK diubah — nominalnya tetap.
+   * Ganti mode potongan SATU baris (Rp <-> %) langsung dari toggle di tabel.
+   * Nilai efektif dipertahankan: pindah ke % memakai persen setara dari nominal
+   * sekarang, pindah ke Rp mengunci nominal efektif sekarang.
    */
-  const pilihDiskonTipe = React.useCallback((t: 'fixed' | 'percent') => {
-    setDiskonTipe(t);
-    setDiskonNilai(0);
-  }, []);
-
-  /**
-   * Kunci nilai diskon saat blur/Enter: minimal 0, persen maksimal 100.
-   * Nominal TIDAK dibatasi ke subtotal keranjang — diskon sering diketik dulu
-   * (sebelum barang di-scan) dan otomatis dipotong ke harga x qty per baris.
-   */
-  const komitDiskonDefault = React.useCallback(() => {
-    setDiskonNilai((prev) => {
-      const v = Math.max(0, Math.floor(Number(prev) || 0));
-      return diskonTipe === 'percent' ? Math.min(v, 100) : v;
+  const gantiModePotongan = React.useCallback((i: number, m: 'rp' | 'pct') => {
+    setLines((prev) => {
+      const cur = prev[i];
+      if (!cur) return prev;
+      const sudahPct = cur.potonganPct != null;
+      if ((m === 'pct') === sudahPct) return prev;
+      const copy = [...prev];
+      if (m === 'pct') {
+        const pct = Math.min(Math.max(0, Math.floor(persenPotongan(cur) ?? 0)), 100);
+        copy[i] = { ...cur, potonganPct: pct, discount: potonganDariPct(cur, pct) };
+      } else {
+        copy[i] = { ...cur, potonganPct: null, discount: potonganEfektif(cur) };
+      }
+      return copy;
     });
-  }, [diskonTipe]);
+  }, []);
 
   /** Ganti satuan: H. Jual & H. Pokok ikut berubah sesuai varian satuan itu. */
   const ubahSatuan = React.useCallback((i: number, satuan: string) => {
@@ -796,13 +748,9 @@ export default function KasirScreen() {
     setMethod('cash');
     setBayarTeks('');
     setCatatanModal('');
-    // Transaksi selesai -> diskon manual kembali 0, TAPI kalau Diskon Paten
-    // aktif nilainya langsung dipasang lagi (bukan 0) supaya kasir tak perlu
-    // menyetel ulang tiap pelanggan.
-    terapkanPaten(patenRef.current);
     void nextInvoicePreview().then(setInvoiceNo);
     setTimeout(fokusKode, 30);
-  }, [resetCart, fokusKode, terapkanPaten]);
+  }, [resetCart, fokusKode]);
 
   function simpanPendingSekarang() {
     if (!lines.length) return;
@@ -818,8 +766,6 @@ export default function KasirScreen() {
           at: new Date().toLocaleString('id-ID'),
           customer,
           lines,
-          diskonTipe,
-          diskonNilai,
         };
         simpanPending([p, ...pending]);
         setSavePendOpen(false);
@@ -839,12 +785,6 @@ export default function KasirScreen() {
   function lanjutPending(p: Pending) {
     setLines(p.lines);
     setCustomer(p.customer);
-    // Paten adalah aturan toko yang terkunci — kalau aktif, Snapshot diskon
-    // pending tak boleh menimpanya (formnya terkunci, jadi tak bisa diubah).
-    if (!patenRef.current.aktif) {
-      if (p.diskonTipe === 'percent' || p.diskonTipe === 'fixed') setDiskonTipe(p.diskonTipe);
-      if (typeof p.diskonNilai === 'number') setDiskonNilai(p.diskonNilai);
-    }
     setPendListOpen(false);
     setTimeout(fokusKode, 30);
     toast.info('Pending dilanjutkan', p.note);
@@ -905,8 +845,8 @@ export default function KasirScreen() {
     }
     if (diskonTidakSah) {
       toast.error(
-        'Diskon tidak boleh melebihi subtotal',
-        'Periksa kolom Diskon/Potongan, lalu tekan Tab/Enter agar nilainya dikunci.',
+        'Potongan tidak boleh melebihi subtotal',
+        'Periksa kolom Potongan, lalu tekan Tab/Enter agar nilainya dikunci.',
       );
       return;
     }
@@ -925,8 +865,8 @@ export default function KasirScreen() {
     if (!lines.length) return;
     if (diskonTidakSah) {
       toast.error(
-        'Diskon tidak boleh melebihi subtotal',
-        'Periksa kolom Diskon/Potongan di tabel keranjang.',
+        'Potongan tidak boleh melebihi subtotal',
+        'Periksa kolom Potongan di tabel keranjang.',
       );
       return;
     }
@@ -1427,96 +1367,6 @@ export default function KasirScreen() {
             />
           </div>
 
-          <div className="w-[264px]">
-            <span className="frm-label flex items-center gap-1.5">
-              Diskon Item
-              {patenHidup ? (
-                <span
-                  title="Dikunci dari Pengaturan &gt; Diskon"
-                  className="inline-flex items-center gap-1 rounded-full bg-[#fff4d6] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[#b8770a] ring-1 ring-[#f2d99a]"
-                >
-                  <Lock className="h-2.5 w-2.5" />
-                  Paten
-                </span>
-              ) : null}
-            </span>
-            <div className="flex items-stretch gap-1">
-              <div
-                className={`flex shrink-0 overflow-hidden rounded border border-[#cdd8e6] text-[11px] font-bold ${
-                  patenHidup ? 'bg-[#f1f4f8]' : 'bg-white'
-                }`}
-              >
-                {(['fixed', 'percent'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => pilihDiskonTipe(t)}
-                    disabled={patenHidup}
-                    aria-pressed={diskonTipe === t}
-                    title={
-                      patenHidup
-                        ? 'Satuan potongan dikunci dari Pengaturan'
-                        : t === 'fixed'
-                          ? 'Potongan nominal (Rp) untuk item baru'
-                          : 'Potongan persen (%) untuk item baru'
-                    }
-                    className={`px-2 transition ${
-                      diskonTipe === t
-                        ? 'bg-[#1b5fa8] text-white'
-                        : 'text-[#5b6b80] hover:bg-[#eef4fb]'
-                    }`}
-                  >
-                    {t === 'fixed' ? 'Rp' : '%'}
-                  </button>
-                ))}
-              </div>
-
-              {diskonTipe === 'fixed' ? (
-                <RupiahInput
-                  id="diskon"
-                  ariaLabel="Diskon default item baru (nominal)"
-                  disabled={patenHidup}
-                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8] disabled:bg-[#f1f4f8] disabled:text-[#5b6b80]"
-                  value={diskonNilai}
-                  onChange={(v) => setDiskonNilai(Math.max(0, v))}
-                  onBlur={komitDiskonDefault}
-                  onEnter={komitDiskonDefault}
-                  placeholder="0"
-                />
-              ) : (
-                <input
-                  id="diskon"
-                  aria-label="Diskon default item baru (persen)"
-                  type="number"
-                  min={0}
-                  max={100}
-                  disabled={patenHidup}
-                  className="h-8 min-w-0 flex-1 rounded border border-[#cdd8e6] px-1.5 text-right text-[12px] outline-none transition focus:border-[#1b5fa8] disabled:bg-[#f1f4f8] disabled:text-[#5b6b80]"
-                  value={diskonNilai || ''}
-                  onChange={(e) => setDiskonNilai(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                  onBlur={komitDiskonDefault}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      komitDiskonDefault();
-                    }
-                  }}
-                  onFocus={(e) => e.currentTarget.select()}
-                  placeholder="0"
-                />
-              )}
-            </div>
-            {patenHidup ? (
-              <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#b8770a]">
-                Paten dari Pengaturan · {ringkasanPatenHeader}
-              </p>
-            ) : labelDiskonDefault ? (
-              <p className="mt-1 text-[10.5px] font-semibold leading-tight text-[#1b5fa8]">
-                {labelDiskonDefault}
-              </p>
-            ) : null}
-          </div>
-
           <div className="min-w-[180px] flex-1">
             <label className="frm-label" htmlFor="ket">
               Keterangan
@@ -1547,40 +1397,13 @@ export default function KasirScreen() {
               <th className="th w-[96px] bg-[#eef2ff] text-right">H. Pokok</th>
               <th className="th w-[104px] bg-[#eef2ff] text-right">H. Jual</th>
               <th className="th w-[88px] bg-[#eef2ff] text-right">Jumlah</th>
-              <th className="th w-[128px] bg-[#eef2ff] text-right">
-                <span className="inline-flex items-center justify-end gap-1">
-                  <span>Potongan</span>
-                  {/* Satu toggle untuk form Diskon di atas & kolom ini, jadi
-                      satuan yang diketik kasir selalu sama di keduanya. */}
-                  <span
-                    className={`inline-flex overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold ${
-                      patenHidup ? 'bg-[#f1f4f8]' : ''
-                    }`}
-                  >
-                    {(['rp', 'pct'] as const).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => pilihDiskonTipe(m === 'rp' ? 'fixed' : 'percent')}
-                        disabled={patenHidup}
-                        aria-pressed={modePotongan === m}
-                        title={
-                          patenHidup
-                            ? 'Satuan kolom dikunci dari Pengaturan'
-                            : m === 'rp'
-                              ? 'Kolom Potongan nominal (Rp)'
-                              : 'Kolom Potongan persen (%)'
-                        }
-                        className={`px-1.5 transition ${
-                          modePotongan === m
-                            ? 'bg-[#1b5fa8] text-white'
-                            : 'text-[#5b6b80] hover:bg-[#eef4fb]'
-                        }`}
-                      >
-                        {m === 'rp' ? 'Rp' : '%'}
-                      </button>
-                    ))}
-                  </span>
+              <th className="th w-[168px] bg-[#eef2ff] text-right">
+                <span
+                  className="inline-flex items-center justify-end gap-1"
+                  title="Atur potongan per baris: tombol Rp untuk nominal, % untuk persen dari H. Jual × Jumlah"
+                >
+                  Potongan
+                  <span className="text-[9.5px] font-semibold text-[#93a5b9]">Rp / % per baris</span>
                 </span>
               </th>
               <th className="th w-[120px] bg-[#eef2ff] text-right">Jumlah Akhir</th>
@@ -1607,10 +1430,8 @@ export default function KasirScreen() {
               const jumlah = jumlahBaris(l);
               const rugi = l.price < l.cost;
               const kilat = l.product_id === flashKey;
-              // Persen yang tampil di mode %: pakai yang tersimpan di baris,
-              // atau diturunkan dari nominal yang sudah ada (baris lama tak
-              // diubah hanya karena kasir menukar Rp <-> % di form atas).
-              const persen = l.potonganPct ?? persenPotongan(l);
+              // Mode potongan baris ini: ada `potonganPct` = % , selain itu Rp.
+              const modeBaris: 'rp' | 'pct' = l.potonganPct != null ? 'pct' : 'rp';
               return (
                 <tr
                   key={`${l.product_id ?? l.name}-${i}`}
@@ -1672,64 +1493,87 @@ export default function KasirScreen() {
                     />
                   </td>
                   <td className="td p-0">
-                    {modePotongan === 'pct' ? (
-                      <>
-                        <div className="relative">
-                          <input
-                            data-cell="disc"
-                            aria-label={`Potongan ${l.name}`}
-                            type="number"
-                            min={0}
-                            max={100}
-                            className={`cell tnum w-full pr-6 text-right ${
-                              (persen ?? 0) > 100
-                                ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
-                                : ''
-                            }`}
-                            value={persen ?? ''}
-                            onChange={(e) => ubahPotonganPct(i, Number(e.target.value))}
-                            onBlur={() => komitPotonganPct(i)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                komitPotonganPct(i);
-                              }
-                            }}
-                            onFocus={(e) => e.currentTarget.select()}
-                            placeholder="0"
-                          />
-                          <span className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center text-[10.5px] font-bold text-[#93a5b9]">
-                            %
-                          </span>
-                        </div>
-                        {(persen ?? 0) > 100 ? (
-                          <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
-                            Max: 100%
-                          </p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <RupiahInput
-                          dataCell="disc"
-                          ariaLabel={`Potongan ${l.name}`}
-                          className={`cell text-right ${
-                            (Number(l.discount) || 0) > potonganMax(l)
-                              ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
-                              : ''
-                          }`}
-                          value={l.discount || 0}
-                          onChange={(v) => ubahPotongan(i, v)}
-                          onBlur={() => komitPotongan(i)}
-                          onEnter={() => komitPotongan(i)}
-                        />
-                        {(Number(l.discount) || 0) > potonganMax(l) ? (
-                          <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
-                            Max: {rupiah(potonganMax(l))}
-                          </p>
-                        ) : null}
-                      </>
-                    )}
+                    <div className="flex items-stretch gap-1 px-1 py-0.5">
+                      <div className="flex shrink-0 overflow-hidden rounded border border-[#cdd8e6] text-[9.5px] font-bold">
+                        {(['rp', 'pct'] as const).map((m) => {
+                          const aktif = modeBaris === m;
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              aria-pressed={aktif}
+                              title={m === 'rp' ? 'Potong nominal (Rp)' : 'Potong persen (%) dari H. Jual × Jumlah'}
+                              onClick={() => gantiModePotongan(i, m)}
+                              className={`px-1.5 transition ${
+                                aktif ? 'bg-[#1b5fa8] text-white' : 'text-[#5b6b80] hover:bg-[#eef4fb]'
+                              }`}
+                            >
+                              {m === 'rp' ? 'Rp' : '%'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        {modeBaris === 'pct' ? (
+                          <>
+                            <div className="relative">
+                              <input
+                                data-cell="disc"
+                                aria-label={`Potongan ${l.name}`}
+                                type="number"
+                                min={0}
+                                max={100}
+                                className={`cell tnum w-full pr-6 text-right ${
+                                  (l.potonganPct ?? 0) > 100
+                                    ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
+                                    : ''
+                                }`}
+                                value={l.potonganPct ?? ''}
+                                onChange={(e) => ubahPotonganPct(i, Number(e.target.value))}
+                                onBlur={() => komitPotonganPct(i)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    komitPotonganPct(i);
+                                  }
+                                }}
+                                onFocus={(e) => e.currentTarget.select()}
+                                placeholder="0"
+                              />
+                              <span className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center text-[10.5px] font-bold text-[#93a5b9]">
+                                %
+                              </span>
+                            </div>
+                            {(l.potonganPct != null && l.potonganPct > 100) ? (
+                              <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
+                                Max: 100%
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <RupiahInput
+                              dataCell="disc"
+                              ariaLabel={`Potongan ${l.name}`}
+                              className={`cell text-right ${
+                                (Number(l.discount) || 0) > potonganMax(l)
+                                  ? '!border-[1.5px] !border-[#e03131] bg-[#fff5f5] !text-[#e03131]'
+                                  : ''
+                              }`}
+                              value={l.discount || 0}
+                              onChange={(v) => ubahPotongan(i, v)}
+                              onBlur={() => komitPotongan(i)}
+                              onEnter={() => komitPotongan(i)}
+                            />
+                            {(Number(l.discount) || 0) > potonganMax(l) ? (
+                              <p className="px-2 pb-1 text-[10.5px] font-semibold leading-tight text-[#e03131]">
+                                Max: {rupiah(potonganMax(l))}
+                              </p>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="td tnum text-right font-bold text-[#1b3a5c]">{rupiah(jumlah)}</td>
                   <td className="td text-center">
@@ -1797,9 +1641,6 @@ export default function KasirScreen() {
             <div className="flex items-center gap-2">
               <dt className="text-[#5b6b80]">
                 Potongan
-                {labelDiskonDefault ? (
-                  <span className="ml-1 text-[10px] text-[#93a5b9]">(default item baru)</span>
-                ) : null}
               </dt>
               <dd className="tnum font-semibold text-[#c92a2a]">
                 {totalPotongan > 0 ? `- ${rupiah(totalPotongan)}` : rupiah(0)}
@@ -1814,7 +1655,7 @@ export default function KasirScreen() {
             {diskonTidakSah ? (
               <p className="flex items-center gap-1.5 text-[11px] font-bold text-[#e03131]">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Diskon melebihi subtotal — periksa kolom Diskon/Potongan
+                Potongan tidak boleh melebihi subtotal — periksa kolom Potongan.
               </p>
             ) : null}
           </dl>
