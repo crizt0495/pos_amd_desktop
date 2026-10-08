@@ -9,6 +9,7 @@ import {
   LogOut,
   Maximize2,
   Minus,
+  Monitor,
   Receipt,
   Settings,
   Store,
@@ -28,6 +29,7 @@ const MODULES = [
   { href: '/produk', label: 'Master Data', sub: 'Data Barang', Icon: Boxes },
   { href: '/kasir', label: 'Penjualan', sub: 'Penjualan Kasir', Icon: Receipt },
   { href: '/laporan', label: 'Laporan', sub: 'Laporan Penjualan', Icon: BarChart3 },
+  { href: '/monitoring', label: 'Monitoring', sub: 'Pemantauan Toko', Icon: Monitor },
 ] as const;
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
