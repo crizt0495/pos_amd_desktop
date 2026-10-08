@@ -390,9 +390,10 @@ export default function KasirScreen() {
     const nilaiBaris = { price: harga.harga_jual, qty: q };
 
     // Diskon Paten: kalau produk ini di luar cakupan, baris masuk tanpa
-    // potongan (nilai 0) walau form diskonnya terisi.
+    // potongan (nilai 0) walau form diskonnya terisi. Saat Paten nonaktif,
+    // diskon manual dari form tetap harus diterapkan ke baris baru.
     const dariPaten = patenAdaNilai(paten) && patenBerlaku(paten, p);
-    const nilaiSeed = dariPaten ? diskonNilai : 0;
+    const nilaiSeed = patenHidup ? (dariPaten ? diskonNilai : 0) : diskonNilai;
 
     setLines((prev) =>
       gabungKeranjang(prev, {
@@ -406,7 +407,7 @@ export default function KasirScreen() {
         // Mode %: simpan persennya supaya kolom tabel menampilkan satuan yang
         // sama (dan tetap ikut terhitung ulang saat qty/harga berubah).
         potonganPct:
-          dariPaten && modePotongan === 'pct' && nilaiSeed > 0
+          modePotongan === 'pct' && nilaiSeed > 0
             ? Math.min(100, Math.max(0, Math.floor(diskonNilai)))
             : null,
         // Struk item ini menulis label paten, bukan "Pot/Diskon" biasa.
@@ -920,7 +921,16 @@ export default function KasirScreen() {
       // sebelum dikirim ke API/RPC — keduanya tidak ada kolomnya di database.
       const linesAman = lines.map((l) => {
         const { potonganPct: _pct, potonganLabel: _label, ...rest } = l;
-        return { ...rest, discount: potonganEfektif(l) };
+        const satuanTol = l.unit?.trim().toLowerCase();
+        const varian = l.variants?.find(
+          (v) => v.satuan?.trim().toLowerCase() === satuanTol,
+        );
+        return {
+          ...rest,
+          discount: potonganEfektif(l),
+          // Konversi dikirim ke DB: stok & retur/void menghitung pakai satuan dasar.
+          konversi: varian ? Number(varian.konversi) || 1 : 1,
+        };
       });
 
       const res = await transactionsApi.create({

@@ -73,7 +73,9 @@ create table if not exists public.kasir_transaction_items (
   cost           numeric not null default 0,
   qty            numeric not null default 1,
   discount       numeric not null default 0,
-  subtotal       numeric not null default 0
+  subtotal       numeric not null default 0,
+  -- Konversi satuan jual ke satuan dasar (Dus/6 = 6). Dipakai saatpotong/kembalikan stok.
+  konversi       numeric not null default 1
 );
 
 create index if not exists kasir_items_transaction on public.kasir_transaction_items (transaction_id);
@@ -91,6 +93,7 @@ alter table public.kasir_products     add column if not exists satuan_list   jso
 alter table public.kasir_products     add column if not exists variants       jsonb not null default '[]';
 alter table public.kasir_transactions add column if not exists customer_name text;
 alter table public.kasir_transactions add column if not exists shift_id       uuid;
+alter table public.kasir_transaction_items add column if not exists konversi numeric not null default 1;
 
 create index if not exists kasir_transactions_shift on public.kasir_transactions (user_id, shift_id);
 
@@ -387,8 +390,8 @@ begin
   select count(*) into v_n
     from public.kasir_transactions
    where user_id = v_user
-     and invoice_no like 'INV-' || to_char(now(), 'YYYYMMDD') || '-%';
-  v_invoice := 'INV-' || to_char(now(), 'YYYYMMDD') || '-'
+     and invoice_no like 'INV-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-%';
+  v_invoice := 'INV-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-'
              || lpad((v_n + 1)::text, 4, '0');
 
   insert into public.kasir_transactions
@@ -406,7 +409,7 @@ begin
   for v_item in select * from jsonb_array_elements(p_lines) loop
     insert into public.kasir_transaction_items
       (user_id, transaction_id, product_id, barcode, product_name, price, cost,
-       qty, discount, subtotal)
+       qty, discount, subtotal, konversi)
     values
       (v_user, v_tx_id,
        nullif(coalesce((v_item.value->>'product_id')::text, ''), '')::uuid,
@@ -418,12 +421,15 @@ begin
        coalesce((v_item.value->>'discount')::numeric, 0),
        greatest(round(coalesce((v_item.value->>'price')::numeric, 0)
             * greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0), 2)
-            - coalesce((v_item.value->>'discount')::numeric, 0), 0));
+            - coalesce((v_item.value->>'discount')::numeric, 0), 0),
+       coalesce((v_item.value->>'konversi')::numeric, 1));
 
-    -- potong stok hanya untuk produk terdaftar + catat mutasi ke kartu stok
+    -- potong stok hanya untuk produk terdaftar + catat mutasi ke kartu stok.
+    -- Konversi dipakai: jual 1 Dus mengurangi stok sebanyak konversi-nya.
     if coalesce((v_item.value->>'product_id')::text, '') <> '' then
       v_pid := nullif((v_item.value->>'product_id')::text, '')::uuid;
-      v_qty := greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0);
+      v_qty := greatest(coalesce((v_item.value->>'qty')::numeric, 1), 0)
+            * coalesce((v_item.value->>'konversi')::numeric, 1);
       select stock into v_sebelum
         from public.kasir_products
        where id = v_pid and user_id = v_user;
@@ -487,7 +493,7 @@ begin
        where id = v_item.product_id and user_id = v_user;
       if v_sebelum is not null then
         update public.kasir_products
-           set stock = v_sebelum + v_item.qty,
+           set stock = v_sebelum + (v_item.qty * coalesce(v_item.konversi, 1)),
                updated_at = now()
          where id = v_item.product_id and user_id = v_user
         returning stock into v_sesudah;
@@ -495,7 +501,7 @@ begin
           (user_id, product_id, tipe, qty, stok_sebelum, stok_sesudah,
            keterangan, ref_id, ref_tipe)
         values
-          (v_user, v_item.product_id, 'void', v_item.qty, v_sebelum, v_sesudah,
+          (v_user, v_item.product_id, 'void', v_item.qty * coalesce(v_item.konversi, 1), v_sebelum, v_sesudah,
            'Pembatalan ' || v_tx.invoice_no, v_tx.id, 'transaksi');
       end if;
     end if;
@@ -560,8 +566,8 @@ begin
   select count(*) into v_n
     from public.kasir_returns
    where user_id = v_user
-     and retur_no like 'RET-' || to_char(now(), 'YYYYMMDD') || '-%';
-  v_retur_no := 'RET-' || to_char(now(), 'YYYYMMDD') || '-'
+     and retur_no like 'RET-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-%';
+  v_retur_no := 'RET-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-'
              || lpad((v_n + 1)::text, 4, '0');
 
   insert into public.kasir_returns
@@ -618,7 +624,7 @@ begin
        where id = v_it.product_id and user_id = v_user;
       if v_sebelum is not null then
         update public.kasir_products
-           set stock = v_sebelum + v_qty,
+           set stock = v_sebelum + (v_qty * coalesce(v_it.konversi, 1)),
                updated_at = now()
          where id = v_it.product_id and user_id = v_user
         returning stock into v_sesudah;
@@ -626,7 +632,7 @@ begin
           (user_id, product_id, tipe, qty, stok_sebelum, stok_sesudah,
            keterangan, ref_id, ref_tipe)
         values
-          (v_user, v_it.product_id, 'retur', v_qty, v_sebelum, v_sesudah,
+          (v_user, v_it.product_id, 'retur', v_qty * coalesce(v_it.konversi, 1), v_sebelum, v_sesudah,
            'Retur ' || v_retur_no, v_retur_id, 'retur');
       end if;
     end if;
@@ -952,8 +958,8 @@ begin
 
   select count(*) into v_n from public.kasir_shifts
    where user_id = v_user
-     and shift_no like 'SHIFT-' || to_char(now(), 'YYYYMMDD') || '-%';
-  v_shift_no := 'SHIFT-' || to_char(now(), 'YYYYMMDD') || '-'
+     and shift_no like 'SHIFT-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-%';
+  v_shift_no := 'SHIFT-' || to_char(now() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD') || '-'
              || lpad((v_n + 1)::text, 4, '0');
 
   insert into public.kasir_shifts (user_id, cashier_name, shift_no, opening_cash)
@@ -977,6 +983,7 @@ declare
   v_shift    public.kasir_shifts%rowtype;
   v_masuk    numeric;
   v_expected numeric;
+  v_retur_cash numeric;
 begin
   select * into v_shift from public.kasir_shifts
    where id = p_shift_id and user_id = v_user;
@@ -991,7 +998,16 @@ begin
      and status = 'completed'
      and payment_method = 'cash';
 
-  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk, 2);
+  -- Kurangi pengembalian uang (retur) yang masih berasal dari transaksi shift
+  -- ini agar perkiraan kas kasir tidak melaporkan uang yang sudah dikembalikan.
+  select coalesce(sum(r.total), 0) into v_retur_cash
+    from public.kasir_returns r
+    join public.kasir_transactions t on t.id = r.transaction_id
+   where t.user_id = v_user
+     and t.shift_id = p_shift_id
+     and t.payment_method = 'cash';
+
+  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk - coalesce(v_retur_cash, 0), 2);
   return jsonb_build_object('expected', v_expected);
 end;
 $$;
@@ -1011,6 +1027,7 @@ declare
   v_shift    public.kasir_shifts%rowtype;
   v_masuk    numeric;
   v_expected numeric;
+  v_retur_cash numeric;
   v_actual   numeric;
 begin
   select * into v_shift from public.kasir_shifts
@@ -1029,7 +1046,16 @@ begin
      and status = 'completed'
      and payment_method = 'cash';
 
-  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk, 2);
+  -- Kurangi pengembalian uang (retur) yang masih berasal dari transaksi shift
+  -- ini agar perkiraan kas kasir tidak melaporkan uang yang sudah dikembalikan.
+  select coalesce(sum(r.total), 0) into v_retur_cash
+    from public.kasir_returns r
+    join public.kasir_transactions t on t.id = r.transaction_id
+   where t.user_id = v_user
+     and t.shift_id = p_shift_id
+     and t.payment_method = 'cash';
+
+  v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk - coalesce(v_retur_cash, 0), 2);
   v_actual   := round(coalesce(p_actual_cash, v_expected), 2);
 
   update public.kasir_shifts

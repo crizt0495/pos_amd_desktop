@@ -38,6 +38,36 @@ export function ReturModal({
   const guard = useButtonGuard();
   const [qty, setQty] = React.useState<Record<string, string>>({});
   const [note, setNote] = React.useState('');
+  // qty yang SUDAH diretur sebelumnya per baris item — dipakai untuk membatasi
+  // input supaya tidak kembali melebihi sisa terjual.
+  const [direturSebelumnya, setDireturSebelumnya] = React.useState<Record<string, number>>({});
+
+  React.useEffect(() => {
+    if (!open || !tx) {
+      setDireturSebelumnya({});
+      return;
+    }
+    let hidup = true;
+    void (async () => {
+      const res = await returnsApi.list({ transaction_id: tx.id });
+      if (!hidup || !res.ok) return;
+      const map: Record<string, number> = {};
+      for (const r of res.data ?? []) {
+        const its = await returnsApi.items(r.id);
+        if (its.ok) {
+          for (const it of its.data ?? []) {
+            if (it.transaction_item_id) {
+              map[it.transaction_item_id] = (map[it.transaction_item_id] ?? 0) + (Number(it.qty) || 0);
+            }
+          }
+        }
+      }
+      if (hidup) setDireturSebelumnya(map);
+    })();
+    return () => {
+      hidup = false;
+    };
+  }, [open, tx?.id]);
 
   // Reset isian tiap kali modal dibuka untuk transaksi (baru) tertentu.
   React.useEffect(() => {
@@ -51,8 +81,10 @@ export function ReturModal({
   const baris = items.map((it) => {
     const raw = (qty[it.id] ?? '').trim();
     const n = raw === '' ? 0 : Number(raw);
-    const valid = raw === '' ? true : Number.isFinite(n) && n >= 0 && n <= it.qty + 0.0001;
-    const efektif = raw === '' ? 0 : Math.min(Math.max(n || 0, 0), it.qty);
+    const sudahDiretur = direturSebelumnya[it.id] ?? 0;
+    const sisa = Math.max(0, it.qty - sudahDiretur);
+    const valid = raw === '' ? true : Number.isFinite(n) && n >= 0 && n <= sisa + 0.0001;
+    const efektif = raw === '' ? 0 : Math.min(Math.max(n || 0, 0), sisa);
     return {
       item: it,
       raw,

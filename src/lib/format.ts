@@ -340,20 +340,28 @@ export function hitungKembali(total: number, paid: number): number {
   return round2(Math.max(0, paid - total));
 }
 
-/** Gabungkan item yang sama (produk terdaftar berdasarkan id, manual berdasarkan nama). */
+/** Gabungkan item yang sama (produk terdaftar berdasarkan id, manual berdasarkan nama). Sama produk tidak otomatis sama: satuan/harga berbeda tidak boleh digabung. */
 export function gabungKeranjang(lines: CartLine[], incoming: CartLine): CartLine[] {
   const idx = lines.findIndex(
     (l) =>
-      (incoming.product_id && l.product_id === incoming.product_id) ||
-      (!incoming.product_id && l.barcode && l.barcode === incoming.barcode) ||
-      (!incoming.product_id && !l.product_id && l.name === incoming.name),
+      ((incoming.product_id && l.product_id === incoming.product_id) ||
+        (!incoming.product_id && l.barcode && l.barcode === incoming.barcode) ||
+        (!incoming.product_id && !l.product_id && l.name === incoming.name)) &&
+      l.unit.toLowerCase() === incoming.unit.toLowerCase() &&
+      l.price === incoming.price,
   );
 
   if (idx < 0) return [...lines, { ...incoming }];
 
   const next = [...lines];
   const line = next[idx]!;
-  const merged = { ...line, qty: round2(line.qty + incoming.qty) };
+  const qtyBaru = round2(line.qty + incoming.qty);
+  // Potongan mode % harus ikut terhitung ulang saat qty bergabung.
+  const discount =
+    line.potonganPct != null
+      ? round2(Math.min(Math.max(0, line.price * qtyBaru * Math.min(100, Math.max(0, line.potonganPct)) / 100), potonganMax({ price: line.price, qty: qtyBaru })))
+      : line.discount ?? 0;
+  const merged = { ...line, qty: qtyBaru, discount };
   next[idx] =
     typeof line.stock === 'number' ? { ...merged, qty: Math.min(merged.qty, Math.max(1, line.stock)) } : merged;
   return next;

@@ -279,7 +279,20 @@ export const productsApi = {
       }
       const cur = await productsApi.get(id);
       if (!cur.ok || !cur.data) return { ok: false, error: 'Produk tidak ditemukan.' };
-      return productsApi.update(id, { stock: Math.max(0, num(cur.data.stock) + num(delta)) });
+      const stokBaru = Math.max(0, num(cur.data.stock) + num(delta));
+        const upd = await productsApi.update(id, { stock: stokBaru });
+      if (!upd.ok) return upd;
+      // Tetap catat kartu stok walau RPC belum ada.
+      await createClient().from('kasir_stock_logs').insert({
+        user_id: (await createClient().auth.getUser()).data.user?.id ?? null,
+        product_id: id,
+        tipe: num(delta) >= 0 ? 'stok_masuk' : 'stok_keluar',
+        qty: num(delta),
+        stok_sebelum: num(cur.data.stock),
+        stok_sesudah: stokBaru,
+        keterangan: keterangan ?? 'Penyesuaian stok',
+      });
+      return upd;
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
@@ -398,8 +411,8 @@ export const transactionsApi = {
     customerName?: string;
     shiftId?: string | null;
   }): Promise<Result<CreatedTx>> {
-    try {
-      const { data: result, error } = await createClient().rpc('kasir_create_transaction', {
+    const panggil = async (pakaiShift: boolean) =>
+      createClient().rpc('kasir_create_transaction', {
         p_lines: data.lines,
         p_discount_type: data.discountType,
         p_discount_value: num(data.discountValue),
@@ -408,10 +421,16 @@ export const transactionsApi = {
         p_note: data.note ?? null,
         p_cashier_name: data.cashierName,
         p_customer_name: data.customerName ?? null,
-        // Hanya dikirim bila ada shift aktif — supaya pemanggilan tetap kompatibel
-        // dengan basis data versi 8-arg sebelum migrasi shift dijalankan.
-        ...(data.shiftId ? { p_shift_id: data.shiftId } : {}),
+        // Coba dengan shift dulu; gagal (DB versi 8-param) -> ulang tanpa p_shift_id.
+        ...(pakaiShift && data.shiftId ? { p_shift_id: data.shiftId } : {}),
       });
+    try {
+      let { data: result, error } = await panggil(Boolean(data.shiftId));
+      if (error && data.shiftId && /p_shift_id|PGRST202|function public\.kasir_create_transaction/i.test(error.message)) {
+        const fallback = await panggil(false);
+        result = fallback.data;
+        error = fallback.error;
+      }
       if (error) return { ok: false, error: error.message };
       const body = result as { transaction: Record<string, unknown>; totals?: Record<string, unknown>; changeDue?: number };
       return {
@@ -440,8 +459,8 @@ export const transactionsApi = {
       const limit = Math.min(Math.max(num(filter.limit) || 100, 1), 1000);
       const offset = Math.max(num(filter.offset) || 0, 0);
       let q = createClient().from('kasir_transactions').select('*');
-      if (filter.from) q = q.gte('created_at', `${filter.from}T00:00:00.000Z`);
-      if (filter.to) q = q.lte('created_at', `${filter.to}T23:59:59.999Z`);
+      if (filter.from) q = q.gte('created_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('created_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
       if (filter.status) q = q.eq('status', filter.status);
       const { data, error } = await q
         .order('created_at', { ascending: false })
@@ -456,8 +475,8 @@ export const transactionsApi = {
   async count(filter: { from?: string; to?: string; status?: string } = {}): Promise<Result<number>> {
     try {
       let q = createClient().from('kasir_transactions').select('id', { count: 'exact', head: true });
-      if (filter.from) q = q.gte('created_at', `${filter.from}T00:00:00.000Z`);
-      if (filter.to) q = q.lte('created_at', `${filter.to}T23:59:59.999Z`);
+      if (filter.from) q = q.gte('created_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('created_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
       if (filter.status) q = q.eq('status', filter.status);
       const { count, error } = await q;
       if (error) return { ok: false, error: error.message };
@@ -581,8 +600,8 @@ export const shiftsApi = {
     try {
       const limit = Math.min(Math.max(num(filter.limit) || 50, 1), 500);
       let q = createClient().from('kasir_shifts').select('*');
-      if (filter.from) q = q.gte('opened_at', `${filter.from}T00:00:00.000Z`);
-      if (filter.to) q = q.lte('opened_at', `${filter.to}T23:59:59.999Z`);
+      if (filter.from) q = q.gte('opened_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('opened_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
       const { data, error } = await q.order('opened_at', { ascending: false }).limit(limit);
       if (error) return { ok: false, error: rpcMsg(error, 'riwayat shift') };
       return { ok: true, data: (data ?? []).map((r) => mapShift(r as Record<string, unknown>)) };
@@ -595,7 +614,7 @@ export const shiftsApi = {
 /* ------------------------------- laporan ------------------------------ */
 
 function rangePayload(from?: string, to?: string): { p_from: string | null; p_to: string | null } {
-  return { p_from: from ?? null, p_to: to ?? null };
+  return { p_from: from ? new Date(`${from}T00:00:00`).toISOString() : null, p_to: to ? new Date(`${to}T23:59:59.999`).toISOString() : null };
 }
 
 export const reportsApi = {
@@ -836,12 +855,13 @@ const mapReturnItem = (r: Record<string, unknown>): ReturnItem => ({
 });
 
 export const returnsApi = {
-  async list(filter: { from?: string; to?: string; limit?: number } = {}): Promise<Result<ReturnRecord[]>> {
+  async list(filter: { from?: string; to?: string; limit?: number; transaction_id?: string } = {}): Promise<Result<ReturnRecord[]>> {
     try {
       const limit = Math.min(Math.max(num(filter.limit) || 100, 1), 1000);
       let q = createClient().from('kasir_returns').select('*');
-      if (filter.from) q = q.gte('created_at', `${filter.from}T00:00:00.000Z`);
-      if (filter.to) q = q.lte('created_at', `${filter.to}T23:59:59.999Z`);
+      if (filter.transaction_id) q = q.eq('transaction_id', filter.transaction_id);
+      if (filter.from) q = q.gte('created_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('created_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
       const { data, error } = await q.order('created_at', { ascending: false }).limit(limit);
       if (error) return { ok: false, error: rpcMsg(error, 'riwayat retur') };
       return { ok: true, data: (data ?? []).map((r) => mapReturn(r as Record<string, unknown>)) };
