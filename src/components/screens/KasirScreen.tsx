@@ -1285,14 +1285,6 @@ export default function KasirScreen() {
         </span>
       </div>
 
-      {/* ==================== TOTAL BESAR UNTUK PELANGGAN =============== */}
-      {/* Angka live dari keranjang; setelah transaksi tersimpan tampil 2 baris
-          (Total + Kembali) sampai modal struk ditutup. */}
-      <BigTotalDisplay
-        total={success ? success.receipt.total : totalTagihan}
-        kembali={success ? success.change : null}
-      />
-
       {/* ====================== HEADER FORM (Kode Item) ================= */}
       <div className="shrink-0 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2.5">
         <div className="flex flex-wrap items-end gap-2">
@@ -1656,6 +1648,7 @@ export default function KasirScreen() {
                     <input
                       className="cell tnum text-right"
                       data-cell="qty"
+                      data-row={i}
                       type="number"
                       min={1}
                       max={typeof l.stock === 'number' ? l.stock : undefined}
@@ -1729,7 +1722,18 @@ export default function KasirScreen() {
                     <div className="flex items-center justify-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setActiveRow((cur) => (cur === i ? null : i))}
+                        onClick={() => {
+                          setActiveRow(i);
+                          // Auto-fokus ke input Qty baris ini supaya
+                          // kasir langsung bisa mengetik.
+                          setTimeout(() => {
+                            const el = document.querySelector<HTMLInputElement>(
+                              `input[data-cell="qty"][data-row="${i}"]`,
+                            );
+                            el?.focus();
+                            el?.select();
+                          }, 0);
+                        }}
                         title="Edit baris ini"
                         aria-label={`Edit baris ${i + 1}`}
                         className={`grid h-6 w-6 place-items-center rounded border transition ${

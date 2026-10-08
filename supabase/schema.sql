@@ -1166,12 +1166,39 @@ create index if not exists kasir_purchase_items_purchase on public.kasir_purchas
 alter table public.kasir_suppliers enable row level security;
 alter table public.kasir_purchases enable row level security;
 alter table public.kasir_purchase_items enable row level security;
-revoke all on public.kasir_suppliers from anon, authenticated;
-revoke all on public.kasir_purchases from anon, authenticated;
-revoke all on public.kasir_purchase_items from anon, authenticated;
-grant select, insert, update, delete on public.kasir_suppliers to service_role;
-grant select, insert, update, delete on public.kasir_purchases to service_role;
-grant select, insert, update, delete on public.kasir_purchase_items to service_role;
+revoke all on public.kasir_suppliers from anon;
+revoke all on public.kasir_purchases from anon;
+revoke all on public.kasir_purchase_items from anon;
+grant select, insert, update, delete on public.kasir_suppliers to service_role, authenticated;
+grant select, insert, update, delete on public.kasir_purchases to service_role, authenticated;
+grant select, insert, update, delete on public.kasir_purchase_items to service_role, authenticated;
+
+drop policy if exists kasir_suppliers_select on public.kasir_suppliers;
+create policy kasir_suppliers_select on public.kasir_suppliers for select using (user_id = auth.uid());
+drop policy if exists kasir_suppliers_insert on public.kasir_suppliers;
+create policy kasir_suppliers_insert on public.kasir_suppliers for insert with check (user_id = auth.uid());
+drop policy if exists kasir_suppliers_update on public.kasir_suppliers;
+create policy kasir_suppliers_update on public.kasir_suppliers for update using (user_id = auth.uid());
+drop policy if exists kasir_suppliers_delete on public.kasir_suppliers;
+create policy kasir_suppliers_delete on public.kasir_suppliers for delete using (user_id = auth.uid());
+
+drop policy if exists kasir_purchases_select on public.kasir_purchases;
+create policy kasir_purchases_select on public.kasir_purchases for select using (user_id = auth.uid());
+drop policy if exists kasir_purchases_insert on public.kasir_purchases;
+create policy kasir_purchases_insert on public.kasir_purchases for insert with check (user_id = auth.uid());
+drop policy if exists kasir_purchases_update on public.kasir_purchases;
+create policy kasir_purchases_update on public.kasir_purchases for update using (user_id = auth.uid());
+drop policy if exists kasir_purchases_delete on public.kasir_purchases;
+create policy kasir_purchases_delete on public.kasir_purchases for delete using (user_id = auth.uid());
+
+drop policy if exists kasir_purchase_items_select on public.kasir_purchase_items;
+create policy kasir_purchase_items_select on public.kasir_purchase_items for select using (user_id = auth.uid());
+drop policy if exists kasir_purchase_items_insert on public.kasir_purchase_items;
+create policy kasir_purchase_items_insert on public.kasir_purchase_items for insert with check (user_id = auth.uid());
+drop policy if exists kasir_purchase_items_update on public.kasir_purchase_items;
+create policy kasir_purchase_items_update on public.kasir_purchase_items for update using (user_id = auth.uid());
+drop policy if exists kasir_purchase_items_delete on public.kasir_purchase_items;
+create policy kasir_purchase_items_delete on public.kasir_purchase_items for delete using (user_id = auth.uid());
 
 create or replace function public.kasir_create_purchase(
   p_supplier_name text,

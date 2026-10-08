@@ -57,6 +57,24 @@ export type ProductInput = {
   is_active?: boolean;
 };
 
+/** Baris PO pembelian (PO + supplier + total). */
+export type PurchaseRecord = {
+  id: string;
+  supplier_name: string;
+  total: number;
+  note: string | null;
+  created_at: string;
+};
+
+/** Baris item dalam PO pembelian. */
+export type PurchaseItemRecord = {
+  product_id: string | null;
+  product_name: string;
+  qty: number;
+  cost: number;
+  subtotal: number;
+};
+
 export type DiscountType = 'none' | 'percent' | 'fixed';
 export type PaymentMethod = 'cash' | 'qris' | 'transfer' | 'debit' | 'credit';
 export type TxStatus = 'completed' | 'void';

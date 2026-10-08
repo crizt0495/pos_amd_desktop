@@ -13,7 +13,7 @@ import type { KasirShift, Product, TopProduct } from '@/lib/types';
  * omset, laba, transaksi, produk terlaris, stok kritis, dan status shift.
  */
 export default function MonitoringScreen() {
-  const [summary, setSummary] = React.useState({ omzet: 0, laba: 0, transaksi: 0, diskon: 0 });
+  const [summary, setSummary] = React.useState({ omzet: 0, laba: 0, transaksi: 0, diskon: 0, item: 0, rataRata: 0 });
   const [top, setTop] = React.useState<TopProduct[]>([]);
   const [kritis, setKritis] = React.useState<Product[]>([]);
   const [shift, setShift] = React.useState<KasirShift | null>(null);
@@ -36,9 +36,11 @@ export default function MonitoringScreen() {
           laba: s.data.total_laba,
           transaksi: s.data.jumlah_transaksi,
           diskon: s.data.total_diskon,
+          item: s.data.total_item,
+          rataRata: s.data.rata_rata,
         });
-      if (t.ok) setTop(t.data.slice(0, 5));
-      if (p.ok) setKritis(p.data.filter((x) => x.stock <= x.min_stock && x.min_stock > 0).slice(0, 10));
+      if (t.ok) setTop(t.data.slice(0, 10));
+      if (p.ok) setKritis(p.data.filter((x) => x.is_active && x.stock <= 5).slice(0, 20));
       if (sh.ok) setShift(sh.data);
       setMuat(false);
     };
@@ -55,15 +57,15 @@ export default function MonitoringScreen() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 p-4">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-5 overflow-auto p-4">
       <h1 className="text-xl font-bold">Monitoring Toko — hari ini</h1>
 
-      {/* Kartu ringkasan */}
+      {/* Kartu ringkasan — 4 yang diminta: Omset, Transaksi, Item Terjual, Rata2/Transaksi */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Omzet" value={rupiah(summary.omzet)} icon={<TrendingUp className="h-4 w-4" />} />
-        <Stat label="Laba Kotor" value={rupiah(summary.laba)} tone="green" icon={<Wallet className="h-4 w-4" />} />
-        <Stat label="Transaksi" value={angka(summary.transaksi)} />
-        <Stat label="Diskon" value={rupiah(summary.diskon)} tone="red" />
+        <Stat label="Total Omset Hari Ini" value={rupiah(summary.omzet)} icon={<TrendingUp className="h-4 w-4" />} />
+        <Stat label="Total Transaksi" value={angka(summary.transaksi)} />
+        <Stat label="Total Item Terjual" value={angka(summary.item)} />
+        <Stat label="Rata-rata/Transaksi" value={rupiah(summary.rataRata)} tone="green" icon={<Wallet className="h-4 w-4" />} />
       </div>
 
       {/* Shift */}
@@ -83,8 +85,8 @@ export default function MonitoringScreen() {
         )}
       </Section>
 
-      {/* Stok kritis */}
-      <Section title="Stok Kritis (≤ min stok)">
+      {/* Stok menipis (<= 5) — badge merah SEGERA BELI */}
+      <Section title="Stok Menipis (≤ 5) — Segera Beli">
         {muat ? (
           <p className="text-sm text-zinc-500">Memuat…</p>
         ) : kritis.length === 0 ? (
@@ -94,11 +96,14 @@ export default function MonitoringScreen() {
             {kritis.map((p) => (
               <li
                 key={p.id}
-                className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2"
+                className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2"
               >
                 <span className="truncate text-sm font-medium">{p.name}</span>
-                <span className="flex items-center gap-1 text-sm font-bold text-amber-700">
+                <span className="flex items-center gap-2 text-sm font-bold text-red-700">
                   <AlertTriangle className="h-4 w-4" /> {p.stock} / {p.min_stock}
+                  <span className="ml-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                    Segera Beli
+                  </span>
                 </span>
               </li>
             ))}
@@ -106,23 +111,34 @@ export default function MonitoringScreen() {
         )}
       </Section>
 
-      {/* Produk terlaris */}
-      <Section title="Produk Terlaris Hari Ini">
+      {/* 10 Produk Terlaris Hari Ini — tabel (Nama | Qty | Subtotal) */}
+      <Section title="10 Produk Terlaris Hari Ini">
         {top.length === 0 ? (
           <p className="text-sm text-zinc-500">Belum ada penjualan hari ini.</p>
         ) : (
-          <ul className="space-y-1.5">
-            {top.map((t, i) => (
-              <li key={`${t.product_id}-${i}`} className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2 truncate">
-                  <span className="text-zinc-400">{i + 1}.</span>
-                  <Boxes className="h-4 w-4 text-zinc-400" />
-                  <span className="truncate">{t.name}</span>
-                </span>
-                <span className="tnum text-zinc-600">{t.qty} terjual · {rupiah(t.omzet)}</span>
-              </li>
-            ))}
-          </ul>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-500">
+                <th className="px-2 py-2">No</th>
+                <th className="px-2 py-2">Nama</th>
+                <th className="px-2 py-2 text-right">Qty</th>
+                <th className="px-2 py-2 text-right">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top.map((t, i) => (
+                <tr key={`${t.product_id}-${i}`} className="border-t border-zinc-100">
+                  <td className="px-2 py-2 text-zinc-400">{i + 1}</td>
+                  <td className="flex items-center gap-2 px-2 py-2">
+                    <Boxes className="h-4 w-4 text-zinc-400" />
+                    <span className="truncate">{t.name}</span>
+                  </td>
+                  <td className="tnum px-2 py-2 text-right">{angka(t.qty)}</td>
+                  <td className="tnum px-2 py-2 text-right font-semibold">{rupiah(t.omzet)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Section>
     </div>

@@ -6,6 +6,7 @@ import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } f
 import { reportsApi, returnsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
 import { buildReceiptFromTx, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
+import { bacaPrinterSettings } from '@/lib/printerSettings';
 import { cetakStrukBluetooth } from '@/lib/bluetoothPrinter';
 import { useToast } from '@/components/Toast';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
@@ -95,18 +96,27 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
         </tr>`,
       )
       .join('');
+    // Pakai ukuran kertas dari pengaturan printer (printer_settings localStorage).
+    const prf = bacaPrinterSettings();
+    const sizeCss =
+      prf.ukuran === '58mm' ? '58mm auto' : prf.ukuran === '80mm' ? '80mm auto' : 'A4 portrait';
+    const fontCss = prf.ukuran === 'A4' ? '12px' : '11px';
+
     win.document.write(`<!doctype html><html><head><title>Laporan</title>
       <style>
-        body{font-family:sans-serif;padding:24px;color:#1b3a5c}
+        @page{size:${sizeCss};margin:8mm}
+        body{font-family:sans-serif;padding:24px;color:#1b3a5c;font-size:${fontCss}}
         h1,h2{margin:0;padding:0}
         table{width:100%;border-collapse:collapse;margin-top:12px}
-        th,td{border:1px solid #d8e0ec;padding:6px 8px;font-size:12px}
+        th,td{border:1px solid #d8e0ec;padding:6px 8px;font-size:${fontCss}}
         th{background:#f6f9fd;text-align:left}
         .num{text-align:right;font-variant-numeric:tabular-nums}
         .total{margin-top:16px;font-size:20px;font-weight:bold;text-align:right}
       </style></head><body>
       <h1>${meta.name}</h1>
-      <h2>Laporan Penjualan — Periode ${periode}</h2>
+      ${meta.address ? `<p style="margin-top:4px;font-size:12px;color:#5b6b80">${meta.address}</p>` : ''}
+      ${meta.phone ? `<p style="margin-top:2px;font-size:12px;color:#5b6b80">Telp: ${meta.phone}</p>` : ''}
+      <h2 style="margin-top:8px">Laporan Penjualan — Periode ${periode}</h2>
       <table>
         <thead><tr><th>Tanggal</th><th>Invoice</th><th>Pelanggan</th><th class="num">Total</th><th>Bayar</th></tr></thead>
         <tbody>${rowsHtml}</tbody>

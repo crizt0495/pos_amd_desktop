@@ -55,13 +55,27 @@ export function SatuanVarianTable({
     // Baris pertama selalu satuan dasar: konversi tidak bisa diubah.
     if (i === 0 && patch.konversi !== undefined) next[i]!.konversi = '1';
 
-    // Auto harga modal satuan turunan: modal utama / konversi. Kalau harga
-    // modal utama berubah, semua baris turunan ikut hitung ulang.
-    const modalUtama = parseRupiah(next[0]!.harga_beli);
-    for (let j = 1; j < next.length; j += 1) {
-      const konv = Number(next[j]!.konversi) || 1;
+    // Auto-hitung ulang modal turunan (baris 2+) HANYA ketika yang berubah:
+    //   - harga_beli baris 0 (induk), atau
+    //   - konversi baris j (>0)
+    // Kalau yang berubah harga_beli baris j (>0) secara langsung, JANGAN
+    // override — validasi min dilakukan oleh `validasiVarian` dan pesan
+    // "Modal X minimal Rp. Y" muncul per baris.
+    const recalcBaris0 = i === 0 && patch.harga_beli !== undefined;
+    const recalcBarisJ = i > 0 && patch.konversi !== undefined;
+
+    if (recalcBaris0) {
+      const modalUtama = parseRupiah(next[0]!.harga_beli);
+      for (let j = 1; j < next.length; j += 1) {
+        const konv = Number(next[j]!.konversi) || 1;
+        const nilai = konv > 0 ? Math.round(modalUtama / konv) : 0;
+        next[j] = { ...next[j]!, harga_beli: String(nilai) };
+      }
+    } else if (recalcBarisJ) {
+      const modalUtama = parseRupiah(next[0]!.harga_beli);
+      const konv = Number(next[i]!.konversi) || 1;
       const nilai = konv > 0 ? Math.round(modalUtama / konv) : 0;
-      next[j] = { ...next[j]!, harga_beli: String(nilai) };
+      next[i] = { ...next[i]!, harga_beli: String(nilai) };
     }
     onChange(next);
   }
@@ -124,17 +138,14 @@ export function SatuanVarianTable({
 
                   <td className="td p-1.5">
                     <RupiahInput
-                      className={`!h-8 w-full rounded-md !text-[12.5px] text-right ${
-                        i > 0 ? 'bg-[#f6f9fd] text-[#7a8ba0]' : ''
-                      }`}
+                      className="!h-8 w-full rounded-md !text-[12.5px] text-right"
                       ariaLabel={`Harga modal ${b.satuan || `baris ${i + 1}`}`}
                       value={b.harga_beli}
-                      disabled={i > 0}
                       onChange={(v) => ubah(i, { harga_beli: String(v) })}
                     />
                     {i > 0 ? (
                       <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">
-                        otomatis = modal utama / konversi
+                        auto = modal dasar ÷ konversi; boleh lebih, tak boleh kurang
                       </span>
                     ) : null}
                   </td>

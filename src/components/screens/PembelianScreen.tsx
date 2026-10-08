@@ -1,12 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { Truck, X } from 'lucide-react';
+import { ListChecks, PackageSearch, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi } from '@/lib/api';
 import { angka, rupiah } from '@/lib/format';
 import { RupiahInput } from '@/components/RupiahInput';
-import type { Product } from '@/lib/types';
+import { Modal } from '@/components/Modal';
+import { useToast } from '@/components/Toast';
+import type { Product, PurchaseItemRecord, PurchaseRecord } from '@/lib/types';
 
 interface BarisPembelian {
   productId: string;
@@ -17,13 +19,13 @@ interface BarisPembelian {
 }
 
 /**
- * Pembelian (PO sederhana) — persis seperti kembaran Kasir:
- *   - Input "Cari Produk" dengan live search (tanpa dropdown), fokus kembali
- *     setelah tiap pilih agar siap scan berikutnya
- *   - Tabel editable: Nama | Satuan | H.Pokok | Qty | Subtotal | Hapus
- *   - Total besar di kanan bawah, tidak ada "total kecil" di dekat Shift
+ * Pembelian (PO sederhana) — full width, 2 panel:
+ *   KIRI  : search produk + 8 produk "Sering Beli"
+ *   KANAN : tabel PO + supplier + catatan + total + simpan
+ * Tombol cepat: Riwayat Beli Terakhir, Sering Beli, tambah barang baru.
  */
 export default function PembelianScreen() {
+  const toast = useToast();
   const [products, setProducts] = React.useState<Product[]>([]);
   const [supplierName, setSupplierName] = React.useState('');
   const [note, setNote] = React.useState('');
@@ -38,6 +40,17 @@ export default function PembelianScreen() {
   const [saranIdx, setSaranIdx] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const wrapRef = React.useRef<HTMLDivElement>(null);
+
+  // data cepat beli
+  const [sering, setSering] = React.useState<PurchaseItemRecord[]>([]);
+  const [riwayatOpen, setRiwayatOpen] = React.useState(false);
+  const [riwayat, setRiwayat] = React.useState<PurchaseRecord[]>([]);
+  const [riwayatLoading, setRiwayatLoading] = React.useState(false);
+  const [barangBaruOpen, setBarangBaruOpen] = React.useState(false);
+  const [baru, setBaru] = React.useState({ name: '', category: 'Umum', unit: 'Pcs', price: '', cost: '', stock: '' });
+
+  // supplier history (map productId -> last cost)
+  const [supplierCostMap, setSupplierCostMap] = React.useState<Map<string, number>>(new Map());
 
   React.useEffect(() => {
     void productsApi.list().then((r) => {
@@ -73,7 +86,43 @@ export default function PembelianScreen() {
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
+  // Load "sering beli" sekali setiap products ada
+  React.useEffect(() => {
+    void purchasesApi.frequent(8).then((r) => {
+      if (r.ok) setSering(r.data);
+    });
+  }, []);
+
+  // Saat supplier berubah, load map last-cost
+  React.useEffect(() => {
+    const s = supplierName.trim();
+    if (!s) {
+      setSupplierCostMap(new Map());
+      return;
+    }
+    let batalkan = false;
+    void purchasesApi.lastCostBySupplier(s).then((r) => {
+      if (!batalkan && r.ok) setSupplierCostMap(r.data);
+    });
+    return () => {
+      batalkan = true;
+    };
+  }, [supplierName]);
+
+  // Shortcut F2 fokus search, Esc tutup saran
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   function tambah(p: Product) {
+    const lastCost = supplierCostMap.get(p.id);
     setBaris((prev) => {
       const i = prev.findIndex((b) => b.productId === p.id);
       if (i >= 0) {
@@ -81,13 +130,59 @@ export default function PembelianScreen() {
       }
       return [
         ...prev,
-        { productId: p.id, name: p.name, unit: p.unit, qty: 1, cost: p.cost },
+        {
+          productId: p.id,
+          name: p.name,
+          unit: p.unit,
+          qty: 1,
+          cost: lastCost ?? p.cost,
+        },
       ];
     });
     setKode('');
     setSaranTampil(false);
     setSaranIdx(0);
     inputRef.current?.focus();
+  }
+
+  function tambahDariSering(it: PurchaseItemRecord) {
+    const found = products.find(
+      (p) => (it.product_id && p.id === it.product_id) || p.name.toLowerCase() === it.product_name.toLowerCase(),
+    );
+    if (found) {
+      tambah(found);
+    } else {
+      toast.info('Produk tidak ditemukan', 'Tambahkan lewat "Produk Baru" dulu.');
+    }
+  }
+
+  async function muatRiwayat() {
+    setRiwayatLoading(true);
+    const r = await purchasesApi.listRecent(10);
+    if (r.ok) setRiwayat(r.data);
+    setRiwayatLoading(false);
+  }
+
+  async function pilihRiwayat(p: PurchaseRecord) {
+    setRiwayatLoading(true);
+    const r = await purchasesApi.items(p.id);
+    setRiwayatLoading(false);
+    if (!r.ok || !r.data.length) {
+      toast.info('Tidak ada item', 'PO ini tidak punya item yang bisa dimuat.');
+      return;
+    }
+    setSupplierName(p.supplier_name);
+    setBaris(
+      r.data.map((it) => ({
+        productId: it.product_id ?? '',
+        name: it.product_name,
+        unit: '',
+        qty: Number(it.qty) || 1,
+        cost: Number(it.cost) || 0,
+      })),
+    );
+    setRiwayatOpen(false);
+    toast.ok('PO dimuat', `${r.data.length} baris dari ${p.supplier_name}.`);
   }
 
   function ubah(idx: number, patch: Partial<BarisPembelian>) {
@@ -110,7 +205,7 @@ export default function PembelianScreen() {
     const r = await purchasesApi.create({
       supplierName: supplierName.trim(),
       items: baris.map((b) => ({
-        productId: b.productId,
+        productId: b.productId || null,
         name: b.name,
         qty: b.qty,
         cost: b.cost,
@@ -130,9 +225,42 @@ export default function PembelianScreen() {
     inputRef.current?.focus();
   }
 
+  async function simpanBarangBaru() {
+    if (!baru.name.trim()) {
+      toast.error('Nama wajib', 'Isi nama barang dulu.');
+      return;
+    }
+    const r = await productsApi.create({
+      name: baru.name.trim(),
+      category: baru.category.trim() || 'Umum',
+      unit: baru.unit.trim() || 'Pcs',
+      price: Number(baru.price) || 0,
+      cost: Number(baru.cost) || 0,
+      stock: Number(baru.stock) || 0,
+      min_stock: 0,
+      variants: [
+        {
+          satuan: baru.unit.trim() || 'Pcs',
+          harga_beli: Number(baru.cost) || 0,
+          harga_jual: Number(baru.price) || 0,
+          konversi: 1,
+        },
+      ],
+    });
+    if (!r.ok) {
+      toast.error('Gagal menambah barang', r.error);
+      return;
+    }
+    setProducts((prev) => [...prev, r.data]);
+    setBarangBaruOpen(false);
+    setBaru({ name: '', category: 'Umum', unit: 'Pcs', price: '', cost: '', stock: '' });
+    tambah(r.data);
+    toast.ok('Barang ditambahkan', r.data.name);
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {/* Header ala Kasir */}
+      {/* Header */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2">
         <Truck className="h-4 w-4 text-[#1b5fa8]" />
         <h1 className="text-[15px] font-bold text-[#1b3a5c]">Pembelian (PO Sederhana)</h1>
@@ -151,10 +279,12 @@ export default function PembelianScreen() {
         </button>
       </div>
 
-      {/* Blok search ala Kasir */}
-      <div className="shrink-0 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2.5">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-[220px] flex-1">
+      {/* 2 panel: Kiri Search+SeringBeli | Kanan PO */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row">
+        {/* KIRI */}
+        <div className="flex min-w-0 flex-col gap-3 md:w-[380px] md:shrink-0">
+          {/* Supplier */}
+          <div className="rounded-md border border-[#d8e0ec] bg-white p-3">
             <label className="frm-label" htmlFor="cari-supplier">
               Nama Supplier
             </label>
@@ -166,12 +296,21 @@ export default function PembelianScreen() {
               onChange={(e) => setSupplierName(e.target.value)}
               autoComplete="off"
             />
+            {supplierName.trim() ? (
+              <p className="mt-1 text-[10.5px] text-[#7a8ba0]">
+                Harga modal utama diisi otomatis dari pembelian terakhir ke supplier ini.
+              </p>
+            ) : null}
           </div>
 
-          <div className="relative w-full sm:w-[300px] lg:w-[340px]" ref={wrapRef}>
-            <label className="frm-label" htmlFor="cari-produk">
-              Cari Produk (Ketik Nama / Barcode)
-            </label>
+          {/* Search produk */}
+          <div className="rounded-md border border-[#d8e0ec] bg-white p-3" ref={wrapRef}>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="frm-label" htmlFor="cari-produk">
+                Scan Barcode / Ketik Nama Barang
+              </label>
+              <span className="text-[10px] text-[#9fb0c4]">F2</span>
+            </div>
             <input
               id="cari-produk"
               ref={inputRef}
@@ -193,7 +332,6 @@ export default function PembelianScreen() {
                   setSaranTampil(false);
                 }
               }}
-              autoFocus
               autoComplete="off"
               spellCheck={false}
               role="combobox"
@@ -203,7 +341,7 @@ export default function PembelianScreen() {
             />
 
             {saranTampil ? (
-              <ul id="saran-pembelian" role="listbox" className="ac-panel">
+              <ul id="saran-pembelian" role="listbox" className="ac-panel !static !max-h-[280px] !mt-2 !rounded-md !shadow-none">
                 {saran.map((p, i) => (
                   <li key={p.id} role="option" aria-selected={i === saranIdx}>
                     <button
@@ -218,7 +356,9 @@ export default function PembelianScreen() {
                       <span className="ac-kode">{p.barcode || '—'}</span>
                       <span className="ac-nama">{p.name}</span>
                       <span className="ac-meta">Stok {angka(p.stock)}</span>
-                      <span className="ac-meta">{rupiah(p.cost)}</span>
+                      <span className="ac-meta">
+                        {supplierCostMap.has(p.id) ? rupiah(supplierCostMap.get(p.id)!) : rupiah(p.cost)}
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -226,92 +366,226 @@ export default function PembelianScreen() {
             ) : null}
           </div>
 
-          <div className="min-w-[120px]">
-            <label className="frm-label" htmlFor="catatan">
-              Catatan
-            </label>
-            <input
-              id="catatan"
-              className="frm-key"
-              placeholder="Faktur No."
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
+          {/* Tombol cepat */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setRiwayatOpen(true);
+                void muatRiwayat();
+              }}
+              className="rb-btn"
+            >
+              <ListChecks className="h-3.5 w-3.5" /> Riwayat Beli Terakhir
+            </button>
+            <button
+              type="button"
+              onClick={() => setBarangBaruOpen(true)}
+              className="rb-btn"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> + Tambah Barang Baru
+            </button>
+          </div>
+
+          {/* Sering Beli */}
+          {sering.length ? (
+            <div className="rounded-md border border-[#d8e0ec] bg-white p-3">
+              <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#5b6b80]">
+                Sering Beli
+              </h3>
+              <ul className="divide-y divide-[#eef2f7]">
+                {sering.map((it, i) => (
+                  <li key={`${it.product_id ?? it.product_name}-${i}`}>
+                    <button
+                      type="button"
+                      onClick={() => tambahDariSering(it)}
+                      className="flex w-full items-center justify-between px-2 py-2 text-left hover:bg-[#f6f9fd]"
+                    >
+                      <span className="flex items-center gap-2 truncate text-[13px]">
+                        <PackageSearch className="h-4 w-4 text-zinc-400" />
+                        <span className="truncate">{it.product_name}</span>
+                      </span>
+                      <span className="tnum text-[12px] text-[#5b6b80]">
+                        {angka(it.qty)} · {rupiah(it.cost)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        {/* KANAN */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border border-[#d8e0ec] bg-white">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-[#f6f9fd]">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-500">
+                  <th className="w-8 px-2 py-2">No</th>
+                  <th className="px-2 py-2">Nama Item</th>
+                  <th className="px-2 py-2">Satuan</th>
+                  <th className="w-28 px-2 py-2">H. Pokok</th>
+                  <th className="w-20 px-2 py-2">Qty</th>
+                  <th className="w-28 px-2 py-2">Subtotal</th>
+                  <th className="w-10 px-2 py-2">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {baris.map((b, i) => (
+                  <tr key={b.productId + i} className="border-t border-zinc-100">
+                    <td className="px-2 py-2 text-zinc-400">{i + 1}</td>
+                    <td className="px-2 py-2 font-medium">{b.name}</td>
+                    <td className="px-2 py-2 text-zinc-600">{b.unit}</td>
+                    <td className="px-2 py-2">
+                      <RupiahInput
+                        value={b.cost}
+                        onChange={(v) => ubah(i, { cost: Number(v) || 0 })}
+                        ariaLabel={`Harga pokok ${b.name}`}
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={b.qty}
+                        onChange={(e) => ubah(i, { qty: Number(e.target.value) || 0 })}
+                        className="w-full rounded-lg border border-zinc-200 px-2 py-1"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-right font-semibold">
+                      {rupiah(b.qty * b.cost)}
+                    </td>
+                    <td className="px-2 py-2">
+                      <button
+                        type="button"
+                        className="p-1 text-zinc-400 hover:text-red-600"
+                        aria-label="Hapus"
+                        onClick={() => setBaris((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!baris.length ? (
+                  <tr>
+                    <td colSpan={7} className="px-2 py-6 text-center text-[12px] text-zinc-400">
+                      Cari produk di kiri, atau pilih "Sering Beli" untuk menambah.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer kanan: Catatan + Total */}
+          <div className="shrink-0 border-t border-[#d8e0ec] bg-white px-4 py-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="min-w-[180px] flex-1">
+                <label className="frm-label" htmlFor="catatan">
+                  Catatan
+                </label>
+                <input
+                  id="catatan"
+                  className="frm-key"
+                  placeholder="Faktur No."
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] uppercase text-zinc-400">Total Pembelian</p>
+                <p className="text-[28px] font-extrabold text-[#1b3a5c]">{rupiah(total)}</p>
+              </div>
+            </div>
+            {pesan ? <p className="mt-2 rounded-md bg-zinc-100 p-2 text-sm">{pesan}</p> : null}
           </div>
         </div>
       </div>
 
-      {/* Tabel ala Kasir */}
-      <div className="min-h-0 flex-1 overflow-auto p-3">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-500">
-              <th className="w-8 px-2 py-2">No</th>
-              <th className="px-2 py-2">Nama Item</th>
-              <th className="px-2 py-2">Satuan</th>
-              <th className="w-28 px-2 py-2">H. Pokok</th>
-              <th className="w-20 px-2 py-2">Qty</th>
-              <th className="w-28 px-2 py-2">Subtotal</th>
-              <th className="w-10 px-2 py-2">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {baris.map((b, i) => (
-              <tr key={b.productId + i} className="border-t border-zinc-100">
-                <td className="px-2 py-2 text-zinc-400">{i + 1}</td>
-                <td className="px-2 py-2 font-medium">{b.name}</td>
-                <td className="px-2 py-2 text-zinc-600">{b.unit}</td>
-                <td className="px-2 py-2">
-                  <RupiahInput
-                    value={b.cost}
-                    onChange={(v) => ubah(i, { cost: Number(v) || 0 })}
-                    ariaLabel={`Harga pokok ${b.name}`}
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <input
-                    type="number"
-                    min={1}
-                    value={b.qty}
-                    onChange={(e) => ubah(i, { qty: Number(e.target.value) || 0 })}
-                    className="w-full rounded-lg border border-zinc-200 px-2 py-1"
-                  />
-                </td>
-                <td className="px-2 py-2 text-right font-semibold">
-                  {rupiah(b.qty * b.cost)}
-                </td>
-                <td className="px-2 py-2">
+      {/* Modal Riwayat Beli Terakhir */}
+      <Modal open={riwayatOpen} onClose={() => setRiwayatOpen(false)} title="Riwayat Beli Terakhir" width="max-w-2xl">
+        {riwayatLoading ? (
+          <p className="text-sm text-zinc-500">Memuat riwayat…</p>
+        ) : riwayat.length === 0 ? (
+          <p className="text-sm text-zinc-500">Belum ada riwayat pembelian.</p>
+        ) : (
+          <ul className="divide-y divide-zinc-100">
+            {riwayat.map((p) => (
+              <li key={p.id} className="flex items-center justify-between py-2">
+                <div>
+                  <p className="font-medium text-[13px]">{new Date(p.created_at).toLocaleString('id-ID')}</p>
+                  <p className="text-[12px] text-zinc-500">{p.supplier_name} {p.note ? `· ${p.note}` : ''}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="tnum text-[13px] font-semibold">{rupiah(Number(p.total))}</span>
                   <button
                     type="button"
-                    className="p-1 text-zinc-400 hover:text-red-600"
-                    aria-label="Hapus"
-                    onClick={() => setBaris((prev) => prev.filter((_, j) => j !== i))}
+                    className="rb-btn"
+                    onClick={() => pilihRiwayat(p)}
                   >
-                    <X className="h-4 w-4" />
+                    <RotateCcw className="h-3 w-3" /> Muat
                   </button>
-                </td>
-              </tr>
+                </div>
+              </li>
             ))}
-            {!baris.length ? (
-              <tr>
-                <td colSpan={7} className="px-2 py-6 text-center text-[12px] text-zinc-400">
-                  Cari produk di atas untuk menambahkan ke pembelian.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+          </ul>
+        )}
+      </Modal>
 
-      {/* Total besar ala Kasir */}
-      <div className="flex shrink-0 justify-end border-t border-[#d8e0ec] bg-white px-4 py-3">
-        <div className="text-right">
-          <p className="text-[11px] uppercase text-zinc-400">Total Pembelian</p>
-          <p className="text-[26px] font-extrabold text-[#1b3a5c]">{rupiah(total)}</p>
+      {/* Modal + Tambah Barang Baru */}
+      <Modal
+        open={barangBaruOpen}
+        onClose={() => setBarangBaruOpen(false)}
+        title="Tambah Barang Baru"
+        width="max-w-md"
+        footer={
+          <>
+            <button type="button" className="btn-outline" onClick={() => setBarangBaruOpen(false)}>
+              Batal
+            </button>
+            <button type="button" className="btn-primary" onClick={simpanBarangBaru}>
+              Simpan & Masukkan
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="label">Nama *</label>
+            <input className="input" value={baru.name} onChange={(e) => setBaru({ ...baru, name: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Kategori</label>
+            <input className="input" value={baru.category} onChange={(e) => setBaru({ ...baru, category: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Satuan</label>
+            <input className="input" value={baru.unit} onChange={(e) => setBaru({ ...baru, unit: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Modal (Rp)</label>
+            <RupiahInput
+              value={baru.cost}
+              onChange={(v) => setBaru({ ...baru, cost: String(v) })}
+              ariaLabel="Modal"
+            />
+          </div>
+          <div>
+            <label className="label">Harga Jual (Rp)</label>
+            <RupiahInput
+              value={baru.price}
+              onChange={(v) => setBaru({ ...baru, price: String(v) })}
+              ariaLabel="Harga Jual"
+            />
+          </div>
+          <div>
+            <label className="label">Stok Awal</label>
+            <input type="number" className="input" value={baru.stock} onChange={(e) => setBaru({ ...baru, stock: e.target.value })} />
+          </div>
         </div>
-      </div>
-
-      {pesan ? <p className="shrink-0 bg-zinc-100 p-3 text-sm">{pesan}</p> : null}
+      </Modal>
     </div>
   );
 }

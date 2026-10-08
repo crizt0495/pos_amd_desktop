@@ -10,6 +10,8 @@ import type {
   PaymentReport,
   Product,
   ProductInput,
+  PurchaseItemRecord,
+  PurchaseRecord,
   ReportSummary,
   ReturnItem,
   ReturnLineInput,
@@ -557,6 +559,112 @@ export const purchasesApi = {
       if (error) return { ok: false, error: error.message };
       const body = (r ?? {}) as { id?: string; total?: number };
       return { ok: true, data: { id: String(body.id ?? ''), total: num(body.total) } };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Daftar PO terbaru, urut terbaru pertama. */
+  async listRecent(limit = 10): Promise<Result<PurchaseRecord[]>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_purchases')
+        .select('id, supplier_name, total, note, created_at')
+        .order('created_at', { ascending: false })
+        .limit(Math.min(Math.max(limit, 1), 100));
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []) as unknown as PurchaseRecord[] };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Items untuk satu PO (urut id). */
+  async items(purchaseId: string): Promise<Result<PurchaseItemRecord[]>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_purchase_items')
+        .select('product_id, product_name, qty, cost, subtotal')
+        .eq('purchase_id', purchaseId)
+        .order('id', { ascending: true });
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []) as unknown as PurchaseItemRecord[] };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Harga pokok terakhir per product_id dari supplier tertentu (dipakai saat PO baru). */
+  async lastCostBySupplier(supplierName: string): Promise<Result<Map<string, number>>> {
+    try {
+      if (!supplierName.trim()) return { ok: true, data: new Map() };
+      // Ambil semua purchase_id dari supplier ini (max 50 PO terakhir), lalu
+      // ambil item-item-nya dan ambil cost TERAKHIR per product_id.
+      const { data: pos, error: e1 } = await createClient()
+        .from('kasir_purchases')
+        .select('id')
+        .eq('supplier_name', supplierName.trim())
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (e1) return { ok: false, error: e1.message };
+      const ids = (pos ?? []).map((p) => p.id as string);
+      if (ids.length === 0) return { ok: true, data: new Map() };
+      const { data: items, error: e2 } = await createClient()
+        .from('kasir_purchase_items')
+        .select('product_id, cost, purchase_id')
+        .in('purchase_id', ids);
+      if (e2) return { ok: false, error: e2.message };
+      // Ambil yang paling BARU (purchase file id terbaru) per product_id.
+      const byId: Record<string, number> = {};
+      for (const id of ids) byId[id] = ids.indexOf(id);
+      const map = new Map<string, number>();
+      const list = (items ?? []) as unknown as { product_id: string | null; cost: number; purchase_id: string }[];
+      // Sort items berdasarkan urutan `ids` (terbaru duluan):
+      list.sort((a, b) => (byId[a.purchase_id] ?? 0) - (byId[b.purchase_id] ?? 0));
+      for (const it of list) {
+        if (!it.product_id) continue;
+        if (!map.has(it.product_id)) map.set(it.product_id, Number(it.cost) || 0);
+      }
+      return { ok: true, data: map };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Top N produk yang paling sering dibeli (semua supplier). */
+  async frequent(limit = 8): Promise<Result<PurchaseItemRecord[]>> {
+    try {
+      // Ambil semua purchase_items untuk user ini (cap at 5000), lalu hitung frekuensi.
+      const { data, error } = await createClient()
+        .from('kasir_purchase_items')
+        .select('product_id, product_name, qty, cost, subtotal')
+        .limit(5000);
+      if (error) return { ok: false, error: error.message };
+      const freq = new Map<string, { product_id: string | null; product_name: string; qty: number; cost: number; subtotal: number; count: number }>();
+      for (const item of (data ?? []) as unknown as PurchaseItemRecord[]) {
+        const key = item.product_id ?? `name:${item.product_name.toLowerCase().trim()}`;
+        const cur = freq.get(key);
+        if (cur) {
+          cur.qty += Number(item.qty) || 0;
+          cur.subtotal += Number(item.subtotal) || 0;
+          cur.count += 1;
+          if (Number(item.cost) > 0) cur.cost = Number(item.cost);
+        } else {
+          freq.set(key, {
+            product_id: item.product_id,
+            product_name: item.product_name,
+            qty: Number(item.qty) || 0,
+            cost: Number(item.cost) || 0,
+            subtotal: Number(item.subtotal) || 0,
+            count: 1,
+          });
+        }
+      }
+      const out = Array.from(freq.values())
+        .sort((a, b) => b.count - a.count || b.qty - a.qty)
+        .slice(0, limit)
+        .map((x) => ({ product_id: x.product_id, product_name: x.product_name, qty: x.qty, cost: x.cost, subtotal: x.subtotal }));
+      return { ok: true, data: out as PurchaseItemRecord[] };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

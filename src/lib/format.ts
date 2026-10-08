@@ -228,6 +228,9 @@ export function validasiVarian(baris: VarianBaris[]): VarianError[] {
   const kembar = satuanKembar(isi);
   if (kembar) err.push({ index: -1, pesan: `Satuan "${kembar}" dipakai lebih dari sekali.` });
 
+  // Modal induk (baris 1) = sumber konversi untuk semua baris turunan.
+  const modalUtama = parseRupiah(baris[0]?.harga_beli ?? '0');
+
   baris.forEach((b, i) => {
     if (!b.satuan.trim()) return; // baris kosong diabaikan, bukan error
     const jual = parseRupiah(b.harga_jual);
@@ -237,6 +240,17 @@ export function validasiVarian(baris: VarianBaris[]): VarianError[] {
     if (beli <= 0) err.push({ index: i, pesan: 'Harga modal harus lebih dari 0.' });
     if (!Number.isFinite(konv) || konv <= 0) {
       err.push({ index: i, pesan: 'Konversi harus lebih dari 0.' });
+    }
+    // Baris 2+ (turunan): modal otomatis = modal utama / konversi. Kalau
+    // diisi, nilainya TIDAK BOLEH di bawah kalkulasi itu.
+    if (i > 0 && Number.isFinite(konv) && konv > 0) {
+      const minimal = Math.round(modalUtama / konv);
+      if (beli > 0 && beli < minimal) {
+        err.push({
+          index: i,
+          pesan: `Modal ${b.satuan.trim() || `baris ${i + 1}`} minimal Rp. ${minimal.toLocaleString('id-ID')}`,
+        });
+      }
     }
   });
 
