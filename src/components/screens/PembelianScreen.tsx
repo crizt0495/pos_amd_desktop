@@ -5,6 +5,7 @@ import { Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi } from '@/lib/api';
 import { angka, rupiah } from '@/lib/format';
+import { RupiahInput } from '@/components/RupiahInput';
 import type { Product } from '@/lib/types';
 
 interface BarisPembelian {
@@ -261,12 +262,10 @@ export default function PembelianScreen() {
                 <td className="px-2 py-2 font-medium">{b.name}</td>
                 <td className="px-2 py-2 text-zinc-600">{b.unit}</td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
-                    min={0}
+                  <RupiahInput
                     value={b.cost}
-                    onChange={(e) => ubah(i, { cost: Number(e.target.value) || 0 })}
-                    className="w-full rounded-lg border border-zinc-200 px-2 py-1"
+                    onChange={(v) => ubah(i, { cost: Number(v) || 0 })}
+                    ariaLabel={`Harga pokok ${b.name}`}
                   />
                 </td>
                 <td className="px-2 py-2">
