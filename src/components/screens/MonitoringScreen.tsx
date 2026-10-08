@@ -22,31 +22,35 @@ export default function MonitoringScreen() {
   React.useEffect(() => {
     const today = isoHariIni();
     let hidup = true;
-    Promise.all([
-      reportsApi.summary({ from: today, to: today }),
-      reportsApi.topProducts({ from: today, to: today }),
-      productsApi.list(),
-      shiftsApi.active(),
-    ])
-      .then(([s, t, p, sh]) => {
-        if (!hidup) return;
-        if (s.ok)
-          setSummary({
-            omzet: s.data.total_omzet,
-            laba: s.data.total_laba,
-            transaksi: s.data.jumlah_transaksi,
-            diskon: s.data.total_diskon,
-          });
-        if (t.ok) setTop(t.data.slice(0, 5));
-        if (p.ok) setKritis(p.data.filter((x) => x.stock <= x.min_stock && x.min_stock > 0).slice(0, 10));
-        if (sh.ok) setShift(sh.data);
-        setMuat(false);
-      })
-      .catch(() => {
-        if (hidup) setMuat(false);
-      });
+    const muat = async () => {
+      const [s, t, p, sh] = await Promise.all([
+        reportsApi.summary({ from: today, to: today }),
+        reportsApi.topProducts({ from: today, to: today }),
+        productsApi.list(),
+        shiftsApi.active(),
+      ]);
+      if (!hidup) return;
+      if (s.ok)
+        setSummary({
+          omzet: s.data.total_omzet,
+          laba: s.data.total_laba,
+          transaksi: s.data.jumlah_transaksi,
+          diskon: s.data.total_diskon,
+        });
+      if (t.ok) setTop(t.data.slice(0, 5));
+      if (p.ok) setKritis(p.data.filter((x) => x.stock <= x.min_stock && x.min_stock > 0).slice(0, 10));
+      if (sh.ok) setShift(sh.data);
+      setMuat(false);
+    };
+    // Pemuatan pertama + auto-refresh 10 dtk
+    void muat().catch(() => {
+      if (hidup) setMuat(false);
+    });
+    const prefers = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const t = window.setInterval(() => void muat().catch(() => {}), prefers ? 30000 : 10000);
     return () => {
       hidup = false;
+      window.clearInterval(t);
     };
   }, []);
 

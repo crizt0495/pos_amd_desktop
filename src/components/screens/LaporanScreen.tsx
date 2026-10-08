@@ -268,6 +268,14 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
           <Stat label="Item Terjual" value={angka(summary?.total_item ?? 0)} />
         </div>
 
+        {/* Laba rugi sederhana: omzet dikurangi retur tunai */}
+        <div className="mt-2.5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Stat label="Total Retur" value={rupiah(returns.reduce((s, r) => s + r.total, 0))} tone="red" />
+          <Stat label="Omzet Bersih" value={rupiah(Math.max(0, (summary?.total_omzet ?? 0) - returns.reduce((s, r) => s + r.total, 0)))} tone="green" />
+          <Stat label="Kas Masuk" value={rupiah(byPayment.find((p) => p.metode === 'cash')?.omzet ?? 0)} />
+          <Stat label="Non Tunai" value={rupiah((summary?.total_omzet ?? 0) - (byPayment.find((p) => p.metode === 'cash')?.omzet ?? 0))} />
+        </div>
+
         <div className="mt-2.5 grid gap-2.5 lg:grid-cols-[1.35fr_1fr]">
           {/* ------------------------- grafik harian ------------------- */}
           <div className="card p-3.5">

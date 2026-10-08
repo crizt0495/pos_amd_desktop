@@ -540,6 +540,29 @@ const mapShift = (r: Record<string, unknown>): KasirShift => ({
   status: String(r.status ?? 'open') as KasirShift['status'],
 });
 
+export const purchasesApi = {
+  async create(data: {
+    supplierName: string;
+    supplierId?: string | null;
+    items: { productId: string | null; name: string; qty: number; cost: number }[];
+    note?: string | null;
+  }): Promise<Result<{ id: string; total: number }>> {
+    try {
+      const { data: r, error } = await createClient().rpc('kasir_create_purchase', {
+        p_supplier_name: data.supplierName,
+        p_supplier_id: data.supplierId ?? null,
+        p_items: data.items,
+        p_note: data.note ?? null,
+      });
+      if (error) return { ok: false, error: error.message };
+      const body = (r ?? {}) as { id?: string; total?: number };
+      return { ok: true, data: { id: String(body.id ?? ''), total: num(body.total) } };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
 export const shiftsApi = {
   async active(): Promise<Result<KasirShift | null>> {
     try {

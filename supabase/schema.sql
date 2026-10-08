@@ -1123,3 +1123,118 @@ on conflict (serial_key) do nothing;
 --  aplikasi bisa menampilkan:
 --    "Could not find the function public.kasir_open_shift(...) in the schema cache"
 notify pgrst, 'reload schema';
+-- ============================================================================
+--  6. PEMBELIAN + SUPPLIER (PO sederhana)
+-- ============================================================================
+--  IPOS 5 menyebut modul Pembelian dengan PO/hutang/supplier. Di sini versi
+--  sederhana: satu tabel supplier + satu tabel pembelian (langsung masuk stok
+--  + catat kartu stok 'stok_masuk'). Belum mengelola hutang terbuka; cukup untuk
+--  operasional harian toko.
+create table if not exists public.kasir_suppliers (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  name       text not null,
+  phone      text,
+  address    text,
+  created_at timestamptz not null default now()
+);
+create index if not exists kasir_suppliers_user on public.kasir_suppliers (user_id);
+
+create table if not exists public.kasir_purchases (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  supplier_id   uuid references public.kasir_suppliers (id) on delete set null,
+  supplier_name text,
+  total         numeric not null default 0,
+  note          text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists kasir_purchases_user on public.kasir_purchases (user_id, created_at desc);
+
+create table if not exists public.kasir_purchase_items (
+  id            uuid primary key default gen_random_uuid(),
+  purchase_id   uuid not null references public.kasir_purchases (id) on delete cascade,
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  product_id    uuid,
+  product_name  text not null,
+  qty           numeric not null default 0,
+  cost          numeric not null default 0,
+  subtotal      numeric not null default 0
+);
+create index if not exists kasir_purchase_items_purchase on public.kasir_purchase_items (purchase_id);
+
+alter table public.kasir_suppliers enable row level security;
+alter table public.kasir_purchases enable row level security;
+alter table public.kasir_purchase_items enable row level security;
+revoke all on public.kasir_suppliers from anon, authenticated;
+revoke all on public.kasir_purchases from anon, authenticated;
+revoke all on public.kasir_purchase_items from anon, authenticated;
+grant select, insert, update, delete on public.kasir_suppliers to service_role;
+grant select, insert, update, delete on public.kasir_purchases to service_role;
+grant select, insert, update, delete on public.kasir_purchase_items to service_role;
+
+create or replace function public.kasir_create_purchase(
+  p_supplier_name text,
+  p_supplier_id   uuid,
+  p_items         jsonb,
+  p_note          text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_total numeric := 0;
+  v_purchase_id uuid;
+  v_item record;
+  v_pid uuid;
+  v_qty numeric;
+  v_cost numeric;
+  v_sub numeric;
+  v_sebelum numeric;
+  v_sesudah numeric;
+begin
+  if v_user is null then raise exception 'Harus login.'; end if;
+  if p_items is null or jsonb_array_length(p_items) = 0 then
+    raise exception 'Minimal satu item pembelian.';
+  end if;
+
+  insert into public.kasir_purchases (user_id, supplier_id, supplier_name, total, note)
+  values (v_user, p_supplier_id, p_supplier_name, 0, nullif(coalesce(p_note, ''), ''))
+  returning id into v_purchase_id;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    v_qty := greatest(coalesce((v_item.value->>'qty')::numeric, 0), 0);
+    v_cost := greatest(coalesce((v_item.value->>'cost')::numeric, 0), 0);
+    v_sub := round(v_qty * v_cost, 2);
+    v_total := v_total + v_sub;
+    v_pid := nullif(coalesce((v_item.value->>'product_id')::text, ''), '')::uuid;
+
+    insert into public.kasir_purchase_items (purchase_id, user_id, product_id, product_name, qty, cost, subtotal)
+    values (v_purchase_id, v_user, v_pid, coalesce((v_item.value->>'name')::text, 'Item'), v_qty, v_cost, v_sub);
+
+    if v_pid is not null then
+      select stock into v_sebelum from public.kasir_products
+       where id = v_pid and user_id = v_user for update;
+      if v_sebelum is not null then
+        update public.kasir_products
+           set stock = stock + v_qty, updated_at = now()
+         where id = v_pid and user_id = v_user
+        returning stock into v_sesudah;
+        insert into public.kasir_stock_logs
+          (user_id, product_id, tipe, qty, stok_sebelum, stok_sesudah, keterangan, ref_id, ref_tipe)
+        values
+          (v_user, v_pid, 'stok_masuk', v_qty, v_sebelum, v_sesudah,
+           'Pembelian ' || coalesce(p_supplier_name, ''), v_purchase_id, 'retur');
+      end if;
+    end if;
+  end loop;
+
+  update public.kasir_purchases set total = v_total where id = v_purchase_id;
+  return jsonb_build_object('id', v_purchase_id, 'total', v_total);
+end;
+$$;
+
+grant execute on function public.kasir_create_purchase(text, uuid, jsonb, text) to authenticated, service_role;

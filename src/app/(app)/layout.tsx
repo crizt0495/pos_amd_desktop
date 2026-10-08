@@ -13,6 +13,7 @@ import {
   Receipt,
   Settings,
   Store,
+  Truck,
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
@@ -30,6 +31,7 @@ const MODULES = [
   { href: '/kasir', label: 'Penjualan', sub: 'Penjualan Kasir', Icon: Receipt },
   { href: '/laporan', label: 'Laporan', sub: 'Laporan Penjualan', Icon: BarChart3 },
   { href: '/monitoring', label: 'Monitoring', sub: 'Pemantauan Toko', Icon: Monitor },
+  { href: '/pembelian', label: 'Pembelian', sub: 'PO & Supplier', Icon: Truck },
 ] as const;
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
