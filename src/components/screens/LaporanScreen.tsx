@@ -6,6 +6,7 @@ import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } f
 import { reportsApi, returnsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
 import { buildReceiptFromTx, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
+import { cetakStrukBluetooth } from '@/lib/bluetoothPrinter';
 import { useToast } from '@/components/Toast';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import { Modal } from '@/components/Modal';
@@ -723,7 +724,12 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
             <button
               type="button"
               className="btn-primary"
-              onClick={() => ui.run(() => window.print(), 'cetak-struk')}
+              onClick={() =>
+                ui.run(async () => {
+                  if (printData && (await cetakStrukBluetooth(printData))) return;
+                  window.print();
+                }, 'cetak-struk')
+              }
               disabled={ui.locked('cetak-struk')}
             >
               <Printer className="h-4 w-4" /> Cetak Struk

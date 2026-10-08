@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
+import { autoSambungBluetooth } from '@/lib/bluetoothPrinter';
 import { CartProvider } from '@/lib/cart-store';
 import { ToastProvider } from '@/components/Toast';
 import { SettingsModal } from '@/components/SettingsModal';
@@ -46,6 +47,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     void ensureSeeded();
     void settingsApi.get<string>('storeName', 'Toko').then((n) => setStoreName(n || 'Toko'));
+    // Sambung otomatis printer Bluetooth yang pernah dipasang (Web Bluetooth).
+    void autoSambungBluetooth();
     void settingsApi.get<string>('cashierName', 'Kasir').then((n) => setCashierName(n || 'Kasir'));
 
     const tick = () =>

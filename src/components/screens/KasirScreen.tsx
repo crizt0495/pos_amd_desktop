@@ -50,6 +50,7 @@ import {
 } from '@/lib/diskonPaten';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
 import { bacaPrinterSettings } from '@/lib/printerSettings';
+import { cetakStrukBluetooth } from '@/lib/bluetoothPrinter';
 import { useToast } from '@/components/Toast';
 import { BigTotalDisplay } from '@/components/BigTotalDisplay';
 import { Modal } from '@/components/Modal';
@@ -353,7 +354,12 @@ export default function KasirScreen() {
 
   React.useEffect(() => {
     if (success && autoPrint) {
-      const t = window.setTimeout(() => window.print(), 450);
+      const t = window.setTimeout(() => {
+        void cetakStrukBluetooth(success.receipt).then((ok) => {
+          // Bila printer Bluetooth tidak tersambung, tetap cetak via browser.
+          if (!ok) window.print();
+        });
+      }, 450);
       return () => window.clearTimeout(t);
     }
   }, [success, autoPrint]);
@@ -1253,7 +1259,12 @@ export default function KasirScreen() {
         <RbBtn
           label="Cetak"
           Icon={Printer}
-          onClick={() => ui.run(() => window.print(), 'kasir-cetak')}
+          onClick={() =>
+            ui.run(async () => {
+              if (success && (await cetakStrukBluetooth(success.receipt))) return;
+              window.print();
+            }, 'kasir-cetak')
+          }
           disabled={!success || ui.locked('kasir-cetak')}
         />
         <RbBtn
@@ -2009,7 +2020,12 @@ export default function KasirScreen() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => ui.run(() => window.print(), 'cetak-struk')}
+              onClick={() =>
+                ui.run(async () => {
+                  if (success && (await cetakStrukBluetooth(success.receipt))) return;
+                  window.print();
+                }, 'cetak-struk')
+              }
               disabled={ui.locked('cetak-struk')}
             >
               <Printer className="h-4 w-4" /> Cetak Struk

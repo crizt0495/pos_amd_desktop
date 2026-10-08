@@ -26,6 +26,13 @@ import {
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { bacaPrinterSettings, setPrinterSettings, type PreferensiPrinter, type UkuranPrinter } from '@/lib/printerSettings';
+import {
+  didukungBluetooth,
+  dengarStatusBluetooth,
+  pasangkanBluetooth,
+  putusBluetooth,
+  type StatusBluetooth,
+} from '@/lib/bluetoothPrinter';
 import { rupiah } from '@/lib/format';
 import { bersihkanTelepon } from '@/lib/telepon';
 import { Modal } from './Modal';
@@ -110,11 +117,7 @@ export function SettingsModal({
   }
 
   /* -------------------- tab Printer (struk) ---------------------- */
-  const [printer, setPrinter] = React.useState<PreferensiPrinter>({
-    nama: 'System Printer',
-    ukuran: '80mm',
-    autoPrint: true,
-  });
+  const [printer, setPrinter] = React.useState<PreferensiPrinter>(bacaPrinterSettings());
   React.useEffect(() => {
     setPrinter(bacaPrinterSettings());
   }, []);
@@ -124,6 +127,24 @@ export function SettingsModal({
       setPrinterSettings(next);
       return next;
     });
+  }
+  const [btStatus, setBtStatus] = React.useState<StatusBluetooth>('nonaktif');
+  const [btBusy, setBtBusy] = React.useState(false);
+  React.useEffect(() => dengarStatusBluetooth(setBtStatus), []);
+  const btLabel: Record<StatusBluetooth, string> = {
+    'tidak-didukung': 'Tidak didukung browser',
+    nonaktif: 'Belum dipasangkan',
+    mencoba: 'Menyambung…',
+    tersambung: 'Tersambung',
+    gagal: 'Gagal tersambung',
+  };
+  async function klikPasangBt() {
+    setBtBusy(true);
+    const r = await pasangkanBluetooth();
+    setBtBusy(false);
+    if (r.ok) toast.ok('Printer Bluetooth', r.pesan);
+    else toast.error('Printer Bluetooth', r.pesan);
+    setPrinter(bacaPrinterSettings());
   }
 
   /* ---------------------- tab Tampilan (display total) ---------------- */
@@ -484,6 +505,77 @@ export function SettingsModal({
               onChange={(e) => ubahPrinter({ autoPrint: e.target.checked })}
             />
           </label>
+
+          {/* ---------- Printer Bluetooth (Web Bluetooth, auto reconnect) ---------- */}
+          <div className="space-y-2 rounded-lg border border-[#d8e0ec] p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] font-semibold text-[#35485c]">Printer Bluetooth</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+                  btStatus === 'tersambung'
+                    ? 'bg-[#e6f6ed] text-[#0ca678]'
+                    : btStatus === 'gagal'
+                      ? 'bg-[#ffe3e3] text-[#e03131]'
+                      : 'bg-[#eef3f9] text-[#5b6b80]'
+                }`}
+              >
+                {btLabel[btStatus]}
+              </span>
+            </div>
+            {printer.btDeviceName ? (
+              <p className="text-[11px] text-[#7a8ba0]">
+                Perangkat: <strong>{printer.btDeviceName}</strong>
+                {printer.btAutoConnect ? ' — sambung otomatis saat aplikasi dibuka.' : ''}
+              </p>
+            ) : (
+              <p className="text-[11px] text-[#7a8ba0]">
+                Pasangkan sekali, lalu aplikasi menyambung sendiri tiap dibuka. Struk langsung
+                terkirim ke printer thermal (58mm/80mm) tanpa dialog print.
+              </p>
+            )}
+            {didukungBluetooth() ? (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-primary !py-1.5 text-[12px]"
+                  onClick={() => void klikPasangBt()}
+                  disabled={btBusy}
+                >
+                  {btBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {printer.btDeviceId ? 'Ganti Perangkat' : 'Pasangkan Printer'}
+                </button>
+                {printer.btDeviceId ? (
+                  <button
+                    type="button"
+                    className="btn-outline !py-1.5 text-[12px]"
+                    onClick={() => {
+                      putusBluetooth();
+                      setPrinter(bacaPrinterSettings());
+                    }}
+                  >
+                    Putuskan
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[10.5px] font-semibold text-[#e03131]">
+                Browser ini tidak mendukung Web Bluetooth — pakai Chrome atau Edge.
+              </p>
+            )}
+            {printer.btDeviceId ? (
+              <label className="flex cursor-pointer items-center justify-between gap-3">
+                <span className="text-[12px] font-semibold text-[#35485c]">
+                  Sambung otomatis
+                </span>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[#1b5fa8]"
+                  checked={printer.btAutoConnect}
+                  onChange={(e) => ubahPrinter({ btAutoConnect: e.target.checked })}
+                />
+              </label>
+            ) : null}
+          </div>
         </div>
       ) : tab === 'tampilan' ? (
         <div className="space-y-3">
