@@ -54,6 +54,15 @@ export function SatuanVarianTable({
     next[i] = { ...cur, ...patch };
     // Baris pertama selalu satuan dasar: konversi tidak bisa diubah.
     if (i === 0 && patch.konversi !== undefined) next[i]!.konversi = '1';
+
+    // Auto harga modal satuan turunan: modal utama / konversi. Kalau harga
+    // modal utama berubah, semua baris turunan ikut hitung ulang.
+    const modalUtama = parseRupiah(next[0]!.harga_beli);
+    for (let j = 1; j < next.length; j += 1) {
+      const konv = Number(next[j]!.konversi) || 1;
+      const nilai = konv > 0 ? Math.round(modalUtama / konv) : 0;
+      next[j] = { ...next[j]!, harga_beli: String(nilai) };
+    }
     onChange(next);
   }
 
@@ -67,7 +76,7 @@ export function SatuanVarianTable({
     <div className="mt-3">
       <div className="mb-1.5 flex items-center gap-2">
         <p className="text-[12.5px] font-bold text-[#1b3a5c]">Satuan &amp; Harga *</p>
-        <span className="text-[11px] text-[#9fb0c4]">satuan pertama = satuan dasar (stok)</span>
+        <span className="text-[11px] text-[#9fb0c4]">baris 1 = satuan dasar (kecil); satuan yang lebih besar harus di baris bawah dengan konversi &gt; 1</span>
       </div>
 
       <div className="overflow-x-auto rounded-md border border-[#d8e0ec]">
@@ -106,7 +115,7 @@ export function SatuanVarianTable({
                       onChange={(e) => ubah(i, { satuan: e.target.value })}
                     />
                     {i === 0 ? (
-                      <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">satuan dasar</span>
+                      <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
                     ) : null}
                     {isKembar ? (
                       <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
@@ -115,11 +124,19 @@ export function SatuanVarianTable({
 
                   <td className="td p-1.5">
                     <RupiahInput
-                      className="!h-8 w-full rounded-md !text-[12.5px] text-right"
+                      className={`!h-8 w-full rounded-md !text-[12.5px] text-right ${
+                        i > 0 ? 'bg-[#f6f9fd] text-[#7a8ba0]' : ''
+                      }`}
                       ariaLabel={`Harga modal ${b.satuan || `baris ${i + 1}`}`}
                       value={b.harga_beli}
+                      disabled={i > 0}
                       onChange={(v) => ubah(i, { harga_beli: String(v) })}
                     />
+                    {i > 0 ? (
+                      <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">
+                        otomatis = modal utama / konversi
+                      </span>
+                    ) : null}
                   </td>
 
                   <td className="td p-1.5">

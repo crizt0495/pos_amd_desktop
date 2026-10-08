@@ -415,7 +415,12 @@ export default function KasirScreen() {
         unit: satuan,
         satuanList: units,
         variants: varian,
-        stock: p.stock,
+        // `stock` = stok yang boleh dibeli dengan satuan ini (dasar / konversi).
+        stock:
+          typeof p.stock === 'number'
+            ? Math.max(0, Math.floor(p.stock / Math.max(1, v0?.konversi ?? 1)))
+            : null,
+        baseStock: typeof p.stock === 'number' ? p.stock : null,
       }),
     );
     kilat(p.id);
@@ -741,6 +746,10 @@ export default function KasirScreen() {
             cost: v.harga_beli,
             barcode: v.barcode || l.barcode,
             discount: potonganAuto({ ...l, price: v.harga_jual, qty: l.qty }),
+            stock:
+              typeof l.baseStock === 'number'
+                ? Math.max(0, Math.floor(l.baseStock / Math.max(1, v.konversi ?? 1)))
+                : l.stock,
           }
         : { ...l, unit: satuan };
       return copy;

@@ -101,6 +101,8 @@ export interface CartLine {
   variants: ProductVariant[];
   /** Stok saat ditambahkan (untuk membatasi tombol +). */
   stock: number | null;
+  /** Stok total dalam satuan dasar (tidak diubah saat ganti satuan). */
+  baseStock?: number | null;
 }
 
 export interface Transaction {
