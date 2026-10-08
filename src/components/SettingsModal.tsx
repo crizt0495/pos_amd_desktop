@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { BadgePercent, Eye, Loader2, Monitor, Store } from 'lucide-react';
+import { BadgePercent, Eye, Loader2, Monitor, Printer as PrinterIcon, Store } from 'lucide-react';
 
 import { productsApi, settingsApi } from '@/lib/api';
 import { useButtonGuard } from '@/lib/useButtonGuard';
@@ -25,6 +25,7 @@ import {
   setDiskonPaten,
   type DiskonPaten,
 } from '@/lib/diskonPaten';
+import { bacaPrinterSettings, setPrinterSettings, type PreferensiPrinter, type UkuranPrinter } from '@/lib/printerSettings';
 import { rupiah } from '@/lib/format';
 import { bersihkanTelepon } from '@/lib/telepon';
 import { Modal } from './Modal';
@@ -39,7 +40,7 @@ type Form = {
   cashierName: string;
 };
 
-type Tab = 'toko' | 'diskon' | 'tampilan';
+type Tab = 'toko' | 'diskon' | 'tampilan' | 'printer';
 
 /** Pengaturan toko (tersimpan per akun) + preferensi tampilan layar kasir. */
 export function SettingsModal({
@@ -106,6 +107,23 @@ export function SettingsModal({
     setForm((f) => ({ ...f, storeName: f.storeName.trim() || 'Toko Saya' }));
     onSaved?.(form.storeName.trim() || 'Toko Saya');
     onClose();
+  }
+
+  /* -------------------- tab Printer (struk) ---------------------- */
+  const [printer, setPrinter] = React.useState<PreferensiPrinter>({
+    nama: 'System Printer',
+    ukuran: '80mm',
+    autoPrint: true,
+  });
+  React.useEffect(() => {
+    setPrinter(bacaPrinterSettings());
+  }, []);
+  function ubahPrinter(patch: Partial<PreferensiPrinter>) {
+    setPrinter((prev) => {
+      const next = { ...prev, ...patch };
+      setPrinterSettings(next);
+      return next;
+    });
   }
 
   /* ---------------------- tab Tampilan (display total) ---------------- */
@@ -236,6 +254,7 @@ export function SettingsModal({
             { id: 'toko' as const, label: 'Toko', Icon: Store },
             { id: 'diskon' as const, label: 'Diskon', Icon: BadgePercent },
             { id: 'tampilan' as const, label: 'Tampilan', Icon: Monitor },
+            { id: 'printer' as const, label: 'Printer', Icon: PrinterIcon },
           ] satisfies { id: Tab; label: string; Icon: typeof Store }[]
         ).map((t) => (
           <button
@@ -412,6 +431,59 @@ export function SettingsModal({
               </p>
             ) : null}
           </div>
+        </div>
+      ) : tab === 'printer' ? (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
+            <PrinterIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Setting ini hanya berlaku di perangkat ini. Pilihan “System Printer” dikirim ke
+            browser lewat <code>window.print()</code>.
+          </div>
+
+          <label className="block space-y-1">
+            <span className="label">Pilih Printer</span>
+            <select
+              className="input"
+              value={printer.nama}
+              onChange={(e) => ubahPrinter({ nama: e.target.value })}
+            >
+              <option value="System Printer">System Printer (default browser)</option>
+            </select>
+            <p className="text-[10.5px] text-[#7a8ba0]">
+              Daftar printer spesifik disediakan browser saat <code>window.print()</code>;
+              pilihan saat ini tetap memakai dialog print default.
+            </p>
+          </label>
+
+          <div className="space-y-1">
+            <span className="label">Ukuran Kertas</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['58mm', '80mm', 'A4'] as UkuranPrinter[]).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => ubahPrinter({ ukuran: u })}
+                  className={`rounded-lg border px-2 py-2 text-[12px] font-bold transition ${
+                    printer.ukuran === u
+                      ? 'border-[#1b5fa8] bg-[#e8f1fa] text-[#1b5fa8]'
+                      : 'border-[#d8e0ec] bg-white text-[#5b6b80]'
+                  }`}
+                >
+                  {u === '58mm' ? '58mm Thermal' : u === '80mm' ? '80mm Thermal' : 'A4'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-[#d8e0ec] p-2.5">
+            <span className="text-[12.5px] font-semibold text-[#35485c]">Auto Print setelah simpan transaksi</span>
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[#1b5fa8]"
+              checked={printer.autoPrint}
+              onChange={(e) => ubahPrinter({ autoPrint: e.target.checked })}
+            />
+          </label>
         </div>
       ) : tab === 'tampilan' ? (
         <div className="space-y-3">

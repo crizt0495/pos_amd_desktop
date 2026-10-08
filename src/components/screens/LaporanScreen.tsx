@@ -70,6 +70,52 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
   const range = preset === 'all' ? {} : { from, to };
 
+  async function cetakLaporan() {
+    const meta = await loadStoreMeta('KasirPro');
+    const rows = list ?? [];
+    const periode =
+      preset === 'all'
+        ? 'Semua Periode'
+        : `${from || '-'} s/d ${to || '-'}`;
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) {
+      alert('Izinkan popup untuk bisa mencetak.');
+      return;
+    }
+    const rowsHtml = rows
+      .map(
+        (t) => `
+        <tr>
+          <td>${new Date(t.created_at).toLocaleString('id-ID')}</td>
+          <td>${t.invoice_no}</td>
+          <td>${t.customer_name ?? '-'}</td>
+          <td class="num">${rupiah(t.total)}</td>
+          <td>${PAYMENT_METHOD_LABEL[t.payment_method] ?? t.payment_method}</td>
+        </tr>`,
+      )
+      .join('');
+    win.document.write(`<!doctype html><html><head><title>Laporan</title>
+      <style>
+        body{font-family:sans-serif;padding:24px;color:#1b3a5c}
+        h1,h2{margin:0;padding:0}
+        table{width:100%;border-collapse:collapse;margin-top:12px}
+        th,td{border:1px solid #d8e0ec;padding:6px 8px;font-size:12px}
+        th{background:#f6f9fd;text-align:left}
+        .num{text-align:right;font-variant-numeric:tabular-nums}
+        .total{margin-top:16px;font-size:20px;font-weight:bold;text-align:right}
+      </style></head><body>
+      <h1>${meta.name}</h1>
+      <h2>Laporan Penjualan — Periode ${periode}</h2>
+      <table>
+        <thead><tr><th>Tanggal</th><th>Invoice</th><th>Pelanggan</th><th class="num">Total</th><th>Bayar</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p class="total">Total Penjualan: ${rupiah(rows.reduce((s, t) => s + t.total, 0))}</p>
+      <script>window.onload=function(){window.print();}</script>
+    </body></html>`);
+    win.document.close();
+  }
+
   const load = React.useCallback(async () => {
     if (!ready) return;
     setLoading(true);
@@ -251,7 +297,7 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
         <button
           type="button"
           className="btn-outline h-8 px-3"
-          onClick={() => ui.run(() => window.print(), 'cetak-laporan')}
+          onClick={() => ui.run(() => cetakLaporan(), 'cetak-laporan')}
           disabled={ui.locked('cetak-laporan')}
         >
           <Printer className="h-3.5 w-3.5" /> Cetak Laporan

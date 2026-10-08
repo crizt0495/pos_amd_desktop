@@ -49,6 +49,7 @@ import {
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { buildReceiptPreview, loadStoreMeta, type StoreMeta } from '@/lib/receipt';
+import { bacaPrinterSettings } from '@/lib/printerSettings';
 import { useToast } from '@/components/Toast';
 import { BigTotalDisplay } from '@/components/BigTotalDisplay';
 import { Modal } from '@/components/Modal';
@@ -129,6 +130,16 @@ function RbBtn({
 }
 
 /* --------------------------------------------------------------------- */
+
+function ReceiptWrap({ data }: { data: ReceiptData }) {
+  const ukuran = bacaPrinterSettings().ukuran;
+  const width = ukuran === '58mm' ? '58mm' : ukuran === '80mm' ? '80mm' : '100%';
+  return (
+    <div style={{ width, maxWidth: width }}>
+      <ReceiptView data={data} />
+    </div>
+  );
+}
 
 export default function KasirScreen() {
   const toast = useToast();
@@ -1705,9 +1716,19 @@ export default function KasirScreen() {
                   <td className="td tnum text-right font-bold text-[#1b3a5c]">{rupiah(jumlah)}</td>
                   <td className="td text-center">
                     <div className="flex items-center justify-center gap-1">
-                      {activeRow === i ? (
-                        <Pencil className="h-3.5 w-3.5 text-[#f08c00]" aria-label="sedang diubah" />
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setActiveRow((cur) => (cur === i ? null : i))}
+                        title="Edit baris ini"
+                        aria-label={`Edit baris ${i + 1}`}
+                        className={`grid h-6 w-6 place-items-center rounded border transition ${
+                          activeRow === i
+                            ? 'border-[#f08c00] bg-[#fff4e5] text-[#f08c00]'
+                            : 'border-[#cdd8e6] bg-white text-[#9fb0c4] hover:bg-[#f6f9fd] hover:text-[#35485c]'
+                        }`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => ui.run(() => hapusBaris(i), `hapus-baris-${i}`)}
@@ -1996,7 +2017,9 @@ export default function KasirScreen() {
           </>
         }
       >
-        {success ? <ReceiptView data={success.receipt} /> : null}
+        {success ? (
+          <ReceiptWrap data={success.receipt} />
+        ) : null}
       </Modal>
     </div>
   );
