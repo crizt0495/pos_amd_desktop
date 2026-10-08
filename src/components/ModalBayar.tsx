@@ -154,7 +154,7 @@ export function ModalBayar({
           {diskonTidakSah ? (
             <p className="flex items-start gap-1.5 rounded-lg border border-[#ffc9c9] bg-[#fff5f5] px-3.5 py-2.5 text-[12px] leading-snug text-[#c92a2a]">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Diskon tidak boleh lebih besar dari subtotal. Periksa kolom Diskon/Potongan di
+              Potongan tidak boleh lebih besar dari subtotal. Periksa kolom Potongan di
               keranjang, lalu kurangi atau ketik ulang nilainya.
             </p>
           ) : null}
