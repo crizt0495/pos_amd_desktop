@@ -687,7 +687,7 @@ export default function ProdukScreen() {
         open={open}
         title={editing ? 'Ubah Produk' : 'Tambah Produk'}
         onClose={() => !simpan.busy && setOpen(false)}
-        width="max-w-3xl"
+        width="max-w-4xl"
         footer={
           <>
             <button type="button" className="btn-outline" onClick={() => setOpen(false)} disabled={simpan.busy}>

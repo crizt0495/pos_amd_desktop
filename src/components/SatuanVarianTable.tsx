@@ -100,15 +100,15 @@ export function SatuanVarianTable({
       </div>
 
       <div className="overflow-x-auto rounded-md border border-[#d8e0ec]">
-        <table className="w-full min-w-[620px] border-collapse text-left">
+        <table className="w-full min-w-[800px] border-collapse text-left">
           <thead className="bg-[#f6f9fd]">
             <tr>
-              <th className="th w-[112px]">Satuan*</th>
-              <th className="th w-[112px] text-right">Harga Modal*</th>
-              <th className="th w-[112px] text-right">Harga Jual*</th>
-              <th className="th w-[104px] text-right">Konversi</th>
-              <th className="th w-[140px]">Barcode Satuan</th>
-              <th className="th w-[64px] text-center">Aksi</th>
+              <th className="th w-[220px]">Satuan</th>
+              <th className="th w-[140px] text-right">Harga Beli*</th>
+              <th className="th w-[140px] text-right">Harga Jual*</th>
+              <th className="th w-[96px] text-right">Konversi</th>
+              <th className="th w-[150px]">Barcode Satuan</th>
+              <th className="th w-[56px] text-center">Aksi</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#eef2f7] bg-white">
@@ -124,87 +124,86 @@ export function SatuanVarianTable({
                 parseRupiah(b.harga_jual) < parseRupiah(b.harga_beli);
               return (
                 <tr key={`baris-${i}`} className={isKembar ? 'bg-[#fff5f5]' : undefined}>
-                  <td className="td p-1.5">
+                  <td className="td p-1.5 align-top">
                     {/* Kolom satuan: TIDAK BOLEH teks bebas — hanya pilihan
                         dari master_satuan (baris lama di luar master tetap
                         tampil bertanda agar tidak hilang saat disimpan).
-                        Tombol [+] menambah satuan baru langsung ke master. */}
-                    <div className="flex items-start gap-1">
-                      <div className="min-w-0 flex-1">
-                        <select
-                          className={`input h-8 rounded-md text-[12.5px] ${
-                            salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
-                          }`}
-                          value={b.satuan}
-                          aria-label={`Satuan baris ${i + 1}`}
-                          onChange={(e) => ubah(i, { satuan: e.target.value })}
-                        >
-                          <option value="">— pilih satuan —</option>
-                          {opsiSatuan.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                          {b.satuan &&
-                          !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
-                            <option value={b.satuan}>{b.satuan} (di luar master)</option>
-                          ) : null}
-                        </select>
-                        {i === 0 ? (
-                          <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
-                        ) : (
-                          <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN TURUNAN</span>
-                        )}
-                        {!b.satuan.trim() ? (
-                          <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">pilih satuan</span>
+                        Tombol [+] menambah satuan baru langsung ke master.
+                        Dropdown + [+] selalu satu baris, tinggi sama (h-9). */}
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        className={`input h-9 min-w-0 flex-1 rounded-md text-[12.5px] ${
+                          salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
+                        }`}
+                        value={b.satuan}
+                        aria-label={`Satuan baris ${i + 1}`}
+                        onChange={(e) => ubah(i, { satuan: e.target.value })}
+                      >
+                        <option value="">— pilih satuan —</option>
+                        {opsiSatuan.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                        {b.satuan &&
+                        !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
+                          <option value={b.satuan}>{b.satuan} (di luar master)</option>
                         ) : null}
-                        {isKembar ? (
-                          <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
-                        ) : null}
-                      </div>
+                      </select>
                       {onTambahSatuan ? (
                         <button
                           type="button"
                           onClick={() => onTambahSatuan(i)}
                           title="Tambah satuan baru"
                           aria-label={`Tambah satuan baru untuk baris ${i + 1}`}
-                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
+                          className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[17px] font-bold leading-none text-[#1b5fa8] transition hover:border-[#1b5fa8] hover:bg-[#e8f1fa]"
                         >
                           +
                         </button>
                       ) : null}
                     </div>
+                    {i === 0 ? (
+                      <span className="mt-1 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
+                    ) : (
+                      <span className="mt-1 block text-[10px] text-[#9fb0c4]">SATUAN TURUNAN</span>
+                    )}
+                    {!b.satuan.trim() ? (
+                      <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">pilih satuan</span>
+                    ) : null}
+                    {isKembar ? (
+                      <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
+                    ) : null}
                   </td>
 
-                  <td className="td p-1.5">
+                  <td className="td p-1.5 align-top">
                     <RupiahInput
-                      className="!h-8 w-full rounded-md !text-[12.5px] text-right"
+                      className="!h-9 w-full rounded-md !text-[12.5px] text-right"
                       ariaLabel={`Harga modal ${b.satuan || `baris ${i + 1}`}`}
                       value={b.harga_beli}
                       onChange={(v) => ubah(i, { harga_beli: String(v) })}
                     />
                     {i > 0 ? (
-                      <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">
+                      <span className="mt-1 block text-[10px] text-[#9fb0c4]">
                         auto = modal dasar ÷ konversi; boleh lebih, tak boleh kurang
                       </span>
                     ) : null}
                   </td>
 
-                  <td className="td p-1.5">
+                  <td className="td p-1.5 align-top">
                     <RupiahInput
-                      className="!h-8 w-full rounded-md !text-[12.5px] text-right"
+                      className="!h-9 w-full rounded-md !text-[12.5px] text-right"
                       ariaLabel={`Harga jual ${b.satuan || `baris ${i + 1}`}`}
                       value={b.harga_jual}
                       onChange={(v) => ubah(i, { harga_jual: String(v) })}
                     />
                     {isRugi ? (
-                      <span className="mt-0.5 block text-[10px] font-bold text-[#b8860b]">jual rugi</span>
+                      <span className="mt-1 block text-[10px] font-bold text-[#b8860b]">jual rugi</span>
                     ) : null}
                   </td>
 
-                  <td className="td p-1.5">
+                  <td className="td p-1.5 align-top">
                     <input
-                      className={`input tnum h-8 w-full rounded-md text-right text-[12.5px] ${
+                      className={`input tnum h-9 w-full rounded-md text-right text-[12.5px] ${
                         i === 0 ? 'bg-[#f6f9fd] text-[#7a8ba0]' : ''
                       }`}
                       type="text"
@@ -216,9 +215,9 @@ export function SatuanVarianTable({
                     />
                   </td>
 
-                  <td className="td p-1.5">
+                  <td className="td p-1.5 align-top">
                     <input
-                      className="input h-8 w-full rounded-md font-mono text-[11.5px]"
+                      className="input h-9 w-full rounded-md font-mono text-[11.5px]"
                       value={b.barcode}
                       placeholder={i === 0 ? 'barcode utama' : 'opsional'}
                       aria-label={`Barcode satuan ${b.satuan || `baris ${i + 1}`}`}
@@ -226,14 +225,14 @@ export function SatuanVarianTable({
                     />
                   </td>
 
-                  <td className="td p-1.5 text-center">
+                  <td className="td p-1.5 align-top text-center">
                     <button
                       type="button"
                       onClick={() => aksi.run(() => hapus(i), `hapus-${i}`)}
                       disabled={i === 0}
                       title={i === 0 ? 'Satuan dasar tidak bisa dihapus' : 'Hapus baris'}
                       aria-label={`Hapus baris satuan ${i + 1}`}
-                      className="grid h-8 w-8 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[#c92a2a] transition hover:bg-[#fff5f5] disabled:cursor-not-allowed disabled:border-[#e6ecf4] disabled:text-[#cdd8e6]"
+                      className="grid h-9 w-9 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[#c92a2a] transition hover:bg-[#fff5f5] disabled:cursor-not-allowed disabled:border-[#e6ecf4] disabled:text-[#cdd8e6]"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
