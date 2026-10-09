@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   BarChart3,
+  Boxes,
   FileDown,
   FileSpreadsheet,
   Loader2,
@@ -151,6 +152,9 @@ export default function LaporanPembelianScreen() {
         <span className="rb-label">Laporan · Laporan Pembelian</span>
         <Link href="/laporan" className="rb-btn">
           <ArrowLeft className="h-3.5 w-3.5" /> Laporan Penjualan
+        </Link>
+        <Link href="/laporan/pergerakan-stok" className="rb-btn">
+          <Boxes className="h-3.5 w-3.5" /> Pergerakan Stok
         </Link>
         <span className="rb-sep" />
         <button

@@ -307,8 +307,34 @@ export interface StockLog {
   stok_sesudah: number | null;
   keterangan: string | null;
   ref_id: string | null;
-  ref_tipe: 'transaksi' | 'retur' | null;
+  ref_tipe: 'transaksi' | 'retur' | 'pembelian' | null;
   created_at: string;
+}
+
+/** Jenis mutasi pada laporan Pergerakan Stok (diturunkan dari kartu stok). */
+export type JenisMutasi =
+  | 'PENJUALAN'
+  | 'PEMBELIAN'
+  | 'ADJUSTMENT'
+  | 'RETUR'
+  | 'PEMBATALAN'
+  | 'LAINNYA';
+
+/** Satu baris laporan Pergerakan Stok (gabungan seluruh mutasi kartu stok). */
+export interface StockMovement {
+  id: string;
+  created_at: string;
+  product_id: string;
+  barcode: string | null;
+  product_name: string;
+  unit: string | null;
+  jenis: JenisMutasi;
+  no_referensi: string | null;
+  masuk: number;
+  keluar: number;
+  stok_sebelum: number | null;
+  stok_sesudah: number | null;
+  keterangan: string | null;
 }
 
 export interface CartTotals {

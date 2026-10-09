@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   BookOpen,
   Boxes,
+  ClipboardCheck,
   Download,
   Loader2,
   Minus,
@@ -22,6 +23,7 @@ import { exportProductsCsv, produkInputDariBaris, unduhTeks, type ParsedProdukRo
 import { CsvImportModal, type ImportResult } from '@/components/CsvImportModal';
 import { KartuStokModal } from '@/components/KartuStokModal';
 import { StokMasukModal } from '@/components/StokMasukModal';
+import { StokOpnameModal } from '@/components/StokOpnameModal';
 import { normalisasiVarian, varianKeJson, validasiVarian, type VarianBaris } from '@/lib/format';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
@@ -84,6 +86,8 @@ export default function ProdukScreen() {
   const [csvOpen, setCsvOpen] = React.useState(false);
   const [stokMasuk, setStokMasuk] = React.useState<Product | null>(null);
   const stokMasukGuard = useButtonGuard();
+  const [opname, setOpname] = React.useState<Product | null>(null);
+  const opnameGuard = useButtonGuard();
   const [kartu, setKartu] = React.useState<Product | null>(null);
   const [kartuLogs, setKartuLogs] = React.useState<StockLog[]>([]);
   const [kartuLoading, setKartuLoading] = React.useState(false);
@@ -432,6 +436,36 @@ export default function ProdukScreen() {
     );
   }
 
+  /** Buka modal stok opname — admin memasukkan stok fisik hasil hitung ulang. */
+  function bukaOpname(p: Product) {
+    setOpname(p);
+  }
+
+  /** Simpan opname: server hitung selisih & catat sebagai ADJUSTMENT. */
+  function simpanOpname(stokFisik: number, keterangan: string) {
+    const p = opname;
+    if (!p) return;
+    void opnameGuard.guard(
+      async () => {
+        const res = await stockApi.opname(p.id, stokFisik, keterangan);
+        if (!res.ok) {
+          toast.error('Gagal menyimpan opname', res.error);
+          return;
+        }
+        const { delta, stok_sesudah } = res.data;
+        setProducts((prev) => prev.map((x) => (x.id === p.id ? { ...x, stock: stok_sesudah } : x)));
+        setOpname(null);
+        toast.ok(
+          'Stok opname tersimpan',
+          `${p.name} — selisih ${delta > 0 ? '+' : ''}${angka(delta)} ${p.unit}${
+            keterangan ? ` (${keterangan})` : ''
+          } → stok kini ${angka(stok_sesudah)}`,
+        );
+      },
+      { pesanTunggu: 'Menyimpan…' },
+    );
+  }
+
   /** Buka kartu stok + muat riwayat mutasi produk. */
   function bukaKartu(p: Product) {
     setKartu(p);
@@ -654,6 +688,16 @@ export default function ProdukScreen() {
                             title="Stok masuk / keluar"
                           >
                             <PackagePlus className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost px-2 py-1 text-[11.5px] text-[#5b6b80] hover:bg-[#e8f1fa] hover:text-[#1b5fa8]"
+                            onClick={() => ui.run(() => bukaOpname(p), `opname-${p.id}`)}
+                            disabled={ui.locked(`opname-${p.id}`)}
+                            aria-label={`Stok opname ${p.name}`}
+                            title="Stok opname (koreksi stok fisik)"
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -997,6 +1041,15 @@ export default function ProdukScreen() {
         busy={stokMasukGuard.busy}
         onClose={() => setStokMasuk(null)}
         onAdjust={simpanStokMasuk}
+      />
+
+      {/* --------------------------- stok opname ----------------------- */}
+      <StokOpnameModal
+        open={Boolean(opname)}
+        product={opname}
+        busy={opnameGuard.busy}
+        onClose={() => setOpname(null)}
+        onSubmit={simpanOpname}
       />
 
       {/* ------------------------- kartu stok (Fitur #5) ---------------- */}

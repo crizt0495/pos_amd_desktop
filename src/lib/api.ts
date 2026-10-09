@@ -21,6 +21,7 @@ import type {
   ReturnRecord,
   SatuanMaster,
   StockLog,
+  StockMovement,
   TopProduct,
   Transaction,
   TransactionItem,
@@ -324,6 +325,70 @@ export const stockApi = {
           stok_sesudah: (x as Record<string, unknown>).stok_sesudah == null ? null : num((x as Record<string, unknown>).stok_sesudah),
         })),
       };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /**
+   * Laporan Pergerakan Stok: seluruh mutasi (jual, beli, retur, pembatalan,
+   * penyesuaian/opname) lengkap dengan nomor referensi. Data otomatis dari
+   * kartu stok — tidak ada input manual.
+   */
+  async movements(filter: {
+    from?: string;
+    to?: string;
+    productId?: string;
+    jenis?: string;
+    q?: string;
+  } = {}): Promise<Result<StockMovement[]>> {
+    try {
+      const { data, error } = await createClient().rpc('kasir_stock_movements', {
+        p_from: filter.from ?? null,
+        p_to: filter.to ?? null,
+        p_product_id: filter.productId || null,
+        p_jenis: filter.jenis || null,
+        p_q: filter.q?.trim() || null,
+      });
+      if (error) return { ok: false, error: rpcMsg(error, 'pergerakan stok') };
+      const list = Array.isArray(data) ? data : [];
+      return {
+        ok: true,
+        data: list.map((x) => {
+          const r = x as Record<string, unknown>;
+          return {
+            ...(r as unknown as StockMovement),
+            masuk: num(r.masuk),
+            keluar: num(r.keluar),
+            stok_sebelum: r.stok_sebelum == null ? null : num(r.stok_sebelum),
+            stok_sesudah: r.stok_sesudah == null ? null : num(r.stok_sesudah),
+          };
+        }),
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /**
+   * Stok opname: tetapkan stok fisik baru untuk satu produk. Selisih terhadap
+   * stok sistem dihitung di server dan dicatat sebagai ADJUSTMENT di
+   * Pergerakan Stok (atomik, tercatat di kartu stok).
+   */
+  async opname(
+    productId: string,
+    stokFisik: number,
+    keterangan?: string,
+  ): Promise<Result<{ stok_sesudah: number; delta: number }>> {
+    try {
+      const r = await createClient().rpc('kasir_opname_stock', {
+        p_product_id: productId,
+        p_stok_fisik: num(stokFisik),
+        p_keterangan: keterangan ?? null,
+      });
+      if (r.error) return { ok: false, error: rpcMsg(r.error, 'stok opname') };
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      return { ok: true, data: { stok_sesudah: num(d.stok_sesudah), delta: num(d.delta) } };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
