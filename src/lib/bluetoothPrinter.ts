@@ -59,12 +59,17 @@ const LAYANAN_UMUM = [
   '49535343-fe7d-4ae5-8fa9-9fafd205e455',
 ];
 
+/** Nama perangkat yang biasanya printer thermal (untuk auto-deteksi). */
+const NAMA_PRINTER =
+  /(print|pos|thermal|receipt|struk|esc|58|80|tm-?t|rp\d|xp-?\d|goojprt|yichip|peripage|epson|star|xprinter|black ?copper|zywell|hc-?0|mpt|sp-?t)/i;
+
 let perangkat: PerangkatBluetooth | null = null;
 let karakter: Karakter | null = null;
 let status: StatusBluetooth = 'nonaktif';
 let mencobaLagi = false;
 let sedangSambung = false;
 let timerUlang: number | null = null;
+let pemicuTerpasang = false;
 const dipantau = new WeakSet<PerangkatBluetooth>();
 const pendengar = new Set<(s: StatusBluetooth) => void>();
 
@@ -121,6 +126,7 @@ async function sambung(dev: PerangkatBluetooth, percobaan = 3): Promise<boolean>
           perangkat = dev;
           karakter = c;
           setStatus('tersambung');
+          hentikanPengulang();
           return true;
         }
       } catch {
@@ -179,6 +185,63 @@ function hentikanPengulang() {
   timerUlang = null;
 }
 
+/**
+ * Auto-deteksi printer dari izin Web Bluetooth yang sudah pernah diberikan.
+ * `getDevices()` mengembalikan perangkat yang pernah diizinkan (butuh gesture
+ * sekali saat pemasangan awal), jadi koneksi berikutnya tak perlu dialog lagi.
+ */
+async function deteksiPerangkat(): Promise<PerangkatBluetooth | null> {
+  const bt = api();
+  if (!bt?.getDevices) return null;
+  let devices: PerangkatBluetooth[] = [];
+  try {
+    devices = await bt.getDevices();
+  } catch {
+    return null;
+  }
+  if (!devices.length) return null;
+
+  const pref = bacaPrinterSettings();
+  // 1. Pakai perangkat yang tersimpan bila masih ada.
+  if (pref.btDeviceId) {
+    const cocok = devices.find((d) => d.id === pref.btDeviceId);
+    if (cocok) return cocok;
+  }
+  // 2. Adopsi otomatis: utamakan nama yang mirip printer, atau bila hanya ada
+  //    satu perangkat yang pernah diizinkan.
+  const terpilih =
+    devices.find((d) => d.name && NAMA_PRINTER.test(d.name)) ??
+    (devices.length === 1 ? devices[0] : null);
+  if (!terpilih) return null;
+
+  const p = bacaPrinterSettings();
+  p.btDeviceId = terpilih.id;
+  p.btDeviceName = terpilih.name || 'Printer Bluetooth';
+  p.btAutoConnect = true;
+  setPrinterSettings(p);
+  return terpilih;
+}
+
+/**
+ * Pemicu koneksi ulang: saat jendela kembali aktif / tab terlihat lagi / online.
+ * Web Bluetooth sering memutus koneksi ketika tab lama di latar belakang, jadi
+ * sebelum mencetak koneksi dipulihkan otomatis. Idempotent.
+ */
+function pasangPemicuKoneksi() {
+  if (typeof window === 'undefined' || pemicuTerpasang) return;
+  pemicuTerpasang = true;
+  const coba = () => {
+    const pref = bacaPrinterSettings();
+    if (!pref.btAutoConnect || !pref.btDeviceId || tersambung() || sedangSambung) return;
+    void autoSambungBluetooth();
+  };
+  window.addEventListener('focus', coba);
+  window.addEventListener('online', coba);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') coba();
+  });
+}
+
 /** Pasangkan perangkat baru — HARUS dipanggil dari handler klik user. */
 export async function pasangkanBluetooth(): Promise<{ ok: boolean; pesan: string }> {
   const bt = api();
@@ -197,8 +260,11 @@ export async function pasangkanBluetooth(): Promise<{ ok: boolean; pesan: string
   pref.btDeviceName = dev.name || 'Printer Bluetooth';
   pref.btAutoConnect = true;
   setPrinterSettings(pref);
+  pasangPemicuKoneksi();
   pantau(dev);
   const ok = await sambung(dev);
+  // Bila belum tersambung (mis. printer baru dinyalakan), terus coba otomatis.
+  if (!ok) mulaiPengulang();
   return {
     ok,
     pesan: ok
@@ -225,36 +291,41 @@ export function putusBluetooth() {
 }
 
 /**
- * Sambung otomatis ke perangkat yang pernah dipasang — dipanggil saat
- * aplikasi dibuka. Tidak butuh gesture karena izin sudah diberikan
- * sekali saat pasangkan.
+ * Sambung otomatis ke printer yang pernah dipasang — dipanggil saat aplikasi
+ * dibuka, saat jendela kembali aktif, dan sebelum mencetak. Tidak butuh gesture
+ * karena izin sudah diberikan sekali saat pemasangan. Bila perangkat tersimpan
+ * belum terdaftar, coba auto-deteksi dari daftar perangkat yang pernah diizinkan.
  */
 export async function autoSambungBluetooth(): Promise<StatusBluetooth> {
   const bt = api();
-  const pref = bacaPrinterSettings();
   if (!bt) {
     setStatus('tidak-didukung');
     return status;
   }
-  if (!pref.btAutoConnect || !pref.btDeviceId || !bt.getDevices) {
+  pasangPemicuKoneksi();
+  const pref = bacaPrinterSettings();
+  if (!pref.btAutoConnect) {
     setStatus('nonaktif');
     return status;
   }
+
   setStatus('mencoba');
   try {
-    const devices = await bt.getDevices();
-    const dev = devices.find((d) => d.id === pref.btDeviceId);
-    if (!dev) {
+    const dev = perangkat ?? (await deteksiPerangkat());
+    if (dev) {
+      pantau(dev);
+      await sambung(dev);
+    } else {
       setStatus('gagal');
-      return status;
     }
-    pantau(dev);
-    await sambung(dev);
   } catch {
     setStatus('gagal');
   }
-  // Gagal sekali pun tetap diulang otomatis tiap 6 detik.
-  if (status !== 'tersambung') mulaiPengulang();
+
+  // Sudah pernah dipasangkan tapi belum tersambung (mis. printer masih mati)
+  // -> teruskan percobaan tiap 6 detik sampai ketemu. Bila belum ada perangkat
+  // terdaftar sama sekali, jangan polling kosong.
+  if (status !== 'tersambung' && bacaPrinterSettings().btDeviceId) mulaiPengulang();
   return status;
 }
 

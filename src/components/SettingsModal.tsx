@@ -38,6 +38,7 @@ import {
 } from '@/lib/diskonPaten';
 import { bacaPrinterSettings, setPrinterSettings, type PreferensiPrinter, type UkuranPrinter } from '@/lib/printerSettings';
 import {
+  autoSambungBluetooth,
   didukungBluetooth,
   dengarStatusBluetooth,
   pasangkanBluetooth,
@@ -174,6 +175,15 @@ export function SettingsModal({
     if (r.ok) toast.ok('Printer Bluetooth', r.pesan);
     else toast.error('Printer Bluetooth', r.pesan);
     setPrinter(bacaPrinterSettings());
+  }
+  /** Deteksi ulang + sambung tanpa dialog (memakai izin yang sudah ada). */
+  async function klikDeteksiBt() {
+    setBtBusy(true);
+    const s = await autoSambungBluetooth();
+    setBtBusy(false);
+    setPrinter(bacaPrinterSettings());
+    if (s === 'tersambung') toast.ok('Printer Bluetooth', 'Tersambung otomatis.');
+    else toast.error('Printer Bluetooth', 'Belum tersambung — pastikan printer menyala & dekat perangkat.');
   }
 
   /* ---------------------- tab Tampilan (display total) ---------------- */
@@ -699,16 +709,19 @@ export function SettingsModal({
             {printer.btDeviceName ? (
               <p className="text-[11px] text-[#7a8ba0]">
                 Perangkat: <strong>{printer.btDeviceName}</strong>
-                {printer.btAutoConnect ? ' — sambung otomatis saat aplikasi dibuka.' : ''}
+                {printer.btAutoConnect
+                  ? ' — terdeteksi & tersambung otomatis saat aplikasi dibuka, saat kembali ke tab, dan sebelum mencetak.'
+                  : ''}
               </p>
             ) : (
               <p className="text-[11px] text-[#7a8ba0]">
-                Pasangkan sekali, lalu aplikasi menyambung sendiri tiap dibuka. Struk langsung
-                terkirim ke printer thermal (58mm/80mm) tanpa dialog print.
+                Pasangkan sekali (browser menampilkan daftar printer di sekitar), lalu aplikasi
+                mendeteksi & menyambung sendiri tiap kali. Struk langsung terkirim ke printer
+                thermal (58mm/80mm) tanpa dialog print.
               </p>
             )}
             {didukungBluetooth() ? (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   className="btn-primary !py-1.5 text-[12px]"
@@ -718,6 +731,16 @@ export function SettingsModal({
                   {btBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                   {printer.btDeviceId ? 'Ganti Perangkat' : 'Pasangkan Printer'}
                 </button>
+                {printer.btDeviceId ? (
+                  <button
+                    type="button"
+                    className="btn-outline !py-1.5 text-[12px]"
+                    onClick={() => void klikDeteksiBt()}
+                    disabled={btBusy}
+                  >
+                    Deteksi Ulang
+                  </button>
+                ) : null}
                 {printer.btDeviceId ? (
                   <button
                     type="button"
