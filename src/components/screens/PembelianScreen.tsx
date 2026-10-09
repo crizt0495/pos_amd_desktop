@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { History, ListChecks, PackageSearch, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
@@ -31,6 +32,7 @@ interface BarisPembelian {
  */
 export default function PembelianScreen() {
   const toast = useToast();
+  const router = useRouter();
   const [products, setProducts] = React.useState<Product[]>([]);
   const [supplierName, setSupplierName] = React.useState('');
   const [supplierId, setSupplierId] = React.useState<string | null>(null);
@@ -39,6 +41,12 @@ export default function PembelianScreen() {
   const [baris, setBaris] = React.useState<BarisPembelian[]>([]);
   const [pesan, setPesan] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+
+  // Mode Edit: id + no faktur PO yang sedang diedit (null = mode PO baru).
+  const [editId, setEditId] = React.useState<string | null>(null);
+  const [editInvoice, setEditInvoice] = React.useState<string | null>(null);
+  const editDariUrl = React.useRef<string | null>(null);
+  const editSudahMulai = React.useRef(false);
 
   // Daftar supplier (dropdown) + modal "Supplier Baru".
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
@@ -199,18 +207,17 @@ export default function PembelianScreen() {
     setRiwayatLoading(false);
   }
 
-  async function pilihRiwayat(p: PurchaseRecord) {
-    setRiwayatLoading(true);
-    const r = await purchasesApi.items(p.id);
-    setRiwayatLoading(false);
-    if (!r.ok || !r.data.length) {
-      toast.info('Tidak ada item', 'PO ini tidak punya item yang bisa dimuat.');
-      return;
-    }
+  /** Isi form Pembelian dari sebuah PO dan aktifkan Mode Edit. */
+  function terapkanKeForm(p: PurchaseRecord, items: PurchaseItemRecord[]) {
+    setEditId(p.id);
+    setEditInvoice(p.invoice_no);
     setSupplierName(p.supplier_name);
-    setSupplierId(suppliers.find((s) => s.name === p.supplier_name)?.id ?? null);
+    setSupplierId(p.supplier_id ?? suppliers.find((s) => s.name === p.supplier_name)?.id ?? null);
+    setStatus(p.status);
+    setNote(p.note ?? '');
+    setPesan(null);
     setBaris(
-      r.data.map((it) => {
+      items.map((it) => {
         // Cari dulu produk aslinya supaya pilihan SATUAN ikut ke-filter.
         const prod =
           products.find((x) => it.product_id && x.id === it.product_id) ??
@@ -231,8 +238,54 @@ export default function PembelianScreen() {
         };
       }),
     );
+  }
+
+  /** Muat PO berdasarkan id lalu masuk Mode Edit (dipakai dari ?edit=<id>). */
+  async function mulaiEdit(id: string) {
+    setRiwayatLoading(true);
+    const [pr, it] = await Promise.all([purchasesApi.get(id), purchasesApi.items(id)]);
+    setRiwayatLoading(false);
+    if (!pr.ok) {
+      toast.error('Gagal memuat PO', pr.error);
+      return;
+    }
+    if (!pr.data) {
+      toast.error('PO tidak ditemukan', 'Data pembelian ini tidak tersedia.');
+      return;
+    }
+    if (!it.ok || !it.data.length) {
+      toast.info('Tidak ada item', 'PO ini tidak punya item yang bisa diedit.');
+      return;
+    }
+    terapkanKeForm(pr.data, it.data);
+    toast.ok('Mode edit PO', `Edit PO — ${pr.data.invoice_no ?? pr.data.id.slice(0, 8)}`);
+  }
+
+  // Buka Mode Edit bila datang dari ikon Pensil di Riwayat (?edit=<id>).
+  React.useEffect(() => {
+    editDariUrl.current = new URLSearchParams(window.location.search).get('edit');
+  }, []);
+
+  React.useEffect(() => {
+    const id = editDariUrl.current;
+    if (!id || editSudahMulai.current || !products.length) return;
+    editSudahMulai.current = true;
+    void mulaiEdit(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products]);
+
+  /** Isi form lama untuk diedit (dipanggil dari popup "Riwayat Beli Terakhir"). */
+  async function pilihRiwayat(p: PurchaseRecord) {
+    setRiwayatLoading(true);
+    const r = await purchasesApi.items(p.id);
+    setRiwayatLoading(false);
+    if (!r.ok || !r.data.length) {
+      toast.info('Tidak ada item', 'PO ini tidak punya item yang bisa dimuat.');
+      return;
+    }
+    terapkanKeForm(p, r.data);
     setRiwayatOpen(false);
-    toast.ok('PO dimuat', `${r.data.length} baris dari ${p.supplier_name}.`);
+    toast.ok('Mode edit PO', `Edit PO — ${p.invoice_no ?? p.id.slice(0, 8)}`);
   }
 
   function ubah(idx: number, patch: Partial<BarisPembelian>) {
@@ -240,6 +293,22 @@ export default function PembelianScreen() {
   }
 
   const total = baris.reduce((s, b) => s + b.qty * b.cost, 0);
+
+  /** Kosongkan form & keluar dari Mode Edit. */
+  function resetForm() {
+    setEditId(null);
+    setEditInvoice(null);
+    setBaris([]);
+    setSupplierName('');
+    setSupplierId(null);
+    setStatus('lunas');
+    setNote('');
+    setKode('');
+    setPesan(null);
+    editSudahMulai.current = true;
+    if (window.location.search.includes('edit=')) router.replace('/pembelian');
+    inputRef.current?.focus();
+  }
 
   async function simpan() {
     setPesan(null);
@@ -252,7 +321,7 @@ export default function PembelianScreen() {
       return;
     }
     setBusy(true);
-    const r = await purchasesApi.create({
+    const payload = {
       supplierName: supplierName.trim(),
       supplierId,
       status,
@@ -264,22 +333,21 @@ export default function PembelianScreen() {
         unit: b.unit,
       })),
       note,
-    });
+    };
+    const r = editId
+      ? await purchasesApi.update({ id: editId, ...payload })
+      : await purchasesApi.create(payload);
     setBusy(false);
     if (!r.ok) {
       setPesan(r.error);
       return;
     }
     setPesan(
-      `Pembelian ${r.data.invoice_no ?? ''} disimpan — total ${rupiah(r.data.total)} (${r.data.status === 'hutang' ? 'Hutang' : 'Lunas'}). Stok sudah ditambah.`,
+      editId
+        ? `PO ${r.data.invoice_no ?? ''} diperbarui — total ${rupiah(r.data.total)}. Stok sudah disesuaikan dengan selisihnya.`
+        : `Pembelian ${r.data.invoice_no ?? ''} disimpan — total ${rupiah(r.data.total)} (${r.data.status === 'hutang' ? 'Hutang' : 'Lunas'}). Stok sudah ditambah.`,
     );
-    setBaris([]);
-    setSupplierName('');
-    setSupplierId(null);
-    setStatus('lunas');
-    setNote('');
-    setKode('');
-    inputRef.current?.focus();
+    resetForm();
   }
 
   async function simpanBarangBaru() {
@@ -351,22 +419,35 @@ export default function PembelianScreen() {
       {/* Header */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2">
         <Truck className="h-4 w-4 text-[#1b5fa8]" />
-        <h1 className="text-[15px] font-bold text-[#1b3a5c]">Pembelian (PO Sederhana)</h1>
+        <h1 className="text-[15px] font-bold text-[#1b3a5c]">
+          {editId ? `Edit PO - ${editInvoice ?? editId.slice(0, 8)}` : 'Pembelian (PO Sederhana)'}
+        </h1>
         <Link href="/pembelian/riwayat" className="rb-btn ml-1">
           <History className="h-3.5 w-3.5" /> Riwayat
         </Link>
+        {editId ? (
+          <span className="rounded-full bg-[#fff3bf] px-2 py-0.5 text-[10.5px] font-bold uppercase text-[#8a6d00]">
+            Mode Edit
+          </span>
+        ) : null}
 
         <span className="ml-auto flex items-center gap-2 text-[11.5px] text-[#7a8ba0]">
           <b className="tnum text-[#35485c]">{baris.length}</b> baris · total{' '}
           <b className="tnum text-[#35485c]">{rupiah(total)}</b>
         </span>
+        {editId ? (
+          <button type="button" className="rb-btn" onClick={resetForm} disabled={busy}>
+            <X className="h-3.5 w-3.5" /> Batal Edit
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={busy || !baris.length || !supplierName.trim()}
           onClick={simpan}
           className="rb-btn-go"
+          data-loading={busy}
         >
-          {busy ? 'Menyimpan…' : 'Simpan PO'}
+          {busy ? (editId ? 'Memperbarui…' : 'Menyimpan…') : editId ? 'Update PO' : 'Simpan PO'}
         </button>
       </div>
 

@@ -2,11 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   Eye,
   FileSpreadsheet,
   Loader2,
+  Pencil,
   Printer,
   RefreshCw,
   Search,
@@ -30,6 +32,7 @@ const STATUS_LABEL: Record<string, string> = { lunas: 'Lunas', hutang: 'Hutang' 
  */
 export default function RiwayatPembelianScreen() {
   const toast = useToast();
+  const router = useRouter();
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
   const [from, setFrom] = React.useState('');
   const [to, setTo] = React.useState('');
@@ -92,6 +95,12 @@ export default function RiwayatPembelianScreen() {
       return;
     }
     setDetailItems(r.data);
+  }
+
+  /** Buka form Pembelian dalam mode Edit untuk PO ini. */
+  function bukaEdit(p: PurchaseRecord) {
+    setDetail(null);
+    router.push(`/pembelian?edit=${p.id}`);
   }
 
   function cetak(p: PurchaseRecord, items: PurchaseItemRecord[]) {
@@ -290,6 +299,18 @@ export default function RiwayatPembelianScreen() {
                         </button>
                         <button
                           type="button"
+                          title="Edit PO"
+                          aria-label="Edit PO"
+                          className="rounded p-1.5 text-[#8a6d00] hover:bg-[#fff3bf]"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            bukaEdit(p);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
                           title="Hapus"
                           aria-label="Hapus"
                           className="rounded p-1.5 text-[#c92a2a] hover:bg-[#ffe3e3]"
@@ -326,6 +347,13 @@ export default function RiwayatPembelianScreen() {
                 disabled={ui.locked('riwayat-cetak') || !detailItems.length}
               >
                 <Printer className="h-3.5 w-3.5" /> Print
+              </button>
+              <button
+                type="button"
+                className="btn-outline"
+                onClick={() => bukaEdit(detail)}
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
               </button>
               <button
                 type="button"
@@ -426,7 +454,7 @@ export default function RiwayatPembelianScreen() {
       <Modal
         open={!!hapus}
         onClose={() => setHapus(null)}
-        title="Hapus Pembelian?"
+        title="Yakin hapus PO ini?"
         width="max-w-md"
         footer={
           <>
@@ -451,9 +479,9 @@ export default function RiwayatPembelianScreen() {
         }
       >
         <p className="text-[13px] text-[#35485c]">
-          Pembelian <b>{hapus?.invoice_no ?? hapus?.id.slice(0, 8)}</b> dari{' '}
-          <b>{hapus?.supplier_name || '-'}</b> akan dihapus dan stok barang yang sudah masuk akan
-          dikembalikan. Tindakan ini tidak bisa dibatalkan.
+          PO <b>{hapus?.invoice_no ?? hapus?.id.slice(0, 8)}</b> dari{' '}
+          <b>{hapus?.supplier_name || '-'}</b> akan dihapus. <b>Stok akan dikembalikan.</b>{' '}
+          Tindakan ini tidak bisa dibatalkan.
         </p>
       </Modal>
     </div>

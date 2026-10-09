@@ -689,6 +689,61 @@ export const purchasesApi = {
     }
   },
 
+  /**
+   * Ubah PO yang sudah ada (mode Edit). Supplier/status/catatan + seluruh
+   * item diganti; stok disesuaikan sebesar selisih. No Faktur tetap.
+   */
+  async update(data: {
+    id: string;
+    supplierName: string;
+    supplierId?: string | null;
+    items: { productId: string | null; name: string; qty: number; cost: number; unit?: string | null }[];
+    note?: string | null;
+    status?: PurchaseStatus;
+  }): Promise<Result<{ id: string; total: number; invoice_no: string | null; status: PurchaseStatus }>> {
+    try {
+      const { data: r, error } = await createClient().rpc('kasir_update_purchase', {
+        p_id: data.id,
+        p_supplier_name: data.supplierName,
+        p_supplier_id: data.supplierId ?? null,
+        p_items: data.items,
+        p_note: data.note ?? null,
+        p_status: data.status ?? 'lunas',
+      });
+      if (error) return { ok: false, error: rpcMsg(error, 'edit pembelian') };
+      const body = (r ?? {}) as { id?: string; total?: number; invoice_no?: string; status?: string };
+      return {
+        ok: true,
+        data: {
+          id: String(body.id ?? data.id),
+          total: num(body.total),
+          invoice_no: body.invoice_no ? String(body.invoice_no) : null,
+          status: body.status === 'hutang' ? 'hutang' : 'lunas',
+        },
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Ambil satu PO berdasarkan id (untuk membuka mode edit). */
+  async get(id: string): Promise<Result<PurchaseRecord | null>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_purchases')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) return { ok: false, error: error.message };
+      return {
+        ok: true,
+        data: data ? mapPurchase(data as unknown as Record<string, unknown>) : null,
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
   /** Daftar PO terbaru, urut terbaru pertama. */
   async listRecent(limit = 10): Promise<Result<PurchaseRecord[]>> {
     try {
