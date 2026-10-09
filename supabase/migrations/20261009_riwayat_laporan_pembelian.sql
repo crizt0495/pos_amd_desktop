@@ -59,6 +59,21 @@ create unique index if not exists kasir_purchases_invoice_no
 create index if not exists kasir_purchases_user_created
   on public.kasir_purchases (user_id, created_at desc);
 
+-- Pastikan urutan no faktur selalu di ATAS nomor yang sudah ada (hasil
+-- backfill data lama), supaya PO baru tidak menabrak faktur lama.
+select setval(
+  'public.kasir_purchase_invoice_seq',
+  greatest(
+    coalesce(
+      (select max((regexp_replace(invoice_no, '^.*-', ''))::int)
+         from public.kasir_purchases
+        where invoice_no ~ '^PO-[0-9]{6}-[0-9]+$'),
+      0
+    ),
+    1
+  )
+);
+
 -- ----------------------------------------------------------------------------
 -- 3. RPC create (signature lama tanpa p_status diganti)
 -- ----------------------------------------------------------------------------
