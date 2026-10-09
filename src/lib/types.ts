@@ -83,6 +83,14 @@ export type PurchaseItemRecord = {
   subtotal: number;
 };
 
+/** Supplier dari tabel `kasir_suppliers` (untuk dropdown + modal Pembelian). */
+export type Supplier = {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+};
+
 export type DiscountType = 'none' | 'percent' | 'fixed';
 export type PaymentMethod = 'cash' | 'qris' | 'transfer' | 'debit' | 'credit';
 export type TxStatus = 'completed' | 'void';

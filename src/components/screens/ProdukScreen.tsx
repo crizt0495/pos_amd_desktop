@@ -97,6 +97,12 @@ export default function ProdukScreen() {
   const kategori = useButtonGuard();
   const kategoriBusy = kategori.busy;
 
+  /* --------------------------- satuan baru ---------------------------- */
+  /** Baris varian yang memicu modal "Satuan Baru" (null = modal tertutup). */
+  const [satuanModalBaris, setSatuanModalBaris] = React.useState<number | null>(null);
+  const [satuanBaru, setSatuanBaru] = React.useState({ nama: '', kode: '' });
+  const satuanGuard = useButtonGuard();
+
   const load = React.useCallback(
     async (q = '', includeInactive = false) => {
       const res = await productsApi.list(q, includeInactive);
@@ -124,12 +130,14 @@ export default function ProdukScreen() {
   }, []);
 
   // Master satuan: satu-satunya sumber pilihan SATUAN di form produk.
-  React.useEffect(() => {
-    void (async () => {
-      const res = await satuanApi.list();
-      if (res.ok) setOpsiSatuan(res.data.map((s) => s.nama));
-    })();
+  const muatSatuan = React.useCallback(async () => {
+    const res = await satuanApi.list();
+    if (res.ok) setOpsiSatuan(res.data.map((s) => s.nama));
   }, []);
+
+  React.useEffect(() => {
+    void muatSatuan();
+  }, [muatSatuan]);
 
   /* ------------------------------ form CRUD ---------------------------- */
   function openTambah() {
@@ -213,6 +221,43 @@ export default function ProdukScreen() {
       const pilih = opsiSatuan.find((s) => !terpakai.has(s.toLowerCase())) ?? '';
       return { ...prev, varian: [...prev.varian, { ...BARIS_BARU, satuan: pilih }] };
     });
+  }
+
+  /** Buka modal "Satuan Baru" dari tombol [+] di baris varian `i`. */
+  function bukaSatuanBaru(i: number) {
+    setSatuanBaru({ nama: '', kode: '' });
+    setSatuanModalBaris(i);
+  }
+
+  /** Simpan satuan baru ke master_satuan, lalu pilih di baris yang memicunya. */
+  async function simpanSatuanBaru() {
+    const nama = satuanBaru.nama.trim();
+    const kode = satuanBaru.kode.trim().toUpperCase();
+    if (!nama || !kode) {
+      toast.error('Master Satuan', 'Nama dan kode singkatan wajib diisi.');
+      return;
+    }
+    await satuanGuard.guard(
+      async () => {
+        const res = await satuanApi.create({ nama, kode });
+        if (!res.ok) {
+          toast.error('Master Satuan', res.error);
+          return;
+        }
+        await muatSatuan();
+        const idx = satuanModalBaris;
+        if (idx != null) {
+          setForm((prev) => {
+            const next = [...prev.varian];
+            if (next[idx]) next[idx] = { ...next[idx]!, satuan: res.data.nama };
+            return { ...prev, varian: next };
+          });
+        }
+        setSatuanModalBaris(null);
+        toast.ok('Master Satuan', `Satuan "${res.data.nama}" (${res.data.kode}) ditambahkan.`);
+      },
+      { pesanTunggu: 'Menyimpan satuan…' },
+    );
   }
 
   /** Simpan kategori baru (hanya di memori — kategori hidup dari kolom produk). */
@@ -784,6 +829,7 @@ export default function ProdukScreen() {
             baris={form.varian}
             onChange={(next) => setForm((prev) => ({ ...prev, varian: next }))}
             onTambah={tambahVarianBaris}
+            onTambahSatuan={bukaSatuanBaru}
             errors={varianErrors}
             opsiSatuan={opsiSatuan}
           />
@@ -844,6 +890,63 @@ export default function ProdukScreen() {
         <p className="mt-1.5 text-[11px] text-[#9fb0c4]">
           Kategori dipakai untuk mengelompokkan produk. Muncul otomatis setelah ada produk yang
           memakainya.
+        </p>
+      </Modal>
+
+      {/* ---------------------- modal satuan baru ------------------------ */}
+      <Modal
+        open={satuanModalBaris !== null}
+        title="Satuan Baru"
+        onClose={() => setSatuanModalBaris(null)}
+        width="max-w-xs"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setSatuanModalBaris(null)}
+              disabled={satuanGuard.busy}
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void simpanSatuanBaru()}
+              disabled={!satuanBaru.nama.trim() || !satuanBaru.kode.trim() || satuanGuard.busy}
+              data-loading={satuanGuard.busy}
+            >
+              {satuanGuard.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {satuanGuard.busy ? 'Menyimpan…' : 'Simpan'}
+            </button>
+          </>
+        }
+      >
+        <label className="label" htmlFor="satuan-nama">
+          Nama Satuan
+        </label>
+        <input
+          id="satuan-nama"
+          className="input"
+          value={satuanBaru.nama}
+          onChange={(e) => setSatuanBaru((p) => ({ ...p, nama: e.target.value }))}
+          placeholder="mis. Dus"
+          autoFocus
+        />
+        <label className="label mt-3" htmlFor="satuan-kode">
+          Kode Singkatan
+        </label>
+        <input
+          id="satuan-kode"
+          className="input uppercase"
+          value={satuanBaru.kode}
+          onChange={(e) => setSatuanBaru((p) => ({ ...p, kode: e.target.value.toUpperCase() }))}
+          placeholder="mis. DS"
+          maxLength={6}
+        />
+        <p className="mt-1.5 text-[11px] text-[#9fb0c4]">
+          Tersimpan ke Pengaturan &gt; Satuan dan langsung dipakai di baris ini — tanpa pindah
+          halaman.
         </p>
       </Modal>
 

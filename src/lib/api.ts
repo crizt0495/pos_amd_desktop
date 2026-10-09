@@ -21,6 +21,7 @@ import type {
   TopProduct,
   Transaction,
   TransactionItem,
+  Supplier,
 } from './types';
 
 /**
@@ -1212,6 +1213,55 @@ export const satuanApi = {
       if (error) return { ok: false, error: error.message };
       buangCacheSatuan();
       return { ok: true, data: undefined };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+};
+
+/* ------------------------------ supplier ------------------------------ */
+
+/**
+ * Supplier untuk modul Pembelian. Tabel `kasir_suppliers` sudah ada di
+ * schema; API ini mengisi dropdown Supplier + modal "Supplier Baru".
+ */
+export const suppliersApi = {
+  /** Daftar supplier milik user (urut nama). */
+  async list(): Promise<Result<Supplier[]>> {
+    try {
+      const { data, error } = await createClient()
+        .from('kasir_suppliers')
+        .select('id, name, phone, address')
+        .order('name', { ascending: true });
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: (data ?? []) as Supplier[] };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Tambah supplier baru (Nama wajib; No HP & Alamat opsional). */
+  async create(input: {
+    name: string;
+    phone?: string | null;
+    address?: string | null;
+  }): Promise<Result<Supplier>> {
+    const name = String(input.name ?? '').trim();
+    if (!name) return { ok: false, error: 'Nama supplier wajib diisi.' };
+    try {
+      const row = {
+        user_id: await currentUserId(),
+        name,
+        phone: String(input.phone ?? '').trim() || null,
+        address: String(input.address ?? '').trim() || null,
+      };
+      const { data, error } = await createClient()
+        .from('kasir_suppliers')
+        .insert(row)
+        .select('id, name, phone, address')
+        .single();
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, data: data as Supplier };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

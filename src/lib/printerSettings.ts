@@ -1,7 +1,10 @@
 export type UkuranPrinter = '58mm' | '80mm' | 'A4';
 
 export interface PreferensiPrinter {
+  /** Nama printer terpilih. Web tidak bisa auto-detect, jadi daftar diisi manual. */
   nama: string;
+  /** Daftar nama printer yang ditambahkan manual (tersimpan lokal). */
+  namaManual: string[];
   ukuran: UkuranPrinter;
   autoPrint: boolean;
   /** ID perangkat Bluetooth yang pernah dipasang (Web Bluetooth). */
@@ -13,22 +16,35 @@ export interface PreferensiPrinter {
 
 const KEY = 'printer_settings';
 
+const DEFAULT: PreferensiPrinter = {
+  nama: 'System Printer',
+  namaManual: [],
+  ukuran: '80mm',
+  autoPrint: true,
+  btDeviceId: null,
+  btDeviceName: null,
+  btAutoConnect: true,
+};
+
 export function bacaPrinterSettings(): PreferensiPrinter {
   try {
-    if (typeof localStorage === 'undefined') return { nama: 'System Printer', ukuran: '80mm', autoPrint: true, btDeviceId: null, btDeviceName: null, btAutoConnect: true };
+    if (typeof localStorage === 'undefined') return { ...DEFAULT };
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { nama: 'System Printer', ukuran: '80mm', autoPrint: true, btDeviceId: null, btDeviceName: null, btAutoConnect: true };
+    if (!raw) return { ...DEFAULT };
     const parsed = JSON.parse(raw) as Partial<PreferensiPrinter>;
     return {
-      nama: parsed.nama ?? 'System Printer',
-      ukuran: (parsed.ukuran as UkuranPrinter) ?? '80mm',
+      nama: parsed.nama ?? DEFAULT.nama,
+      namaManual: Array.isArray(parsed.namaManual)
+        ? parsed.namaManual.filter((x): x is string => typeof x === 'string')
+        : [],
+      ukuran: (parsed.ukuran as UkuranPrinter) ?? DEFAULT.ukuran,
       autoPrint: parsed.autoPrint !== false,
       btDeviceId: parsed.btDeviceId ?? null,
       btDeviceName: parsed.btDeviceName ?? null,
       btAutoConnect: parsed.btAutoConnect !== false,
     };
   } catch {
-    return { nama: 'System Printer', ukuran: '80mm', autoPrint: true, btDeviceId: null, btDeviceName: null, btAutoConnect: true };
+    return { ...DEFAULT };
   }
 }
 

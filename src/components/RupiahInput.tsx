@@ -27,6 +27,7 @@ export function RupiahInput({
   placeholder = '0',
   ariaLabel,
   dataCell,
+  dataRow,
   disabled,
   min = 0,
   onKeyDown,
@@ -43,6 +44,8 @@ export function RupiahInput({
   placeholder?: string;
   ariaLabel?: string;
   dataCell?: string;
+  /** Indeks baris (dipakai tabel kasir untuk fokus baris via tombol pensil). */
+  dataRow?: number;
   disabled?: boolean;
   /** Batas bawah; nilai di bawahnya tidak diterima. */
   min?: number;
@@ -77,6 +80,7 @@ export function RupiahInput({
       id={id}
       ref={setRef}
       data-cell={dataCell}
+      data-row={dataRow}
       type="text"
       inputMode="numeric"
       autoComplete="off"

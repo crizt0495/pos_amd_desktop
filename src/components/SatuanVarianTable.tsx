@@ -30,6 +30,7 @@ export function SatuanVarianTable({
   onChange,
   errors,
   onTambah,
+  onTambahSatuan,
   opsiSatuan = [],
 }: {
   baris: VarianBaris[];
@@ -37,6 +38,8 @@ export function SatuanVarianTable({
   /** Pesan error per indeks baris (dihasilkan `validasiVarian`). */
   errors?: VarianError[];
   onTambah: () => void;
+  /** Dipanggil saat tombol [+] di sebelah dropdown satuan baris `i` ditekan. */
+  onTambahSatuan?: (i: number) => void;
   /** Pilihan satuan dari `master_satuan`; kolom SATUAN jadi dropdown. */
   opsiSatuan?: string[];
 }) {
@@ -124,35 +127,53 @@ export function SatuanVarianTable({
                   <td className="td p-1.5">
                     {/* Kolom satuan: TIDAK BOLEH teks bebas — hanya pilihan
                         dari master_satuan (baris lama di luar master tetap
-                        tampil bertanda agar tidak hilang saat disimpan). */}
-                    <select
-                      className={`input h-8 rounded-md text-[12.5px] ${
-                        salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
-                      }`}
-                      value={b.satuan}
-                      aria-label={`Satuan baris ${i + 1}`}
-                      onChange={(e) => ubah(i, { satuan: e.target.value })}
-                    >
-                      <option value="">— pilih satuan —</option>
-                      {opsiSatuan.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                      {b.satuan &&
-                      !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
-                        <option value={b.satuan}>{b.satuan} (di luar master)</option>
+                        tampil bertanda agar tidak hilang saat disimpan).
+                        Tombol [+] menambah satuan baru langsung ke master. */}
+                    <div className="flex items-start gap-1">
+                      <div className="min-w-0 flex-1">
+                        <select
+                          className={`input h-8 rounded-md text-[12.5px] ${
+                            salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
+                          }`}
+                          value={b.satuan}
+                          aria-label={`Satuan baris ${i + 1}`}
+                          onChange={(e) => ubah(i, { satuan: e.target.value })}
+                        >
+                          <option value="">— pilih satuan —</option>
+                          {opsiSatuan.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                          {b.satuan &&
+                          !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
+                            <option value={b.satuan}>{b.satuan} (di luar master)</option>
+                          ) : null}
+                        </select>
+                        {i === 0 ? (
+                          <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
+                        ) : (
+                          <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN TURUNAN</span>
+                        )}
+                        {!b.satuan.trim() ? (
+                          <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">pilih satuan</span>
+                        ) : null}
+                        {isKembar ? (
+                          <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
+                        ) : null}
+                      </div>
+                      {onTambahSatuan ? (
+                        <button
+                          type="button"
+                          onClick={() => onTambahSatuan(i)}
+                          title="Tambah satuan baru"
+                          aria-label={`Tambah satuan baru untuk baris ${i + 1}`}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
+                        >
+                          +
+                        </button>
                       ) : null}
-                    </select>
-                    {i === 0 ? (
-                      <span className="mt-0.5 block text-[10px] text-[#9fb0c4]">SATUAN UTAMA (basis)</span>
-                    ) : null}
-                    {!b.satuan.trim() ? (
-                      <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">pilih satuan</span>
-                    ) : null}
-                    {isKembar ? (
-                      <span className="mt-0.5 block text-[10px] font-bold text-[#c92a2a]">satuan kembar</span>
-                    ) : null}
+                    </div>
                   </td>
 
                   <td className="td p-1.5">

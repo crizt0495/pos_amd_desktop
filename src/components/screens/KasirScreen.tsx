@@ -180,7 +180,6 @@ export default function KasirScreen() {
   const [zone, setZone] = React.useState<'header' | 'detail'>('header');
 
   const codeRef = React.useRef<HTMLInputElement>(null);
-  const qtyRef = React.useRef<HTMLInputElement>(null);
   const wrapSaranRef = React.useRef<HTMLDivElement>(null);
 
   /* ------------------------------ autocomplete ------------------------ */
@@ -535,12 +534,9 @@ export default function KasirScreen() {
     if (e.key !== 'Enter') return; // jangan bekuk ketikan huruf/barcode
     e.preventDefault();
 
-    if (!itemCode.trim()) {
-      setZone('detail');
-      qtyRef.current?.focus();
-      qtyRef.current?.select();
-      return;
-    }
+    // Tidak ada field Jumlah di header lagi — jumlah diisi langsung di
+    // kolom JUMLAH tabel keranjang. Enter saat kode kosong tidak mengubah fokus.
+    if (!itemCode.trim()) return;
     // Enter saat ada saran: ambil yang sedang disorot.
     if (saranTampil && saran[saranIdx]) {
       pilihSaran(saran[saranIdx]!);
@@ -551,13 +547,6 @@ export default function KasirScreen() {
       setZone('header');
       codeRef.current?.focus();
     }
-  }
-
-  function onQtyEnter(e: React.KeyboardEvent) {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    setZone('header');
-    codeRef.current?.focus();
   }
 
   function onItemChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1285,23 +1274,6 @@ export default function KasirScreen() {
             ) : null}
           </div>
 
-          <div className="w-[92px]">
-            <label className="frm-label" htmlFor="item-qty">
-              Jumlah
-            </label>
-            <input
-              id="item-qty"
-              ref={qtyRef}
-              className="frm-input tnum h-9 text-right text-[14px] font-semibold"
-              type="number"
-              min={1}
-              value={itemQty}
-              onChange={(e) => setItemQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-              onKeyDown={onQtyEnter}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          </div>
-
           <div className="w-[150px]">
             <label className="frm-label" htmlFor="tgl">
               Tanggal
@@ -1473,6 +1445,7 @@ export default function KasirScreen() {
                   <td className="td p-0">
                     <RupiahInput
                       dataCell="price"
+                      dataRow={i}
                       ariaLabel={`Harga jual ${l.name}`}
                       className="cell text-right"
                       value={l.price}
@@ -1582,11 +1555,12 @@ export default function KasirScreen() {
                         type="button"
                         onClick={() => {
                           setActiveRow(i);
-                          // Auto-fokus ke input Qty baris ini supaya
-                          // kasir langsung bisa mengetik.
+                          // Fokus ke H. Jual baris ini — dari situ kasir bisa
+                          // Tab/klik ke Jumlah & Potongan. Semua sel baris ini
+                          // memang bisa diketik langsung.
                           setTimeout(() => {
                             const el = document.querySelector<HTMLInputElement>(
-                              `input[data-cell="qty"][data-row="${i}"]`,
+                              `input[data-cell="price"][data-row="${i}"]`,
                             );
                             el?.focus();
                             el?.select();

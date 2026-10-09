@@ -140,6 +140,23 @@ export function SettingsModal({
       return next;
     });
   }
+  // Daftar printer manual — aplikasi web tidak bisa auto-detect printer
+  // terinstall, jadi user menambahkan nama printer sendiri (tersimpan lokal).
+  const [printerBaru, setPrinterBaru] = React.useState('');
+  function tambahPrinterManual() {
+    const nama = printerBaru.trim();
+    if (!nama) return;
+    const sudah = printer.namaManual.some((x) => x.toLowerCase() === nama.toLowerCase());
+    const next = sudah ? printer.namaManual : [...printer.namaManual, nama];
+    ubahPrinter({ namaManual: next, nama });
+    setPrinterBaru('');
+  }
+  function hapusPrinterManual(nama: string) {
+    ubahPrinter({
+      namaManual: printer.namaManual.filter((x) => x !== nama),
+      nama: printer.nama === nama ? 'System Printer' : printer.nama,
+    });
+  }
   const [btStatus, setBtStatus] = React.useState<StatusBluetooth>('nonaktif');
   const [btBusy, setBtBusy] = React.useState(false);
   React.useEffect(() => dengarStatusBluetooth(setBtStatus), []);
@@ -566,20 +583,72 @@ export function SettingsModal({
             browser lewat <code>window.print()</code>.
           </div>
 
-          <label className="block space-y-1">
+          <div className="space-y-1.5">
             <span className="label">Pilih Printer</span>
             <select
-              className="input"
+              className="input cursor-pointer"
               value={printer.nama}
               onChange={(e) => ubahPrinter({ nama: e.target.value })}
             >
               <option value="System Printer">System Printer (default browser)</option>
+              {printer.namaManual.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              {printer.nama !== 'System Printer' && !printer.namaManual.includes(printer.nama) ? (
+                <option value={printer.nama}>{printer.nama}</option>
+              ) : null}
             </select>
+            <div className="flex gap-1.5">
+              <input
+                className="input min-w-0 flex-1"
+                placeholder="Nama printer, mis. Epson TM-T82"
+                value={printerBaru}
+                onChange={(e) => setPrinterBaru(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    tambahPrinterManual();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn-outline shrink-0"
+                onClick={tambahPrinterManual}
+                disabled={!printerBaru.trim()}
+              >
+                Tambah
+              </button>
+            </div>
+            {printer.namaManual.length ? (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {printer.namaManual.map((n) => (
+                  <span
+                    key={n}
+                    className="inline-flex items-center gap-1 rounded-full bg-[#eef3f9] px-2 py-0.5 text-[11px] text-[#35485c]"
+                  >
+                    {n}
+                    <button
+                      type="button"
+                      onClick={() => hapusPrinterManual(n)}
+                      title={`Hapus ${n}`}
+                      aria-label={`Hapus printer ${n}`}
+                      className="text-[#7a8ba0] hover:text-[#e03131]"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <p className="text-[10.5px] text-[#7a8ba0]">
-              Daftar printer spesifik disediakan browser saat <code>window.print()</code>;
-              pilihan saat ini tetap memakai dialog print default.
+              Aplikasi ini berbasis web, jadi browser tidak bisa mendeteksi printer yang terpasang.
+              Tambahkan nama printer di sini lalu pilih — struk tetap dicetak lewat{' '}
+              <code>window.print()</code> (atau printer Bluetooth di bawah).
             </p>
-          </label>
+          </div>
 
           <div className="space-y-1">
             <span className="label">Ukuran Kertas</span>

@@ -1,14 +1,16 @@
 'use client';
 
 import * as React from 'react';
-import { ListChecks, PackageSearch, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
+import { ListChecks, PackageSearch, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
-import { productsApi, purchasesApi, satuanApi } from '@/lib/api';
+import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
 import { RupiahInput } from '@/components/RupiahInput';
 import { Modal } from '@/components/Modal';
+import { TeleponInput } from '@/components/TeleponInput';
 import { useToast } from '@/components/Toast';
-import type { Product, PurchaseItemRecord, PurchaseRecord } from '@/lib/types';
+import { useButtonGuard } from '@/lib/useButtonGuard';
+import type { Product, PurchaseItemRecord, PurchaseRecord, Supplier } from '@/lib/types';
 
 interface BarisPembelian {
   productId: string;
@@ -30,10 +32,17 @@ export default function PembelianScreen() {
   const toast = useToast();
   const [products, setProducts] = React.useState<Product[]>([]);
   const [supplierName, setSupplierName] = React.useState('');
+  const [supplierId, setSupplierId] = React.useState<string | null>(null);
   const [note, setNote] = React.useState('');
   const [baris, setBaris] = React.useState<BarisPembelian[]>([]);
   const [pesan, setPesan] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+
+  // Daftar supplier (dropdown) + modal "Supplier Baru".
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
+  const [supplierOpen, setSupplierOpen] = React.useState(false);
+  const [supplierBaru, setSupplierBaru] = React.useState({ name: '', phone: '', address: '' });
+  const supplierGuard = useButtonGuard();
 
   // search state
   const [kode, setKode] = React.useState('');
@@ -62,6 +71,16 @@ export default function PembelianScreen() {
       if (r.ok) setOpsiSatuan(r.data.map((s) => s.nama));
     });
   }, []);
+
+  // Daftar supplier untuk dropdown + tombol [+] di panel kiri.
+  const muatSuppliers = React.useCallback(async () => {
+    const r = await suppliersApi.list();
+    if (r.ok) setSuppliers(r.data);
+  }, []);
+
+  React.useEffect(() => {
+    void muatSuppliers();
+  }, [muatSuppliers]);
 
   React.useEffect(() => {
     void productsApi.list().then((r) => {
@@ -187,6 +206,7 @@ export default function PembelianScreen() {
       return;
     }
     setSupplierName(p.supplier_name);
+    setSupplierId(suppliers.find((s) => s.name === p.supplier_name)?.id ?? null);
     setBaris(
       r.data.map((it) => {
         // Cari dulu produk aslinya supaya pilihan SATUAN ikut ke-filter.
@@ -232,6 +252,7 @@ export default function PembelianScreen() {
     setBusy(true);
     const r = await purchasesApi.create({
       supplierName: supplierName.trim(),
+      supplierId,
       items: baris.map((b) => ({
         productId: b.productId || null,
         name: b.name,
@@ -248,6 +269,7 @@ export default function PembelianScreen() {
     setPesan(`Pembelian disimpan — total ${rupiah(r.data.total)}. Stok sudah ditambah.`);
     setBaris([]);
     setSupplierName('');
+    setSupplierId(null);
     setNote('');
     setKode('');
     inputRef.current?.focus();
@@ -286,6 +308,37 @@ export default function PembelianScreen() {
     toast.ok('Barang ditambahkan', r.data.name);
   }
 
+  /** Simpan supplier baru dari modal +, lalu langsung pilih di form. */
+  async function simpanSupplier() {
+    const name = supplierBaru.name.trim();
+    if (!name) {
+      toast.error('Nama wajib', 'Isi nama supplier dulu.');
+      return;
+    }
+    await supplierGuard.guard(
+      async () => {
+        const r = await suppliersApi.create({
+          name,
+          phone: supplierBaru.phone,
+          address: supplierBaru.address,
+        });
+        if (!r.ok) {
+          toast.error('Gagal menambah supplier', r.error);
+          return;
+        }
+        setSuppliers((prev) =>
+          [...prev, r.data].sort((a, b) => a.name.localeCompare(b.name)),
+        );
+        setSupplierName(r.data.name);
+        setSupplierId(r.data.id);
+        setSupplierBaru({ name: '', phone: '', address: '' });
+        setSupplierOpen(false);
+        toast.ok('Supplier ditambahkan', r.data.name);
+      },
+      { pesanTunggu: 'Menyimpan supplier…' },
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Header */}
@@ -314,16 +367,42 @@ export default function PembelianScreen() {
           {/* Supplier */}
           <div className="rounded-md border border-[#d8e0ec] bg-white p-3">
             <label className="frm-label" htmlFor="cari-supplier">
-              Nama Supplier
+              Supplier
             </label>
-            <input
-              id="cari-supplier"
-              className="frm-key"
-              placeholder="Ketik nama supplier"
-              value={supplierName}
-              onChange={(e) => setSupplierName(e.target.value)}
-              autoComplete="off"
-            />
+            <div className="flex gap-1.5">
+              <select
+                id="cari-supplier"
+                className="frm-key min-w-0 flex-1 cursor-pointer"
+                value={supplierName}
+                onChange={(e) => {
+                  const n = e.target.value;
+                  setSupplierName(n);
+                  setSupplierId(suppliers.find((s) => s.name === n)?.id ?? null);
+                }}
+              >
+                <option value="">— pilih supplier —</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+                {supplierName && !suppliers.some((s) => s.name === supplierName) ? (
+                  <option value={supplierName}>{supplierName}</option>
+                ) : null}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setSupplierBaru({ name: '', phone: '', address: '' });
+                  setSupplierOpen(true);
+                }}
+                title="Tambah supplier baru"
+                aria-label="Tambah supplier baru"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[15px] font-bold leading-none text-[#1b5fa8] transition hover:bg-[#e8f1fa]"
+              >
+                +
+              </button>
+            </div>
             {supplierName.trim() ? (
               <p className="mt-1 text-[10.5px] text-[#7a8ba0]">
                 Harga modal utama diisi otomatis dari pembelian terakhir ke supplier ini.
@@ -650,6 +729,75 @@ export default function PembelianScreen() {
           <div>
             <label className="label">Stok Awal</label>
             <input type="number" className="input" value={baru.stock} onChange={(e) => setBaru({ ...baru, stock: e.target.value })} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal + Supplier Baru */}
+      <Modal
+        open={supplierOpen}
+        onClose={() => setSupplierOpen(false)}
+        title="Supplier Baru"
+        width="max-w-md"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setSupplierOpen(false)}
+              disabled={supplierGuard.busy}
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void simpanSupplier()}
+              disabled={!supplierBaru.name.trim() || supplierGuard.busy}
+              data-loading={supplierGuard.busy}
+            >
+              {supplierGuard.busy ? 'Menyimpan…' : 'Simpan & Pilih'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="label" htmlFor="sup-nama">
+              Nama Supplier *
+            </label>
+            <input
+              id="sup-nama"
+              className="input"
+              value={supplierBaru.name}
+              onChange={(e) => setSupplierBaru((p) => ({ ...p, name: e.target.value }))}
+              placeholder="mis. PT Sumber Makmur"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="sup-hp">
+              No HP
+            </label>
+            <TeleponInput
+              id="sup-hp"
+              className="input"
+              value={supplierBaru.phone}
+              onChange={(v) => setSupplierBaru((p) => ({ ...p, phone: v }))}
+              placeholder="08xxxxxxxxxx"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="sup-alamat">
+              Alamat
+            </label>
+            <input
+              id="sup-alamat"
+              className="input"
+              value={supplierBaru.address}
+              onChange={(e) => setSupplierBaru((p) => ({ ...p, address: e.target.value }))}
+              placeholder="Alamat supplier (opsional)"
+            />
           </div>
         </div>
       </Modal>
