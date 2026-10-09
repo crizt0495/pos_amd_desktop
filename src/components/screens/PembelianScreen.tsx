@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { History, ListChecks, PackageSearch, Pencil, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
+import { History, ListChecks, PackageSearch, Plus, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
@@ -273,20 +273,6 @@ export default function PembelianScreen() {
     void mulaiEdit(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [products]);
-
-  /** Isi form lama untuk diedit (dipanggil dari popup "Riwayat Beli Terakhir"). */
-  async function pilihRiwayat(p: PurchaseRecord) {
-    setRiwayatLoading(true);
-    const r = await purchasesApi.items(p.id);
-    setRiwayatLoading(false);
-    if (!r.ok || !r.data.length) {
-      toast.info('Tidak ada item', 'PO ini tidak punya item yang bisa dimuat.');
-      return;
-    }
-    terapkanKeForm(p, r.data);
-    setRiwayatOpen(false);
-    toast.ok('Mode edit PO', `Edit PO — ${p.invoice_no ?? p.id.slice(0, 8)}`);
-  }
 
   function ubah(idx: number, patch: Partial<BarisPembelian>) {
     setBaris((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
@@ -752,25 +738,7 @@ export default function PembelianScreen() {
                   <p className="font-medium text-[13px]">{new Date(p.created_at).toLocaleString('id-ID')}</p>
                   <p className="text-[12px] text-zinc-500">{p.supplier_name} {p.note ? `· ${p.note}` : ''}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="tnum text-[13px] font-semibold">{rupiah(Number(p.total))}</span>
-                  <button
-                    type="button"
-                    className="rb-btn"
-                    onClick={() => pilihRiwayat(p)}
-                  >
-                    <RotateCcw className="h-3 w-3" /> Muat
-                  </button>
-                  <button
-                    type="button"
-                    className="rb-btn-primary"
-                    title="Edit PO ini"
-                    aria-label="Edit PO ini"
-                    onClick={() => pilihRiwayat(p)}
-                  >
-                    <Pencil className="h-3 w-3" /> Edit
-                  </button>
-                </div>
+                <span className="tnum text-[13px] font-semibold">{rupiah(Number(p.total))}</span>
               </li>
             ))}
           </ul>
