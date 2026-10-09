@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { History, ListChecks, PackageSearch, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
+import { History, ListChecks, PackageSearch, Pencil, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
@@ -760,6 +760,15 @@ export default function PembelianScreen() {
                     onClick={() => pilihRiwayat(p)}
                   >
                     <RotateCcw className="h-3 w-3" /> Muat
+                  </button>
+                  <button
+                    type="button"
+                    className="rb-btn-primary"
+                    title="Edit PO ini"
+                    aria-label="Edit PO ini"
+                    onClick={() => pilihRiwayat(p)}
+                  >
+                    <Pencil className="h-3 w-3" /> Edit
                   </button>
                 </div>
               </li>
