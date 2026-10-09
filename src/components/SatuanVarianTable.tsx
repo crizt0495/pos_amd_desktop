@@ -14,6 +14,17 @@ import {
 } from '@/lib/format';
 
 /**
+ * Bagi harga satuan utama dengan konversi -> angka bulat tanpa koma.
+ * Konversi kosong / 0 / tidak valid mengembalikan `null` supaya pemanggil
+ * TIDAK mengisi apa-apa (sesuai aturan "jangan hitung kalau konversi kosong").
+ */
+function bagiKonversi(nilaiUtama: number, konversi: string): string | null {
+  const konv = Number(String(konversi ?? '').replace(/[^\d]/g, ''));
+  if (!Number.isFinite(konv) || konv <= 0) return null;
+  return String(Math.round(nilaiUtama / konv));
+}
+
+/**
  * Tabel varian satuan pada modal Tambah/Ubah Produk.
  *
  * Kolom: [Satuan*] [Harga Modal*] [Harga Jual*] [Konversi] [Barcode Satuan] [Aksi]
@@ -21,6 +32,9 @@ import {
  * Baris pertama adalah **satuan dasar**: konversinya terkunci di 1 (readonly)
  * dan nilainya dipakai untuk `products.price` / `products.cost` / `unit`.
  * Baris kedua dan seterusnya bebas, misalnya `Dus` dengan konversi 6.
+ *
+ * Harga Pokok & Harga Jual satuan turunan otomatis = harga satuan utama ÷
+ * konversi saat pemicunya berubah, tapi tetap bisa diedit manual.
  *
  * Komponen ini murni presentational + validasi tampilan; pennyimpanan
  * ditangani oleh pemanggil lewat `onChange(baris)`.
@@ -61,27 +75,39 @@ export function SatuanVarianTable({
     // Baris pertama selalu satuan dasar: konversi tidak bisa diubah.
     if (i === 0 && patch.konversi !== undefined) next[i]!.konversi = '1';
 
-    // Auto-hitung ulang modal turunan (baris 2+) HANYA ketika yang berubah:
-    //   - harga_beli baris 0 (induk), atau
-    //   - konversi baris j (>0)
-    // Kalau yang berubah harga_beli baris j (>0) secara langsung, JANGAN
-    // override — validasi min dilakukan oleh `validasiVarian` dan pesan
-    // "Modal X minimal Rp. Y" muncul per baris.
-    const recalcBaris0 = i === 0 && patch.harga_beli !== undefined;
-    const recalcBarisJ = i > 0 && patch.konversi !== undefined;
+    // Auto-isi harga turunan (Harga Pokok & Harga Jual) = harga utama ÷ konversi.
+    // Hasilnya cuma ISIAN AWAL: admin boleh ganti manual, dan nilai manual tidak
+    // tertimpa kecuali pemicunya berubah lagi:
+    //   - harga utama (baris 0) berubah -> semua baris turunan
+    //   - konversi baris turunan (j > 0) berubah -> baris itu saja
+    // Konversi kosong / 0 -> JANGAN dihitung (nilai dibiarkan apa adanya).
+    const ubahPokokUtama = i === 0 && patch.harga_beli !== undefined;
+    const ubahJualUtama = i === 0 && patch.harga_jual !== undefined;
+    const ubahKonversiTurunan = i > 0 && patch.konversi !== undefined;
 
-    if (recalcBaris0) {
-      const modalUtama = parseRupiah(next[0]!.harga_beli);
+    if (ubahPokokUtama) {
+      const pokokUtama = parseRupiah(next[0]!.harga_beli);
       for (let j = 1; j < next.length; j += 1) {
-        const konv = Number(next[j]!.konversi) || 1;
-        const nilai = konv > 0 ? Math.round(modalUtama / konv) : 0;
-        next[j] = { ...next[j]!, harga_beli: String(nilai) };
+        const hasil = bagiKonversi(pokokUtama, next[j]!.konversi);
+        if (hasil !== null) next[j] = { ...next[j]!, harga_beli: hasil };
       }
-    } else if (recalcBarisJ) {
-      const modalUtama = parseRupiah(next[0]!.harga_beli);
-      const konv = Number(next[i]!.konversi) || 1;
-      const nilai = konv > 0 ? Math.round(modalUtama / konv) : 0;
-      next[i] = { ...next[i]!, harga_beli: String(nilai) };
+    }
+    if (ubahJualUtama) {
+      const jualUtama = parseRupiah(next[0]!.harga_jual);
+      for (let j = 1; j < next.length; j += 1) {
+        const hasil = bagiKonversi(jualUtama, next[j]!.konversi);
+        if (hasil !== null) next[j] = { ...next[j]!, harga_jual: hasil };
+      }
+    }
+    if (ubahKonversiTurunan) {
+      const konv = next[i]!.konversi;
+      const pokok = bagiKonversi(parseRupiah(next[0]!.harga_beli), konv);
+      const jual = bagiKonversi(parseRupiah(next[0]!.harga_jual), konv);
+      next[i] = {
+        ...next[i]!,
+        ...(pokok !== null ? { harga_beli: pokok } : {}),
+        ...(jual !== null ? { harga_jual: jual } : {}),
+      };
     }
     onChange(next);
   }
@@ -196,6 +222,11 @@ export function SatuanVarianTable({
                       value={b.harga_jual}
                       onChange={(v) => ubah(i, { harga_jual: String(v) })}
                     />
+                    {i > 0 ? (
+                      <span className="mt-1 block text-[10px] text-[#9fb0c4]">
+                        auto = jual utama ÷ konversi; boleh diubah
+                      </span>
+                    ) : null}
                     {isRugi ? (
                       <span className="mt-1 block text-[10px] font-bold text-[#b8860b]">jual rugi</span>
                     ) : null}
