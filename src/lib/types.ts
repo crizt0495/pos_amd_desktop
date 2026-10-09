@@ -65,22 +65,62 @@ export type SatuanMaster = {
   kode: string;
 };
 
+/** Status pembayaran PO pembelian. */
+export type PurchaseStatus = 'lunas' | 'hutang';
+
 /** Baris PO pembelian (PO + supplier + total). */
 export type PurchaseRecord = {
   id: string;
+  /** Nomor faktur "PO-YYMMDD-NNNNN" (bisa null untuk data lama). */
+  invoice_no: string | null;
+  supplier_id: string | null;
   supplier_name: string;
   total: number;
+  status: PurchaseStatus;
   note: string | null;
   created_at: string;
+  /** Total kuantitas seluruh item (diisi oleh `purchasesApi.history`). */
+  total_item?: number;
 };
 
 /** Baris item dalam PO pembelian. */
 export type PurchaseItemRecord = {
   product_id: string | null;
   product_name: string;
+  /** Satuan saat pembelian (data lama bisa null). */
+  unit?: string | null;
   qty: number;
   cost: number;
   subtotal: number;
+};
+
+/** Rekap pembelian per supplier (Laporan Pembelian). */
+export type PurchaseSupplierRecap = {
+  supplier_name: string;
+  jumlah: number;
+  total: number;
+};
+
+/** Rekap pembelian per barang (Laporan Pembelian). */
+export type PurchaseProductRecap = {
+  product_id: string | null;
+  product_name: string;
+  unit: string | null;
+  qty: number;
+  total: number;
+  avg_cost: number;
+  jumlah_transaksi: number;
+};
+
+/** Data Laporan Pembelian lengkap. */
+export type PurchaseReportData = {
+  summary: {
+    jumlah_transaksi: number;
+    total_item: number;
+    total_nilai: number;
+  };
+  bySupplier: PurchaseSupplierRecap[];
+  byProduct: PurchaseProductRecap[];
 };
 
 /** Supplier dari tabel `kasir_suppliers` (untuk dropdown + modal Pembelian). */

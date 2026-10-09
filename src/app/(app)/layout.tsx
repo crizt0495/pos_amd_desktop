@@ -93,8 +93,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.replace('/login');
   }
 
-  const active = (href: string) =>
-    href === '/kasir' ? pathname === href || pathname === '/' : pathname === href;
+  const active = (href: string) => {
+    if (href === '/kasir') return pathname === href || pathname === '/';
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
 
   const isKasir = pathname === '/kasir' || pathname === '/';
   const modulAktif = MODULES.find((m) => active(m.href))?.sub ?? 'Program Toko';

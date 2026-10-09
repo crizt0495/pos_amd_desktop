@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Ban, BarChart3, Eye, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } from 'lucide-react';
+import Link from 'next/link';
+import { Ban, BarChart3, Eye, FileSpreadsheet, Loader2, Printer, RefreshCw, TrendingUp, Undo2 } from 'lucide-react';
 
 import { reportsApi, returnsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
@@ -248,6 +249,9 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
       {/* ------------------------- SUB-RIBBON -------------------------- */}
       <div className="sub-ribbon">
         <span className="rb-label">Laporan · Laporan Penjualan</span>
+        <Link href="/laporan/pembelian" className="rb-btn">
+          <FileSpreadsheet className="h-3.5 w-3.5" /> Laporan Pembelian
+        </Link>
         <button
           type="button"
           className="rb-btn-primary"

@@ -11,7 +11,10 @@ import type {
   Product,
   ProductInput,
   PurchaseItemRecord,
+  PurchaseProductRecap,
   PurchaseRecord,
+  PurchaseReportData,
+  PurchaseStatus,
   ReportSummary,
   ReturnItem,
   ReturnLineInput,
@@ -544,23 +547,78 @@ const mapShift = (r: Record<string, unknown>): KasirShift => ({
   status: String(r.status ?? 'open') as KasirShift['status'],
 });
 
+function mapPurchase(r: Record<string, unknown>): PurchaseRecord {
+  return {
+    id: String(r.id),
+    invoice_no: r.invoice_no == null || r.invoice_no === '' ? null : String(r.invoice_no),
+    supplier_id: r.supplier_id == null ? null : String(r.supplier_id),
+    supplier_name: String(r.supplier_name ?? ''),
+    total: num(r.total),
+    status: r.status === 'hutang' ? 'hutang' : 'lunas',
+    note: r.note == null ? null : String(r.note),
+    created_at: String(r.created_at ?? ''),
+  };
+}
+
+/** Jumlahkan kuantitas item per purchase_id (untuk kolom "Total Item"). */
+async function jumlahQtyPembelian(ids: string[]): Promise<Result<Map<string, number>>> {
+  const map = new Map<string, number>();
+  try {
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      if (!chunk.length) continue;
+      const { data, error } = await createClient()
+        .from('kasir_purchase_items')
+        .select('purchase_id, qty')
+        .in('purchase_id', chunk);
+      if (error) return { ok: false, error: error.message };
+      for (const it of (data ?? []) as unknown as { purchase_id: string; qty: number }[]) {
+        map.set(it.purchase_id, (map.get(it.purchase_id) ?? 0) + (Number(it.qty) || 0));
+      }
+    }
+    return { ok: true, data: map };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
 export const purchasesApi = {
   async create(data: {
     supplierName: string;
     supplierId?: string | null;
-    items: { productId: string | null; name: string; qty: number; cost: number }[];
+    items: { productId: string | null; name: string; qty: number; cost: number; unit?: string | null }[];
     note?: string | null;
-  }): Promise<Result<{ id: string; total: number }>> {
+    status?: PurchaseStatus;
+  }): Promise<Result<{ id: string; total: number; invoice_no: string | null; status: PurchaseStatus }>> {
     try {
-      const { data: r, error } = await createClient().rpc('kasir_create_purchase', {
+      const args: Record<string, unknown> = {
         p_supplier_name: data.supplierName,
         p_supplier_id: data.supplierId ?? null,
         p_items: data.items,
         p_note: data.note ?? null,
-      });
-      if (error) return { ok: false, error: error.message };
-      const body = (r ?? {}) as { id?: string; total?: number };
-      return { ok: true, data: { id: String(body.id ?? ''), total: num(body.total) } };
+        p_status: data.status ?? 'lunas',
+      };
+      const client = createClient();
+      let { data: r, error } = await client.rpc('kasir_create_purchase', args);
+      // Database lama (migrasi riwayat pembelian belum dijalankan) belum punya
+      // parameter p_status — ulangi tanpa p_status agar input PO tetap jalan.
+      if (error && /could not find the function|unexpected|does not exist|schema cache/i.test(error.message)) {
+        delete args.p_status;
+        const retry = await client.rpc('kasir_create_purchase', args);
+        r = retry.data;
+        error = retry.error;
+      }
+      if (error) return { ok: false, error: rpcMsg(error, 'riwayat pembelian') };
+      const body = (r ?? {}) as { id?: string; total?: number; invoice_no?: string; status?: string };
+      return {
+        ok: true,
+        data: {
+          id: String(body.id ?? ''),
+          total: num(body.total),
+          invoice_no: body.invoice_no ? String(body.invoice_no) : null,
+          status: body.status === 'hutang' ? 'hutang' : 'lunas',
+        },
+      };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
@@ -571,11 +629,45 @@ export const purchasesApi = {
     try {
       const { data, error } = await createClient()
         .from('kasir_purchases')
-        .select('id, supplier_name, total, note, created_at')
+        .select('*')
         .order('created_at', { ascending: false })
         .limit(Math.min(Math.max(limit, 1), 100));
       if (error) return { ok: false, error: error.message };
-      return { ok: true, data: (data ?? []) as unknown as PurchaseRecord[] };
+      return { ok: true, data: ((data ?? []) as unknown as Record<string, unknown>[]).map(mapPurchase) };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /**
+   * Riwayat pembelian dengan filter (tanggal, supplier, pencarian) untuk
+   * menu Pembelian > Riwayat. Total Item dihitung dari kuantitas item.
+   */
+  async history(
+    filter: { from?: string; to?: string; supplier?: string; q?: string; limit?: number } = {},
+  ): Promise<Result<PurchaseRecord[]>> {
+    try {
+      let q = createClient()
+        .from('kasir_purchases')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(Math.min(Math.max(filter.limit ?? 500, 1), 2000));
+      if (filter.from) q = q.gte('created_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('created_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
+      if (filter.supplier && filter.supplier.trim()) q = q.eq('supplier_name', filter.supplier.trim());
+      if (filter.q && filter.q.trim()) {
+        const term = filter.q.trim().replace(/[%,().]/g, ' ');
+        q = q.or(`invoice_no.ilike.%${term}%,supplier_name.ilike.%${term}%`);
+      }
+      const { data, error } = await q;
+      if (error) return { ok: false, error: error.message };
+
+      const out = ((data ?? []) as unknown as Record<string, unknown>[]).map(mapPurchase);
+      if (out.length) {
+        const qty = await jumlahQtyPembelian(out.map((p) => p.id));
+        if (qty.ok) for (const p of out) p.total_item = qty.data.get(p.id) ?? 0;
+      }
+      return { ok: true, data: out };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
@@ -586,11 +678,106 @@ export const purchasesApi = {
     try {
       const { data, error } = await createClient()
         .from('kasir_purchase_items')
-        .select('product_id, product_name, qty, cost, subtotal')
+        .select('*')
         .eq('purchase_id', purchaseId)
         .order('id', { ascending: true });
       if (error) return { ok: false, error: error.message };
       return { ok: true, data: (data ?? []) as unknown as PurchaseItemRecord[] };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /**
+   * Laporan Pembelian: ringkasan + rekap per supplier + rekap per barang
+   * untuk periode & supplier terpilih.
+   */
+  async report(
+    filter: { from?: string; to?: string; supplier?: string } = {},
+  ): Promise<Result<PurchaseReportData>> {
+    try {
+      let q = createClient()
+        .from('kasir_purchases')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (filter.from) q = q.gte('created_at', new Date(`${filter.from}T00:00:00`).toISOString());
+      if (filter.to) q = q.lte('created_at', new Date(`${filter.to}T23:59:59.999`).toISOString());
+      if (filter.supplier && filter.supplier.trim()) q = q.eq('supplier_name', filter.supplier.trim());
+      const { data, error } = await q;
+      if (error) return { ok: false, error: error.message };
+
+      const purchases = (data ?? []) as unknown as Record<string, unknown>[];
+      const bySupplierMap = new Map<string, { supplier_name: string; jumlah: number; total: number }>();
+      let totalNilai = 0;
+      for (const p of purchases) {
+        const total = num(p.total);
+        totalNilai += total;
+        const name = String(p.supplier_name ?? '').trim() || '(tanpa supplier)';
+        const cur = bySupplierMap.get(name) ?? { supplier_name: name, jumlah: 0, total: 0 };
+        cur.jumlah += 1;
+        cur.total += total;
+        bySupplierMap.set(name, cur);
+      }
+
+      const ids = purchases.map((p) => String(p.id));
+      const byProductMap = new Map<string, PurchaseProductRecap>();
+      let totalItem = 0;
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        if (!chunk.length) continue;
+        const { data: items, error: e2 } = await createClient()
+          .from('kasir_purchase_items')
+          .select('*')
+          .in('purchase_id', chunk);
+        if (e2) return { ok: false, error: e2.message };
+        for (const it of (items ?? []) as unknown as PurchaseItemRecord[]) {
+          const qty = Number(it.qty) || 0;
+          const subtotal = Number(it.subtotal) || 0;
+          totalItem += qty;
+          const key = it.product_id ?? `name:${String(it.product_name).toLowerCase().trim()}`;
+          const cur =
+            byProductMap.get(key) ??
+            ({
+              product_id: it.product_id ?? null,
+              product_name: it.product_name,
+              unit: it.unit ?? null,
+              qty: 0,
+              total: 0,
+              avg_cost: 0,
+              jumlah_transaksi: 0,
+            } satisfies PurchaseProductRecap);
+          cur.qty += qty;
+          cur.total += subtotal;
+          cur.jumlah_transaksi += 1;
+          if (it.unit) cur.unit = it.unit;
+          byProductMap.set(key, cur);
+        }
+      }
+
+      const byProduct = Array.from(byProductMap.values())
+        .map((x) => ({ ...x, avg_cost: x.qty > 0 ? x.total / x.qty : 0 }))
+        .sort((a, b) => b.qty - a.qty || b.total - a.total);
+      const bySupplier = Array.from(bySupplierMap.values()).sort((a, b) => b.total - a.total);
+
+      return {
+        ok: true,
+        data: {
+          summary: { jumlah_transaksi: purchases.length, total_item: totalItem, total_nilai: totalNilai },
+          bySupplier,
+          byProduct,
+        },
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /** Hapus PO (salah input). Stok yang sudah masuk dibalikkan oleh RPC. */
+  async remove(id: string): Promise<Result<void>> {
+    try {
+      const { error } = await createClient().rpc('kasir_delete_purchase', { p_id: id });
+      if (error) return { ok: false, error: rpcMsg(error, 'hapus pembelian') };
+      return { ok: true, data: undefined };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

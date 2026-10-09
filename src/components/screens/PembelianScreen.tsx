@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { ListChecks, PackageSearch, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
+import Link from 'next/link';
+import { History, ListChecks, PackageSearch, Plus, RotateCcw, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
@@ -10,7 +11,7 @@ import { Modal } from '@/components/Modal';
 import { TeleponInput } from '@/components/TeleponInput';
 import { useToast } from '@/components/Toast';
 import { useButtonGuard } from '@/lib/useButtonGuard';
-import type { Product, PurchaseItemRecord, PurchaseRecord, Supplier } from '@/lib/types';
+import type { Product, PurchaseItemRecord, PurchaseRecord, PurchaseStatus, Supplier } from '@/lib/types';
 
 interface BarisPembelian {
   productId: string;
@@ -33,6 +34,7 @@ export default function PembelianScreen() {
   const [products, setProducts] = React.useState<Product[]>([]);
   const [supplierName, setSupplierName] = React.useState('');
   const [supplierId, setSupplierId] = React.useState<string | null>(null);
+  const [status, setStatus] = React.useState<PurchaseStatus>('lunas');
   const [note, setNote] = React.useState('');
   const [baris, setBaris] = React.useState<BarisPembelian[]>([]);
   const [pesan, setPesan] = React.useState<string | null>(null);
@@ -253,11 +255,13 @@ export default function PembelianScreen() {
     const r = await purchasesApi.create({
       supplierName: supplierName.trim(),
       supplierId,
+      status,
       items: baris.map((b) => ({
         productId: b.productId || null,
         name: b.name,
         qty: b.qty,
         cost: b.cost,
+        unit: b.unit,
       })),
       note,
     });
@@ -266,10 +270,13 @@ export default function PembelianScreen() {
       setPesan(r.error);
       return;
     }
-    setPesan(`Pembelian disimpan — total ${rupiah(r.data.total)}. Stok sudah ditambah.`);
+    setPesan(
+      `Pembelian ${r.data.invoice_no ?? ''} disimpan — total ${rupiah(r.data.total)} (${r.data.status === 'hutang' ? 'Hutang' : 'Lunas'}). Stok sudah ditambah.`,
+    );
     setBaris([]);
     setSupplierName('');
     setSupplierId(null);
+    setStatus('lunas');
     setNote('');
     setKode('');
     inputRef.current?.focus();
@@ -345,6 +352,9 @@ export default function PembelianScreen() {
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2">
         <Truck className="h-4 w-4 text-[#1b5fa8]" />
         <h1 className="text-[15px] font-bold text-[#1b3a5c]">Pembelian (PO Sederhana)</h1>
+        <Link href="/pembelian/riwayat" className="rb-btn ml-1">
+          <History className="h-3.5 w-3.5" /> Riwayat
+        </Link>
 
         <span className="ml-auto flex items-center gap-2 text-[11.5px] text-[#7a8ba0]">
           <b className="tnum text-[#35485c]">{baris.length}</b> baris · total{' '}
@@ -611,6 +621,20 @@ export default function PembelianScreen() {
           {/* Footer kanan: Catatan + Total */}
           <div className="shrink-0 border-t border-[#d8e0ec] bg-white px-4 py-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="w-[150px] shrink-0">
+                <label className="frm-label" htmlFor="status-bayar">
+                  Pembayaran
+                </label>
+                <select
+                  id="status-bayar"
+                  className="frm-key cursor-pointer"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as PurchaseStatus)}
+                >
+                  <option value="lunas">Lunas</option>
+                  <option value="hutang">Hutang</option>
+                </select>
+              </div>
               <div className="min-w-[180px] flex-1">
                 <label className="frm-label" htmlFor="catatan">
                   Catatan
@@ -618,7 +642,7 @@ export default function PembelianScreen() {
                 <input
                   id="catatan"
                   className="frm-key"
-                  placeholder="Faktur No."
+                  placeholder="Catatan / keterangan (opsional)"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                 />
