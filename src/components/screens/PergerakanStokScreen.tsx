@@ -13,12 +13,12 @@ import {
   Search,
 } from 'lucide-react';
 
-import { productsApi, stockApi } from '@/lib/api';
+import { stockApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu } from '@/lib/format';
 import { cetakHtml, esc, unduhExcel } from '@/lib/ekspor';
 import { useToast } from '@/components/Toast';
 import { useClickCooldown } from '@/lib/useButtonGuard';
-import type { JenisMutasi, Product, StockMovement } from '@/lib/types';
+import type { StockMovement } from '@/lib/types';
 
 type Preset = 'today' | '7days' | '30days' | 'all' | 'custom';
 
@@ -27,16 +27,6 @@ const PRESETS: { key: Preset; label: string }[] = [
   { key: '7days', label: '7 Hari' },
   { key: '30days', label: '30 Hari' },
   { key: 'all', label: 'Semua' },
-];
-
-/** Pilihan filter jenis mutasi. */
-const JENIS_FILTER: { value: string; label: string }[] = [
-  { value: '', label: 'Semua Jenis' },
-  { value: 'PEMBELIAN', label: 'Pembelian' },
-  { value: 'PENJUALAN', label: 'Penjualan / Kasir' },
-  { value: 'ADJUSTMENT', label: 'Adjustment / Opname' },
-  { value: 'RETUR', label: 'Retur' },
-  { value: 'PEMBATALAN', label: 'Pembatalan / Void' },
 ];
 
 /** Label & warna lencana per jenis mutasi. */
@@ -56,34 +46,25 @@ const meta = (jenis: string) => JENIS_META[jenis] ?? { label: jenis, cls: 'bg-[#
  *
  * Sumber data: `kasir_stock_logs` (kartu stok) lewat RPC `kasir_stock_movements`.
  * Setiap transaksi jual/beli/retur/pembatalan dan penyesuaian/opname otomatis
- * tercatat; kolom "Sisa Stok" mereplikasi stok Master Barang saat mutasi itu
- * terjadi. Tidak ada input manual di layar ini.
+ * tercatat. Ringan: default menampilkan hari ini dan pencarian dilakukan di
+ * sisi server (tanpa memuat semua barang). Tidak ada input manual di layar ini.
  */
 export default function PergerakanStokScreen() {
   const toast = useToast();
   const ui = useClickCooldown(1200);
 
-  const [products, setProducts] = React.useState<{ id: string; name: string }[]>([]);
   const [rows, setRows] = React.useState<StockMovement[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  const [preset, setPreset] = React.useState<Preset>('30days');
+  const [preset, setPreset] = React.useState<Preset>('today');
   const [from, setFrom] = React.useState('');
   const [to, setTo] = React.useState('');
-  const [productId, setProductId] = React.useState('');
-  const [jenis, setJenis] = React.useState('');
   const [q, setQ] = React.useState('');
   const [qDeb, setQDeb] = React.useState('');
 
   React.useEffect(() => {
-    setFrom(isoHariLalu(29));
+    setFrom(isoHariIni());
     setTo(isoHariIni());
-  }, []);
-
-  React.useEffect(() => {
-    void productsApi.list().then((r) => {
-      if (r.ok) setProducts(r.data.map((p) => ({ id: p.id, name: p.name })));
-    });
   }, []);
 
   // Pencarian nama/kode ditunda sedikit agar tidak memanggil server tiap ketik.
@@ -97,8 +78,6 @@ export default function PergerakanStokScreen() {
     const r = await stockApi.movements({
       from: preset === 'all' ? undefined : from,
       to: preset === 'all' ? undefined : to,
-      productId,
-      jenis,
       q: qDeb,
     });
     setLoading(false);
@@ -109,7 +88,7 @@ export default function PergerakanStokScreen() {
     }
     setRows(r.data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from, to, productId, jenis, qDeb, preset]);
+  }, [from, to, qDeb, preset]);
 
   React.useEffect(() => {
     void muat();
@@ -130,8 +109,6 @@ export default function PergerakanStokScreen() {
   }
 
   const periode = preset === 'all' ? 'Semua Periode' : `${from || '-'} s/d ${to || '-'}`;
-  const productLabel = productId ? (products.find((p) => p.id === productId)?.name ?? 'Barang') : 'Semua Barang';
-  const jenisLabel = JENIS_FILTER.find((j) => j.value === jenis)?.label ?? 'Semua Jenis';
 
   const totalMasuk = React.useMemo(() => rows.reduce((s, r) => s + r.masuk, 0), [rows]);
   const totalKeluar = React.useMemo(() => rows.reduce((s, r) => s + r.keluar, 0), [rows]);
@@ -146,21 +123,19 @@ export default function PergerakanStokScreen() {
         <td>${esc(k.no_referensi || '-')}</td>
         <td class="num">${k.masuk ? angka(k.masuk) : '-'}</td>
         <td class="num">${k.keluar ? angka(k.keluar) : '-'}</td>
-        <td class="num">${k.stok_sesudah == null ? '-' : angka(k.stok_sesudah)}</td>
-        <td>${esc(k.keterangan || '-')}</td>
       </tr>`,
     )
     .join('');
 
   const tabelHtml = `
-    <p class="muted">Periode: <b>${esc(periode)}</b> — Barang: <b>${esc(productLabel)}</b> — Jenis: <b>${esc(jenisLabel)}</b>${qDeb ? ` — Cari: <b>${esc(qDeb)}</b>` : ''}</p>
+    <p class="muted">Periode: <b>${esc(periode)}</b>${qDeb ? ` — Cari: <b>${esc(qDeb)}</b>` : ''}</p>
+    <p class="muted">Total Stok Masuk: <b>${angka(totalMasuk)}</b> — Total Stok Keluar: <b>${angka(totalKeluar)}</b></p>
     <table>
       <thead><tr>
         <th>Tanggal</th><th>Kode Barang</th><th>Nama Barang</th><th>Jenis</th>
         <th>No Referensi</th><th class="num">Stok Masuk</th><th class="num">Stok Keluar</th>
-        <th class="num">Sisa Stok</th><th>Keterangan</th>
       </tr></thead>
-      <tbody>${barisHtml || '<tr><td colspan="9">Tidak ada data.</td></tr>'}</tbody>
+      <tbody>${barisHtml || '<tr><td colspan="7">Tidak ada data.</td></tr>'}</tbody>
     </table>`;
 
   function exportExcel() {
@@ -268,42 +243,15 @@ export default function PergerakanStokScreen() {
           />
         </div>
 
-        <select
-          className="input h-8 w-[180px] cursor-pointer text-[12px]"
-          value={productId}
-          onChange={(e) => setProductId(e.target.value)}
-          aria-label="Filter barang"
-        >
-          <option value="">Semua Barang</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className="input h-8 w-[170px] cursor-pointer text-[12px]"
-          value={jenis}
-          onChange={(e) => setJenis(e.target.value)}
-          aria-label="Filter jenis"
-        >
-          {JENIS_FILTER.map((j) => (
-            <option key={j.value} value={j.value}>
-              {j.label}
-            </option>
-          ))}
-        </select>
-
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9fb0c4]" />
           <input
             type="search"
-            className="input h-8 w-[200px] pl-7 text-[12px]"
-            placeholder="Cari nama / kode barang"
+            className="input h-8 w-[220px] pl-7 text-[12px]"
+            placeholder="Cari nama barang"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            aria-label="Cari nama atau kode barang"
+            aria-label="Cari nama barang"
           />
         </div>
       </div>
@@ -317,10 +265,9 @@ export default function PergerakanStokScreen() {
         ) : (
           <div className="space-y-3">
             {/* Ringkasan */}
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <Stat label="Total Stok Masuk" value={angka(totalMasuk)} tone="green" />
               <Stat label="Total Stok Keluar" value={angka(totalKeluar)} tone="red" />
-              <Stat label="Jumlah Mutasi" value={angka(rows.length)} />
             </div>
 
             <div className="card overflow-hidden p-0">
@@ -328,12 +275,10 @@ export default function PergerakanStokScreen() {
                 <h3 className="text-[12.5px] font-bold text-[#1b3a5c]">
                   Buku Besar Pergerakan Stok
                 </h3>
-                <span className="text-[11.5px] text-[#7a8ba0]">
-                  {rows.length} baris · {productLabel} · {jenisLabel}
-                </span>
+                <span className="text-[11.5px] text-[#7a8ba0]">{rows.length} baris</span>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-[12.5px]">
+                <table className="w-full min-w-[880px] text-[12.5px]">
                   <thead>
                     <tr className="text-left text-[11px] uppercase tracking-wide text-[#5b6b80]">
                       <th className="px-3 py-2">Tanggal</th>
@@ -343,14 +288,12 @@ export default function PergerakanStokScreen() {
                       <th className="px-3 py-2">No Referensi</th>
                       <th className="px-3 py-2 text-right">Stok Masuk</th>
                       <th className="px-3 py-2 text-right">Stok Keluar</th>
-                      <th className="px-3 py-2 text-right">Sisa Stok</th>
-                      <th className="px-3 py-2">Keterangan</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-10 text-center text-zinc-400">
+                        <td colSpan={7} className="px-3 py-10 text-center text-zinc-400">
                           Tidak ada pergerakan stok pada filter ini.
                         </td>
                       </tr>
@@ -384,10 +327,6 @@ export default function PergerakanStokScreen() {
                             <td className="tnum px-3 py-2 text-right font-semibold text-[#c92a2a]">
                               {k.keluar ? angka(k.keluar) : '-'}
                             </td>
-                            <td className="tnum px-3 py-2 text-right font-semibold text-[#1b3a5c]">
-                              {k.stok_sesudah == null ? '-' : angka(k.stok_sesudah)}
-                            </td>
-                            <td className="px-3 py-2 text-[#5b6b80]">{k.keterangan || '-'}</td>
                           </tr>
                         );
                       })
