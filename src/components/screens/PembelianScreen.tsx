@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { History, ListChecks, PackageSearch, Plus, Sparkles, Truck, X } from 'lucide-react';
+import { History, ListChecks, Loader2, PackageSearch, Plus, Sparkles, Truck, X } from 'lucide-react';
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
@@ -69,18 +69,24 @@ export default function PembelianScreen() {
   const [riwayatLoading, setRiwayatLoading] = React.useState(false);
   const [barangBaruOpen, setBarangBaruOpen] = React.useState(false);
   const [baru, setBaru] = React.useState({ name: '', category: 'Umum', unit: 'Pcs', price: '', cost: '', stock: '' });
+  // Modal "Satuan Baru" — tambah satuan langsung tanpa ke Pengaturan.
+  const [satuanOpen, setSatuanOpen] = React.useState(false);
+  const [satuanBaru, setSatuanBaru] = React.useState({ nama: '', kode: '' });
+  const satuanGuard = useButtonGuard();
 
   // supplier history (map productId -> last cost)
   const [supplierCostMap, setSupplierCostMap] = React.useState<Map<string, number>>(new Map());
 
   // Master satuan: pilihan kolom SATUAN & modal "Barang Baru".
   const [opsiSatuan, setOpsiSatuan] = React.useState<string[]>([]);
+  const muatSatuan = React.useCallback(async () => {
+    const r = await satuanApi.list();
+    if (r.ok) setOpsiSatuan(r.data.map((s) => s.nama));
+  }, []);
 
   React.useEffect(() => {
-    void satuanApi.list().then((r) => {
-      if (r.ok) setOpsiSatuan(r.data.map((s) => s.nama));
-    });
-  }, []);
+    void muatSatuan();
+  }, [muatSatuan]);
 
   // Daftar supplier untuk dropdown + tombol [+] di panel kiri.
   const muatSuppliers = React.useCallback(async () => {
@@ -367,6 +373,31 @@ export default function PembelianScreen() {
     setBaru({ name: '', category: 'Umum', unit: 'Pcs', price: '', cost: '', stock: '' });
     tambah(r.data);
     toast.ok('Barang ditambahkan', r.data.name);
+  }
+
+  /** Tambah satuan baru ke master, lalu langsung dipakai di form Barang Baru. */
+  async function simpanSatuanBaru() {
+    const nama = satuanBaru.nama.trim();
+    const kode = satuanBaru.kode.trim().toUpperCase();
+    if (!nama || !kode) {
+      toast.error('Master Satuan', 'Nama dan kode singkatan wajib diisi.');
+      return;
+    }
+    await satuanGuard.guard(
+      async () => {
+        const res = await satuanApi.create({ nama, kode });
+        if (!res.ok) {
+          toast.error('Master Satuan', res.error);
+          return;
+        }
+        await muatSatuan();
+        setBaru((p) => ({ ...p, unit: nama }));
+        setSatuanOpen(false);
+        setSatuanBaru({ nama: '', kode: '' });
+        toast.ok('Master Satuan', `Satuan "${nama}" ditambahkan.`);
+      },
+      { pesanTunggu: 'Menyimpan satuan…' },
+    );
   }
 
   /** Simpan supplier baru dari modal +, lalu langsung pilih di form. */
@@ -773,23 +804,38 @@ export default function PembelianScreen() {
           </div>
           <div>
             <label className="label">Satuan</label>
-            <select
-              className="input cursor-pointer"
-              value={baru.unit}
-              aria-label="Satuan"
-              onChange={(e) => setBaru({ ...baru, unit: e.target.value })}
-            >
-              {!opsiSatuan.includes(baru.unit) && baru.unit ? (
-                <option value={baru.unit}>{baru.unit}</option>
-              ) : null}
-              {opsiSatuan.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1.5">
+              <select
+                className="input min-w-0 flex-1 cursor-pointer"
+                value={baru.unit}
+                aria-label="Satuan"
+                onChange={(e) => setBaru({ ...baru, unit: e.target.value })}
+              >
+                {!opsiSatuan.includes(baru.unit) && baru.unit ? (
+                  <option value={baru.unit}>{baru.unit}</option>
+                ) : null}
+                {opsiSatuan.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setSatuanBaru({ nama: '', kode: '' });
+                  setSatuanOpen(true);
+                }}
+                title="Tambah satuan baru"
+                aria-label="Tambah satuan baru"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#cdd8e6] bg-white text-[17px] font-bold leading-none text-[#1b5fa8] transition hover:border-[#1b5fa8] hover:bg-[#e8f1fa]"
+              >
+                +
+              </button>
+            </div>
             <p className="mt-1 text-[11px] text-zinc-400">
-              Diambil dari Pengaturan &gt; Satuan; tidak bisa diketik sendiri.
+              Diambil dari Pengaturan &gt; Satuan. Tombol [+] menambah satuan baru tanpa pindah
+              halaman.
             </p>
           </div>
           <div>
@@ -813,6 +859,62 @@ export default function PembelianScreen() {
             <input type="number" className="input" value={baru.stock} onChange={(e) => setBaru({ ...baru, stock: e.target.value })} />
           </div>
         </div>
+      </Modal>
+
+      {/* Modal + Satuan Baru (langsung dari form Barang Baru) */}
+      <Modal
+        open={satuanOpen}
+        onClose={() => setSatuanOpen(false)}
+        title="Satuan Baru"
+        width="max-w-xs"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => setSatuanOpen(false)}
+              disabled={satuanGuard.busy}
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void simpanSatuanBaru()}
+              disabled={!satuanBaru.nama.trim() || !satuanBaru.kode.trim() || satuanGuard.busy}
+              data-loading={satuanGuard.busy}
+            >
+              {satuanGuard.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {satuanGuard.busy ? 'Menyimpan…' : 'Simpan'}
+            </button>
+          </>
+        }
+      >
+        <label className="label" htmlFor="beli-satuan-nama">
+          Nama Satuan
+        </label>
+        <input
+          id="beli-satuan-nama"
+          className="input"
+          value={satuanBaru.nama}
+          onChange={(e) => setSatuanBaru((p) => ({ ...p, nama: e.target.value }))}
+          placeholder="mis. Dus"
+          autoFocus
+        />
+        <label className="label mt-3" htmlFor="beli-satuan-kode">
+          Kode Singkatan
+        </label>
+        <input
+          id="beli-satuan-kode"
+          className="input uppercase"
+          value={satuanBaru.kode}
+          onChange={(e) => setSatuanBaru((p) => ({ ...p, kode: e.target.value.toUpperCase() }))}
+          placeholder="mis. DS"
+          maxLength={6}
+        />
+        <p className="mt-1.5 text-[11px] text-[#9fb0c4]">
+          Tersimpan ke Pengaturan &gt; Satuan dan langsung dipakai di form Barang Baru.
+        </p>
       </Modal>
 
       {/* Modal + Supplier Baru */}
