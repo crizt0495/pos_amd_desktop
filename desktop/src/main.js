@@ -17,16 +17,20 @@
 
 const { app, BrowserWindow, session, Menu, Tray, ipcMain, shell, dialog, nativeImage, net } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const { randomUUID } = require('crypto');
 const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
 const { createEngine } = require('./db/engine.cjs');
+const { startLocalServer } = require('./localServer.cjs');
 
 const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-desktop.vercel.app';
 const PARTITION = 'persist:kasirpro';
 const PAGES_DIR = path.join(__dirname, 'pages');
 const ASSETS_DIR = path.join(__dirname, '..', 'assets');
+/** Ekspor statis aplikasi POS yang dibundel (lihat scripts/export-desktop.mjs). */
+const LOCAL_APP_DIR = path.join(__dirname, '..', 'app');
 const isDev = process.argv.includes('--dev');
 const wantReset = process.argv.includes('--reset');
 
@@ -43,6 +47,8 @@ const store = new Store({
     deviceName: '',
     deviceId: '',
     localDb: false,
+    localUserId: '',
+    authSession: null,
   },
 });
 
@@ -106,6 +112,48 @@ function closeDb() {
     try { db.close(); } catch { /* abaikan */ }
     db = null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Server aplikasi lokal (ekspor statis yang dibundel di installer)
+// ---------------------------------------------------------------------------
+let localServer = null;
+let localOrigin = '';
+
+function localAppAvailable() {
+  try {
+    return fs.existsSync(path.join(LOCAL_APP_DIR, 'kasir', 'index.html'));
+  } catch {
+    return false;
+  }
+}
+
+async function ensureLocalServer() {
+  if (localOrigin) return localOrigin;
+  if (!localAppAvailable()) return '';
+  try {
+    const { server, port } = await startLocalServer(LOCAL_APP_DIR);
+    localServer = server;
+    localOrigin = `http://127.0.0.1:${port}`;
+    console.log('[app] aplikasi lokal siap:', localOrigin);
+    return localOrigin;
+  } catch (err) {
+    console.error('[app] gagal menjalankan server lokal:', err.message);
+    return '';
+  }
+}
+
+function closeLocalServer() {
+  if (localServer) {
+    try { localServer.close(); } catch { /* abaikan */ }
+    localServer = null;
+    localOrigin = '';
+  }
+}
+
+/** True bila desktop memakai aplikasi + database lokal (mode offline-first). */
+function offlineMode() {
+  return dbEnabled() && localAppAvailable();
 }
 
 /** Nyalakan/matikan mode database lokal lalu muat ulang aplikasi. */
@@ -194,6 +242,10 @@ function login(serial) {
           true,
         );
         if (result && result.ok && result.json && result.json.ok) {
+          const j = result.json || {};
+          try { if (j.user_id) store.set('localUserId', String(j.user_id)); } catch (e) {}
+          try { if (j.session) store.set('authSession', j.session); } catch (e) {}
+          try { initDb(); if (db && j.user_id) db.setUserId(String(j.user_id)); } catch (e) {}
           finish({ ok: true });
         } else if (result && result.status === 0) {
           finish({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' });
@@ -273,7 +325,11 @@ async function showSetup(opts = {}) {
 }
 
 async function loadApp() {
-  await win.loadURL(`${serverUrl()}/kasir`);
+  const useLocal = offlineMode() && localOrigin;
+  const url = useLocal ? `${localOrigin}/kasir/` : `${serverUrl()}/kasir`;
+  await win.loadURL(url);
+  win.show();
+  win.focus();
 }
 
 async function boot() {
@@ -289,7 +345,7 @@ async function boot() {
     await showPage('loading.html');
     const res = await login(serial);
     if (res.ok) {
-      await win.loadURL(`${serverUrl()}/kasir`);
+      await loadApp();
       return;
     }
     if (res.offline) {
@@ -399,7 +455,8 @@ function createWindow() {
   // Navigasi keluar aplikasi → buka di browser luar, bukan di dalam POS.
   win.webContents.setWindowOpenHandler(({ url }) => {
     const server = serverUrl();
-    if (!url || url.startsWith('about:') || url.startsWith('blob:') || url.startsWith('data:') || url.startsWith(server)) {
+    const isLocal = url && (url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:'));
+    if (!url || url.startsWith('about:') || url.startsWith('blob:') || url.startsWith('data:') || url.startsWith(server) || isLocal) {
       return { action: 'allow' };
     }
     void shell.openExternal(url);
@@ -408,7 +465,7 @@ function createWindow() {
 
   win.webContents.on('will-navigate', (event, url) => {
     const server = serverUrl();
-    if (url.startsWith(server) || url.startsWith('file://') || url.startsWith('about:')) return;
+    if (url.startsWith(server) || url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:') || url.startsWith('file://') || url.startsWith('about:')) return;
     event.preventDefault();
     void shell.openExternal(url);
   });
@@ -500,6 +557,7 @@ function registerIpc() {
   ipcMain.on('desktop:local-db', (event) => {
     event.returnValue = dbEnabled();
   });
+  ipcMain.handle('desktop:auth-session', () => ({ ok: true, session: store.get('authSession') || null }));
 
   ipcMain.handle('desktop:db', (_e, op) => {
     initDb();
@@ -702,6 +760,7 @@ if (gotLock) {
     Menu.setApplicationMenu(null);
     deviceId();
     initDb();
+    try { if (db && store.get('localUserId')) db.setUserId(String(store.get('localUserId'))); } catch (e) {}
     createWindow();
     createTray();
     registerIpc();
@@ -712,7 +771,7 @@ if (gotLock) {
     });
   });
 
-  app.on('before-quit', () => { closeDb(); });
+  app.on('before-quit', () => { closeDb(); closeLocalServer(); });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

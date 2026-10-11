@@ -5,6 +5,10 @@ node_modules/
 .next/
 out/
 
+# ekspor statis desktop (hasil build, dibundel ke installer) + stash sementara
+desktop/app/
+.desktop-export-stash/
+
 # env
 .env
 .env.local

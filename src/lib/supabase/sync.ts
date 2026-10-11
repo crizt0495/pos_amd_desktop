@@ -53,7 +53,15 @@ export async function pushLocalChanges(): Promise<{ pushed: number; failed: numb
   if (!pending.length) return { pushed: 0, failed: 0 };
 
   const remote = createRemoteClient();
-  // Pastikan ada sesi login; jika belum, tunda sampai login berikutnya.
+  try {
+    const b2 = bridge();
+    if (b2 && (b2 as any).authSession) {
+      const r = await (b2 as any).authSession();
+      if (r?.session?.access_token) {
+        await remote.auth.setSession({ access_token: r.session.access_token, refresh_token: r.session.refresh_token });
+      }
+    }
+  } catch {}
   try {
     const { data } = await remote.auth.getSession();
     if (!data?.session) return { pushed: 0, failed: 0 };

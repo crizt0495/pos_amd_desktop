@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('kasirproDesktop', {
   dbOutbox: () => ipcRenderer.invoke('desktop:db-outbox'),
   dbOutboxDone: (e) => ipcRenderer.invoke('desktop:db-outbox-done', e || {}),
   dbSyncRow: (tbl, rowId) => ipcRenderer.invoke('desktop:db-sync-row', { tbl, rowId }),
+  authSession: () => ipcRenderer.invoke('desktop:auth-session'),
   reportStoreName: (name) => ipcRenderer.send('desktop:store-name', String(name || '')),
   notifyOffline: () => ipcRenderer.send('desktop:offline'),
   openOwner: () => ipcRenderer.send('desktop:open-owner'),

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "export:desktop": "node scripts/export-desktop.mjs",
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit",
     "check:supabase": "node scripts/check-supabase.mjs"

@@ -53,9 +53,18 @@ kasir_delete_purchase
       `src/lib/supabase/sync.ts`, dipasang oleh `DesktopSync` (berkala +
       saat `online`/`focus`). Tarik awal untuk PC baru: **belum** (lihat
       catatan "Restore" di bawah).
-- [ ] **Fase 3 — App dibundel lokal.** `next export` (atau server lokal) supaya
-      jendela tidak perlu memuat dari Vercel; middleware diganti gerbang
-      client-side.
+- [x] **Fase 3a — Infrastruktur bundel statis.** `scripts/export-desktop.mjs`
+      + `next.config.mjs` kondisional, server HTTP lokal (`desktop/src/localServer.cjs`),
+      jendela memuat app lokal (`http://127.0.0.1:PORT`) bila `localDb` aktif
+      dan berkas bundel tersedia. Nepotisme? Tidak. Aplikasi web tetap terpisah;
+      bundel statis bisa dihasilkan saat build installer.
+- [ ] **Fase 3b — Integrasi bundel ke CI.** Tambah langkah ekspor → salin
+      ke `desktop/app/` di workflow build-windows, serta pastikan `app/`
+      masuk asar/installer. Belum dilakukan (untuk menghemat waktu, bisa
+      dijalankan lokal: `npm run export:desktop` lalu `npm run build` di `desktop/`).
+- [ ] **Fase 4 — Login offline.** Aktivasi pertama online → simpan
+      `localUserId` + sesi; start berikutnya tanpa internet. (Saat ini sudah
+      menyimpan `localUserId`/`authSession` dari respons login; perlu diuji.)
 - [ ] **Fase 4 — Login offline.** Aktivasi pertama online → simpan
       `localUserId` + sesi; start berikutnya tanpa internet.
 
