@@ -15,12 +15,25 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('kasirproDesktop', {
   platform: 'desktop',
+  localDb: (() => {
+    try {
+      return !!ipcRenderer.sendSync('desktop:local-db');
+    } catch {
+      return false;
+    }
+  })(),
   version: () => ipcRenderer.invoke('desktop:version'),
   submitSerial: (serial) => ipcRenderer.invoke('desktop:submit-serial', String(serial || '')),
   owner: (payload) => ipcRenderer.invoke('desktop:owner', payload || {}),
   retry: () => ipcRenderer.invoke('desktop:retry'),
   print: () => ipcRenderer.invoke('desktop:print'),
   listPrinters: () => ipcRenderer.invoke('desktop:list-printers'),
+  db: (op) => ipcRenderer.invoke('desktop:db', op || {}),
+  dbUser: (id) => ipcRenderer.invoke('desktop:db-user', id == null ? null : String(id)),
+  dbStats: () => ipcRenderer.invoke('desktop:db-stats'),
+  dbOutbox: () => ipcRenderer.invoke('desktop:db-outbox'),
+  dbOutboxDone: (e) => ipcRenderer.invoke('desktop:db-outbox-done', e || {}),
+  dbSyncRow: (tbl, rowId) => ipcRenderer.invoke('desktop:db-sync-row', { tbl, rowId }),
   reportStoreName: (name) => ipcRenderer.send('desktop:store-name', String(name || '')),
   notifyOffline: () => ipcRenderer.send('desktop:offline'),
   openOwner: () => ipcRenderer.send('desktop:open-owner'),

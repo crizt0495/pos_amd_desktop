@@ -21,6 +21,7 @@ const os = require('os');
 const { randomUUID } = require('crypto');
 const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
+const { createEngine } = require('./db/engine.cjs');
 
 const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-desktop.vercel.app';
 const PARTITION = 'persist:kasirpro';
@@ -41,6 +42,7 @@ const store = new Store({
     pageSize: '80mm',
     deviceName: '',
     deviceId: '',
+    localDb: false,
   },
 });
 
@@ -74,6 +76,59 @@ let tray = null;
 let ses = null;
 let offlineTimer = null;
 let booting = false;
+let db = null;
+
+// ---------------------------------------------------------------------------
+// Database lokal (SQLite) — mode offline-first (lihat desktop/OFFLINE.md)
+// ---------------------------------------------------------------------------
+function dbEnabled() {
+  return !!store.get('localDb');
+}
+
+function dbPath() {
+  return path.join(app.getPath('userData'), 'kasirpro.db');
+}
+
+/** Buka database lokal bila mode lokal aktif. Aman dipanggil berkali-kali. */
+function initDb() {
+  if (db || !dbEnabled()) return;
+  try {
+    db = createEngine(dbPath());
+    console.log('[db] database lokal siap:', dbPath());
+  } catch (err) {
+    db = null;
+    console.error('[db] gagal membuka database lokal:', err.message);
+  }
+}
+
+function closeDb() {
+  if (db) {
+    try { db.close(); } catch { /* abaikan */ }
+    db = null;
+  }
+}
+
+/** Nyalakan/matikan mode database lokal lalu muat ulang aplikasi. */
+function toggleLocalDb(on) {
+  store.set('localDb', !!on);
+  if (on) {
+    initDb();
+  } else {
+    closeDb();
+  }
+  const detail = on
+    ? 'Data akan dibaca & ditulis ke database lokal (SQLite) dan disinkronkan ke Supabase saat online. Aplikasi dimuat ulang.'
+    : 'Aplikasi kembali memakai Supabase langsung. Aplikasi dimuat ulang.';
+  dialog
+    .showMessageBox(win, {
+      type: 'info',
+      title: 'Database Lokal',
+      message: on ? 'Mode database lokal diaktifkan.' : 'Mode database lokal dimatikan.',
+      detail,
+      buttons: ['OK'],
+    })
+    .finally(() => { void loadAppSafe(); });
+}
 
 // ---------------------------------------------------------------------------
 // Login via window tersembunyi (cookie ditangani Chromium → tersimpan di sesi)
@@ -419,6 +474,12 @@ function createTray() {
     { type: 'separator' },
     { label: 'Ganti Serial (Owner)', click: () => openOwner() },
     { label: 'Muat Ulang Aplikasi', click: () => { void loadAppSafe(); } },
+    {
+      label: 'Database Lokal (offline)',
+      type: 'checkbox',
+      checked: dbEnabled(),
+      click: (item) => toggleLocalDb(item.checked),
+    },
     { type: 'separator' },
     { label: 'Versi ' + app.getVersion(), enabled: false },
     { label: 'Keluar', click: () => { app.isQuiting = true; app.quit(); } },
@@ -433,6 +494,44 @@ function createTray() {
 // ---------------------------------------------------------------------------
 function registerIpc() {
   ipcMain.handle('desktop:version', () => app.getVersion());
+
+  // ---------------------- database lokal (offline-first) ---------------------
+  // Renderer memakai shim `src/lib/supabase/local.ts` → diteruskan ke sini.
+  ipcMain.on('desktop:local-db', (event) => {
+    event.returnValue = dbEnabled();
+  });
+
+  ipcMain.handle('desktop:db', (_e, op) => {
+    initDb();
+    if (!db) return { ok: false, error: 'Database lokal tidak aktif.' };
+    try {
+      const out = db.handle(op) || {};
+      return { ok: true, data: out.data !== undefined ? out.data : null, count: out.count };
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || 'Operasi database lokal gagal.' };
+    }
+  });
+
+  ipcMain.handle('desktop:db-user', (_e, id) => {
+    initDb();
+    if (!db) return { ok: false, userId: null };
+    if (id != null && String(id)) db.setUserId(String(id));
+    return { ok: true, userId: db.getUserId() };
+  });
+
+  ipcMain.handle('desktop:db-stats', () => (db ? { ok: true, data: db.stats() } : { ok: false }));
+
+  ipcMain.handle('desktop:db-outbox', () => (db ? { ok: true, data: db.outbox.pending() } : { ok: false, data: [] }));
+
+  ipcMain.handle('desktop:db-outbox-done', (_e, e) => {
+    if (db && e && e.tbl && e.rowId) db.outbox.mark(e.tbl, e.rowId, e.op);
+    return { ok: true };
+  });
+
+  ipcMain.handle('desktop:db-sync-row', (_e, e) => {
+    if (!db || !e || !e.tbl || e.rowId == null) return { ok: false, data: null };
+    return { ok: true, data: db.getRowForSync(e.tbl, String(e.rowId), db.getUserId()) };
+  });
 
   ipcMain.handle('desktop:submit-serial', async (_e, raw) => {
     const serial = String(raw || '').trim().toUpperCase();
@@ -602,6 +701,7 @@ if (gotLock) {
     ses = session.fromPartition(PARTITION);
     Menu.setApplicationMenu(null);
     deviceId();
+    initDb();
     createWindow();
     createTray();
     registerIpc();
@@ -611,6 +711,8 @@ if (gotLock) {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
+
+  app.on('before-quit', () => { closeDb(); });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
