@@ -1,0 +1,85 @@
+/* Gaya bersama halaman lokal KasirPro POS (file://, tanpa aset online). */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: radial-gradient(1200px 600px at 50% -10%, #2470c0 0%, #134a85 45%, #0b2a4d 100%);
+  color: #eaf2fb;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.card {
+  width: min(430px, 92vw);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  padding: 26px 24px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+.logo { width: 84px; height: 84px; object-fit: contain; border-radius: 18px; }
+.brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 6px; }
+.brand h1 { font-size: 20px; margin: 0; }
+.sub { color: #b9d2ec; font-size: 12.5px; margin: 2px 0 0; }
+h2 { font-size: 15px; margin: 14px 0 4px; }
+p { line-height: 1.5; }
+label { display: block; text-align: left; font-size: 12px; color: #bcd4ee; margin: 0 0 6px; }
+input {
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(6, 20, 40, 0.55);
+  color: #fff;
+  padding: 0 12px;
+  font-size: 15px;
+  outline: none;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+input.pw { text-transform: none; letter-spacing: normal; font-family: inherit; }
+input:focus { border-color: #5aa9ff; box-shadow: 0 0 0 3px rgba(90, 169, 255, 0.25); }
+button {
+  width: 100%;
+  height: 42px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  background: linear-gradient(180deg, #2f86e0, #1b5fa8);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+button:disabled { opacity: 0.55; cursor: default; }
+button.ghost { background: transparent; border: 1px solid rgba(255, 255, 255, 0.25); }
+.error {
+  margin-top: 12px;
+  background: rgba(201, 42, 42, 0.18);
+  border: 1px solid rgba(255, 120, 120, 0.45);
+  color: #ffd7d7;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  text-align: left;
+}
+.hint { margin-top: 10px; font-size: 11.5px; color: #9fbcda; line-height: 1.5; }
+.spinner {
+  width: 46px;
+  height: 46px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #7cc0ff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  margin: 8px auto 2px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.big { font-size: 40px; line-height: 1; margin-bottom: 4px; }
+.row { display: grid; gap: 10px; }
+.warn { color: #ffd43b; }

@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# hasil build electron-builder
+release/
+dist/
+out/
+
+# log & editor
+*.log
+.DS_Store
+
+# konfigurasi lokal (jangan pernah di-commit)
+*.local
+.env
+.env.*

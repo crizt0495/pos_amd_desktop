@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; style-src 'unsafe-inline' 'self'; img-src 'self' file: data:; script-src 'unsafe-inline' 'self';" />
+  <title>KasirPro POS — Aktivasi</title>
+  <link rel="stylesheet" href="base.css" />
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="../../assets/icon.png" alt="KasirPro POS" />
+    <div class="brand"><h1>KasirPro POS</h1></div>
+    <p class="sub" id="sub">Masukkan Serial Key lisensi Anda (sekali saja).</p>
+
+    <form id="form" autocomplete="off">
+      <label for="serial">Serial Key / Lisensi</label>
+      <input id="serial" name="serial" placeholder="KPRO-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" autofocus />
+      <div id="error" class="error" style="display:none"></div>
+      <button id="submit" type="submit">Aktifkan &amp; Masuk</button>
+    </form>
+
+    <p class="hint">Serial Key dibuat oleh toko Anda di KasirPro Portal → Aktivasi.
+      Setelah aktif, aplikasi akan masuk otomatis tanpa mengetik ulang.</p>
+  </div>
+  <script>
+    var params = new URLSearchParams(location.search);
+    var mode = params.get('mode') || 'first';
+    var errParam = params.get('error') || '';
+    var errorEl = document.getElementById('error');
+    var inputEl = document.getElementById('serial');
+    var btn = document.getElementById('submit');
+    var sub = document.getElementById('sub');
+
+    if (mode === 'ganti') {
+      sub.textContent = 'Masukkan Serial Key baru.';
+      document.title = 'KasirPro POS — Ganti Serial';
+    }
+    function showError(msg) {
+      if (!msg) return;
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+    }
+    if (errParam) showError(errParam);
+
+    document.getElementById('form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var serial = (inputEl.value || '').trim();
+      if (serial.length < 3) { showError('Serial Key minimal 3 karakter.'); return; }
+      errorEl.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Memeriksa lisensi…';
+      try {
+        var res = await window.kasirproDesktop.submitSerial(serial);
+        if (res && res.ok) return; // main process pindah ke kasir
+        showError((res && res.message) || 'Serial Key tidak valid. Coba lagi.');
+      } catch (err) {
+        showError('Tidak bisa menghubungi server. Periksa koneksi internet.');
+      }
+      btn.disabled = false;
+      btn.textContent = 'Aktifkan & Masuk';
+    });
+
+    inputEl.addEventListener('input', function () { errorEl.style.display = 'none'; });
+  </script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+# Jangan unggah aplikasi desktop (Electron) ke build web Vercel.
+desktop/

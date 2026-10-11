@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; style-src 'unsafe-inline' 'self'; img-src 'self' file: data:; script-src 'unsafe-inline' 'self';" />
+  <title>KasirPro POS — Offline</title>
+  <link rel="stylesheet" href="base.css" />
+</head>
+<body>
+  <div class="card">
+    <div class="big warn">⚠</div>
+    <div class="brand"><h1>Tidak ada koneksi internet</h1></div>
+    <p class="sub">Periksa kabel / Wi-Fi, lalu coba lagi.</p>
+    <p class="hint" id="status">Mencoba menyambung ulang otomatis setiap 5 detik…</p>
+    <button id="retry">Coba lagi sekarang</button>
+  </div>
+  <script>
+    var statusEl = document.getElementById('status');
+    var btn = document.getElementById('retry');
+    var n = 0;
+    setInterval(function () {
+      n += 1;
+      statusEl.textContent = 'Mencoba menyambung ulang otomatis setiap 5 detik… (' + n + ')';
+      try { window.kasirproDesktop && window.kasirproDesktop.retry(); } catch (e) {}
+    }, 5000);
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      statusEl.textContent = 'Mencoba menyambung…';
+      var p = window.kasirproDesktop && window.kasirproDesktop.retry();
+      if (p && p.then) p.then(function () { btn.disabled = false; });
+      else btn.disabled = false;
+    });
+    try { window.kasirproDesktop && window.kasirproDesktop.retry(); } catch (e) {}
+  </script>
+</body>
+</html>

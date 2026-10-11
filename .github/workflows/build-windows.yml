@@ -1,0 +1,60 @@
+name: Build KasirPro POS (Windows)
+
+# Membangun installer 1 file: KasirPro-Setup-Windows.exe
+#  - push biasa / manual  -> hasil build diunggah sebagai artifact
+#  - tag versi (v*)       -> sekaligus dipublikasikan ke GitHub Releases
+#                            (dipakai auto-update electron-updater)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/build-windows.yml'
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer (Windows x64)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ("${{ startsWith(github.ref, 'refs/tags/v') }}" -eq "true") {
+            npm run dist:publish
+          } else {
+            npm run dist
+          }
+        shell: pwsh
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: KasirPro-Setup-Windows
+          path: |
+            desktop/release/KasirPro-Setup-Windows.exe
+            desktop/release/*.blockmap
+            desktop/release/latest.yml
+          if-no-files-found: error

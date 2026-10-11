@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; style-src 'unsafe-inline' 'self'; img-src 'self' file: data:; script-src 'unsafe-inline' 'self';" />
+  <title>KasirPro POS — Owner</title>
+  <link rel="stylesheet" href="base.css" />
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="../../assets/icon.png" alt="KasirPro POS" />
+    <div class="brand"><h1>Menu Owner</h1></div>
+    <p class="sub" id="sub">Masukkan password owner untuk mengganti Serial Key.</p>
+
+    <form id="form" autocomplete="off">
+      <div class="row" id="groupPass">
+        <div>
+          <label for="pass" id="passLabel">Password owner</label>
+          <input class="pw" type="password" id="pass" autocomplete="off" />
+        </div>
+        <div id="groupConfirm" style="display:none">
+          <label for="pass2">Ulangi password</label>
+          <input class="pw" type="password" id="pass2" autocomplete="off" />
+        </div>
+      </div>
+      <div id="error" class="error" style="display:none"></div>
+      <button id="submit" type="submit">Lanjut</button>
+    </form>
+
+    <p class="hint">Hanya untuk pemilik toko. Kasir biasa tidak perlu membuka menu ini.</p>
+  </div>
+  <script>
+    var params = new URLSearchParams(location.search);
+    var state = params.get('state') === 'set' ? 'set' : 'verify';
+    var errorEl = document.getElementById('error');
+    var passEl = document.getElementById('pass');
+    var pass2El = document.getElementById('pass2');
+    var btn = document.getElementById('submit');
+    var sub = document.getElementById('sub');
+
+    if (state === 'set') {
+      sub.textContent = 'Buat password owner (hanya sekali).';
+      document.getElementById('groupConfirm').style.display = 'block';
+      document.getElementById('passLabel').textContent = 'Password owner baru';
+    }
+
+    function showError(msg) {
+      if (!msg) return;
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+    }
+
+    document.getElementById('form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var pw = passEl.value || '';
+      if (state === 'set') {
+        if (pw.length < 4) { showError('Password minimal 4 karakter.'); return; }
+        if (pw !== pass2El.value) { showError('Ulangi password tidak sama.'); return; }
+      } else if (pw.length < 1) {
+        showError('Password wajib diisi.'); return;
+      }
+      errorEl.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Memeriksa…';
+      try {
+        var res = await window.kasirproDesktop.owner({ action: state, password: pw });
+        if (res && res.ok) return; // main process pindah ke halaman input serial
+        showError((res && res.message) || 'Password salah.');
+      } catch (err) {
+        showError('Terjadi kesalahan. Coba lagi.');
+      }
+      btn.disabled = false;
+      btn.textContent = 'Lanjut';
+    });
+
+    passEl.addEventListener('input', function () { errorEl.style.display = 'none'; });
+    pass2El.addEventListener('input', function () { errorEl.style.display = 'none'; });
+  </script>
+</body>
+</html>
