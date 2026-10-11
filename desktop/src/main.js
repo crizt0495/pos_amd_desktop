@@ -334,6 +334,8 @@ function createWindow() {
   });
 
   win.setMenuBarVisibility(false);
+  // Jangan biarkan <title> halaman web menimpa judul "KasirPro POS - [Nama Toko]".
+  win.on('page-title-updated', (event) => event.preventDefault());
   win.once('ready-to-show', () => {
     win.show();
     void boot();
