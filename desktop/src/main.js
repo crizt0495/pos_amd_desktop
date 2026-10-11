@@ -525,6 +525,23 @@ function registerIpc() {
     });
   });
 
+  // Daftar printer yang terpasang di sistem (Windows) — dipakai dialog
+  // Pengaturan > Printer di aplikasi web supaya bisa memilih tanpa ketik manual.
+  ipcMain.handle('desktop:list-printers', async () => {
+    try {
+      const rows = await win.webContents.getPrintersAsync();
+      const data = (rows || []).map((p) => ({
+        name: p.name,
+        displayName: p.displayName || p.name,
+        isDefault: !!p.isDefault,
+        status: p.status,
+      }));
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err), data: [] };
+    }
+  });
+
   ipcMain.on('desktop:store-name', (_e, name) => {
     const nama = String(name || '').trim();
     if (!nama) return;

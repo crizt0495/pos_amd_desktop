@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('kasirproDesktop', {
   owner: (payload) => ipcRenderer.invoke('desktop:owner', payload || {}),
   retry: () => ipcRenderer.invoke('desktop:retry'),
   print: () => ipcRenderer.invoke('desktop:print'),
+  listPrinters: () => ipcRenderer.invoke('desktop:list-printers'),
   reportStoreName: (name) => ipcRenderer.send('desktop:store-name', String(name || '')),
   notifyOffline: () => ipcRenderer.send('desktop:offline'),
   openOwner: () => ipcRenderer.send('desktop:open-owner'),

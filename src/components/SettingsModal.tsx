@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   Printer as PrinterIcon,
+  RefreshCw,
   Ruler,
   Store,
   Trash2,
@@ -37,6 +38,7 @@ import {
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { bacaPrinterSettings, setPrinterSettings, type PreferensiPrinter, type UkuranPrinter } from '@/lib/printerSettings';
+import { daftarPrinterTerdeteksi, desktopAktif, type PrinterInfo } from '@/lib/desktop';
 import {
   autoSambungBluetooth,
   didukungBluetooth,
@@ -158,6 +160,28 @@ export function SettingsModal({
       nama: printer.nama === nama ? 'System Printer' : printer.nama,
     });
   }
+
+  /* ------- Printer terdeteksi otomatis dari sistem (aplikasi desktop) ------- */
+  // Di web, browser tidak bisa membaca daftar printer. Di desktop, main
+  // process (Electron) mengembalikan printer yang terpasang lewat IPC.
+  const [isDesktop, setIsDesktop] = React.useState(false);
+  const [terdeteksi, setTerdeteksi] = React.useState<PrinterInfo[]>([]);
+  const [deteksiBusy, setDeteksiBusy] = React.useState(false);
+
+  const muatPrinter = React.useCallback(async () => {
+    if (!desktopAktif()) return;
+    setDeteksiBusy(true);
+    const rows = await daftarPrinterTerdeteksi();
+    setTerdeteksi(rows);
+    setDeteksiBusy(false);
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const aktif = desktopAktif();
+    setIsDesktop(aktif);
+    if (aktif) void muatPrinter();
+  }, [open, muatPrinter]);
   const [btStatus, setBtStatus] = React.useState<StatusBluetooth>('nonaktif');
   const [btBusy, setBtBusy] = React.useState(false);
   React.useEffect(() => dengarStatusBluetooth(setBtStatus), []);
@@ -594,22 +618,61 @@ export function SettingsModal({
           </div>
 
           <div className="space-y-1.5">
-            <span className="label">Pilih Printer</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="label !mb-0">Pilih Printer</span>
+              {isDesktop ? (
+                <button
+                  type="button"
+                  onClick={() => void muatPrinter()}
+                  disabled={deteksiBusy}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1b5fa8] hover:underline disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${deteksiBusy ? 'animate-spin' : ''}`} /> Deteksi ulang
+                </button>
+              ) : null}
+            </div>
             <select
               className="input cursor-pointer"
               value={printer.nama}
               onChange={(e) => ubahPrinter({ nama: e.target.value })}
             >
-              <option value="System Printer">System Printer (default browser)</option>
-              {printer.namaManual.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-              {printer.nama !== 'System Printer' && !printer.namaManual.includes(printer.nama) ? (
+              <option value="System Printer">System Printer (default perangkat)</option>
+              {terdeteksi.length ? (
+                <optgroup label="Printer terdeteksi di perangkat">
+                  {terdeteksi.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                      {p.isDefault ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {printer.namaManual.length ? (
+                <optgroup label="Ditambahkan manual">
+                  {printer.namaManual.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {printer.nama !== 'System Printer' &&
+              !terdeteksi.some((p) => p.name === printer.nama) &&
+              !printer.namaManual.includes(printer.nama) ? (
                 <option value={printer.nama}>{printer.nama}</option>
               ) : null}
             </select>
+            {isDesktop && terdeteksi.length ? (
+              <p className="text-[10.5px] font-semibold text-[#0ca678]">
+                ✓ {terdeteksi.length} printer terdeteksi otomatis dari perangkat.
+              </p>
+            ) : null}
+            {isDesktop && !terdeteksi.length && !deteksiBusy ? (
+              <p className="text-[10.5px] font-semibold text-[#b8860b]">
+                Belum ada printer terdeteksi. Pastikan printer sudah terpasang di Windows, lalu klik
+                “Deteksi ulang”.
+              </p>
+            ) : null}
             <div className="flex gap-1.5">
               <input
                 className="input min-w-0 flex-1"
@@ -654,9 +717,18 @@ export function SettingsModal({
               </div>
             ) : null}
             <p className="text-[10.5px] text-[#7a8ba0]">
-              Aplikasi ini berbasis web, jadi browser tidak bisa mendeteksi printer yang terpasang.
-              Tambahkan nama printer di sini lalu pilih — struk tetap dicetak lewat{' '}
-              <code>window.print()</code> (atau printer Bluetooth di bawah).
+              {isDesktop ? (
+                <>
+                  Aplikasi desktop mendeteksi printer yang terpasang di Windows secara otomatis.
+                  Pilih salah satu agar struk dicetak langsung tanpa dialog.
+                </>
+              ) : (
+                <>
+                  Aplikasi ini berbasis web, jadi browser tidak bisa mendeteksi printer yang
+                  terpasang. Tambahkan nama printer di sini lalu pilih — struk tetap dicetak lewat{' '}
+                  <code>window.print()</code> (atau printer Bluetooth di bawah).
+                </>
+              )}
             </p>
           </div>
 
