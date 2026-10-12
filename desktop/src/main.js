@@ -327,14 +327,6 @@ async function showSetup(opts = {}) {
 async function loadApp() {
   let url = `${serverUrl()}/kasir`;
   try {
-    await ensureLocalServer();
-    const useLocal = offlineMode() && localOrigin;
-    if (useLocal) url = `${localOrigin}/kasir/`;
-  } catch (e) {
-    console.error('[app] gagal mempersiapkan aplikasi lokal:', e && e.message);
-    url = `${serverUrl()}/kasir`;
-  }
-  try {
     await win.loadURL(url);
   } catch (err) {
     console.error('[app] gagal memuat URL:', err && err.message);
