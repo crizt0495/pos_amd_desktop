@@ -325,9 +325,24 @@ async function showSetup(opts = {}) {
 }
 
 async function loadApp() {
-  const useLocal = offlineMode() && localOrigin;
-  const url = useLocal ? `${localOrigin}/kasir/` : `${serverUrl()}/kasir`;
-  await win.loadURL(url);
+  let url = `${serverUrl()}/kasir`;
+  try {
+    await ensureLocalServer();
+    const useLocal = offlineMode() && localOrigin;
+    if (useLocal) url = `${localOrigin}/kasir/`;
+  } catch (e) {
+    console.error('[app] gagal mempersiapkan aplikasi lokal:', e && e.message);
+    url = `${serverUrl()}/kasir`;
+  }
+  try {
+    await win.loadURL(url);
+  } catch (err) {
+    console.error('[app] gagal memuat URL:', err && err.message);
+    // Coba fallback ke remote sekali lagi
+    try {
+      await win.loadURL(`${serverUrl()}/kasir`);
+    } catch { /* biarkan did-fail-load menangani */ }
+  }
   win.show();
   win.focus();
 }
