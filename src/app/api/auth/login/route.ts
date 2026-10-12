@@ -131,7 +131,7 @@ export async function POST(req: Request) {
 
   // --- 3. Sign in (sesi cookie) ---------------------------------------------
   const supabase = createClient();
-  const { error: signInErr } = await supabase.auth.signInWithPassword({
+  const { data: signIn, error: signInErr } = await supabase.auth.signInWithPassword({
     email: account.account.email,
     password: account.account.password,
   });
@@ -143,5 +143,15 @@ export async function POST(req: Request) {
     return NextResponse.redirect(new URL(next, req.url), 303);
   }
 
-  return NextResponse.json({ ok: true, message: `Selamat datang, ${APP_NAME}!` });
+  const isDesktop = req.headers.get('x-kasirpro-desktop') === '1' || req.headers.get('X-KasirPro-Desktop') === '1';
+  const payload: any = { ok: true, message: `Selamat datang, ${APP_NAME}!` };
+  if (isDesktop && signIn?.session) {
+    payload.user_id = signIn.session.user.id;
+    payload.session = {
+      access_token: signIn.session.access_token,
+      refresh_token: signIn.session.refresh_token,
+      expires_at: signIn.session.expires_at,
+    };
+  }
+  return NextResponse.json(payload);
 }

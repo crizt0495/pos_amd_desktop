@@ -228,7 +228,7 @@ function login(serial) {
              try {
                const r = await fetch('/api/auth/login', {
                  method: 'POST',
-                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-KasirPro-Desktop': '1' },
                  body: ${JSON.stringify(body)},
                  credentials: 'same-origin',
                });
