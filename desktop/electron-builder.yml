@@ -14,11 +14,10 @@ compression: maximum
 forceCodeSigning: false
 
 win:
+  # Hanya installer (NSIS). Portable sengaja tidak dibuat: klien harus
+  # meng-install agar auto-update (electron-updater) berjalan andal.
   target:
     - target: nsis
-      arch:
-        - x64
-    - target: portable
       arch:
         - x64
   icon: build/icon.ico
@@ -38,9 +37,6 @@ nsis:
   deleteAppDataOnUninstall: false
   runAfterFinish: true
   artifactName: KasirPro-Setup-Windows.exe
-
-portable:
-  artifactName: KasirPro-Portable.exe
 
 # Auto-update sederhana: electron-updater membaca latest.yml dari GitHub Releases.
 publish:

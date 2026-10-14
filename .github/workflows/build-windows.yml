@@ -1,6 +1,6 @@
 name: Build KasirPro POS (Windows)
 
-# Membangun installer 1 file: KasirPro-Setup-Windows.exe (+ KasirPro-Portable.exe)
+# Membangun installer 1 file: KasirPro-Setup-Windows.exe (NSIS, wajib di-install)
 #
 # Langkah penting: aplikasi web diekspor statis lebih dulu (bundel offline)
 # lalu ikut dibungkus ke dalam installer supaya kasir tetap bisa jalan tanpa
@@ -94,7 +94,6 @@ jobs:
           name: KasirPro-Setup-Windows
           path: |
             desktop/release/KasirPro-Setup-Windows.exe
-            desktop/release/KasirPro-Portable.exe
             desktop/release/*.blockmap
             desktop/release/latest.yml
           if-no-files-found: error
