@@ -77,6 +77,15 @@ function deviceId() {
 const serverUrl = () => String(store.get('serverUrl') || DEFAULT_SERVER).replace(/\/+$/, '');
 
 // ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+// Matikan akselerasi perangkat keras. Pada sebagian PC Windows (driver GPU
+// lama, Remote Desktop, VM) proses GPU gagal inisialisasi sehingga jendela
+// bisa tampil kosong/blank. Aplikasi POS tidak butuh GPU — mode software
+// (SwiftShader) jauh lebih andal.
+app.disableHardwareAcceleration();
+
+// ---------------------------------------------------------------------------
 // Satu instance saja
 // ---------------------------------------------------------------------------
 const gotLock = app.requestSingleInstanceLock();
@@ -580,10 +589,29 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   // Jangan biarkan <title> halaman web menimpa judul "KasirPro POS - [Nama Toko]".
   win.on('page-title-updated', (event) => event.preventDefault());
+
+  // PENTING: muat halaman awal SEBELUM mengandalkan `ready-to-show`. Bila tidak
+  // ada halaman yang dimuat, `ready-to-show` tidak pernah terpicu saat GPU
+  // gagal inisialisasi → jendela tidak tampil dan boot() tidak jalan (gejala
+  // "layar blank"). Memuat loading.html memaksa render pertama.
+  void win.loadFile(path.join(PAGES_DIR, 'loading.html')).catch(() => { /* jaring pengaman di bawah */ });
+
+  let shownByReady = false;
   win.once('ready-to-show', () => {
+    shownByReady = true;
+    if (!win || win.isDestroyed()) return;
     win.show();
     void boot();
   });
+
+  // Jaring pengaman: tetap tampilkan & jalankan aplikasi walau `ready-to-show`
+  // tidak pernah muncul (mis. GPU bermasalah). boot() punya guard anti-ganda.
+  setTimeout(() => {
+    if (shownByReady || !win || win.isDestroyed()) return;
+    console.warn('[window] ready-to-show tidak muncul — menampilkan paksa.');
+    win.show();
+    void boot();
+  }, 4000);
 
   // Navigasi keluar aplikasi → buka di browser luar, bukan di dalam POS.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -614,6 +642,20 @@ function createWindow() {
     if (!url || url.startsWith('file://')) return;
     if (loadingApp) return; // loadApp() sedang menangani fallback-nya sendiri
     void showOffline(offlinePageReason());
+  });
+
+  // Pemulihan bila proses render bermasalah (crash/hang) → muat ulang halaman.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[renderer] proses berhenti:', details && details.reason);
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.reload(); } catch { /* abaikan */ }
+    }
+  });
+  win.on('unresponsive', () => {
+    console.warn('[window] tidak merespons — memuat ulang.');
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.reload(); } catch { /* abaikan */ }
+    }
   });
 
   // Kunci pintasan browser: cegah reload / devtools / tutup jendela.
