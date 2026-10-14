@@ -13,8 +13,11 @@
  * Jalankan dari akar repo:  npm run export:desktop
  */
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+
+const require = createRequire(import.meta.url);
 
 const root = process.cwd();
 const stash = path.join(root, '.desktop-export-stash');
@@ -56,11 +59,14 @@ try {
 
   rmSync(outDir, { recursive: true, force: true });
   log('next build (DESKTOP_EXPORT=1)...');
-  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const res = spawnSync(npx, ['next', 'build'], {
+  // Jalankan Next lewat Node langsung (bukan `npx.cmd`): di Windows, spawnSync
+  // pada berkas .cmd gagal (EINVAL/status null) sejak Node 18.20/20.12.
+  const nextBin = require.resolve('next/dist/bin/next');
+  const res = spawnSync(process.execPath, [nextBin, 'build'], {
     stdio: 'inherit',
     env: { ...process.env, DESKTOP_EXPORT: '1' },
   });
+  if (res.error) throw new Error(`gagal menjalankan next build: ${res.error.message}`);
   if (res.status !== 0) throw new Error(`next build gagal (kode ${res.status})`);
 
   if (!existsSync(path.join(outDir, 'kasir', 'index.html'))) {
