@@ -34,7 +34,22 @@ contextBridge.exposeInMainWorld('kasirproDesktop', {
   dbOutbox: () => ipcRenderer.invoke('desktop:db-outbox'),
   dbOutboxDone: (e) => ipcRenderer.invoke('desktop:db-outbox-done', e || {}),
   dbSyncRow: (tbl, rowId) => ipcRenderer.invoke('desktop:db-sync-row', { tbl, rowId }),
+  dbImport: (payload) => ipcRenderer.invoke('desktop:db-import', payload || {}),
+  dbMarkPull: () => ipcRenderer.invoke('desktop:db-mark-pull'),
+  dbPullDone: () => ipcRenderer.invoke('desktop:db-pull-done'),
   authSession: () => ipcRenderer.invoke('desktop:auth-session'),
+  reportSync: (status) => ipcRenderer.send('desktop:sync-status', status || {}),
+  // Perintah dari proses utama (menu tray): 'sync-now' | 'pull-remote'.
+  onCommand: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const handler = (_e, cmd) => {
+      try { cb(String(cmd || '')); } catch (err) { /* abaikan */ }
+    };
+    ipcRenderer.on('desktop:command', handler);
+    return () => {
+      try { ipcRenderer.removeListener('desktop:command', handler); } catch (err) { /* abaikan */ }
+    };
+  },
   reportStoreName: (name) => ipcRenderer.send('desktop:store-name', String(name || '')),
   notifyOffline: () => ipcRenderer.send('desktop:offline'),
   openOwner: () => ipcRenderer.send('desktop:open-owner'),

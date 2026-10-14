@@ -51,41 +51,49 @@ kasir_delete_purchase
       19 RPC diport ke JS, IPC `desktop:db`, shim renderer, outbox sinkron.
 - [x] **Fase 2 — Sinkron Supabase.** Push outbox (upsert/delete) dari
       `src/lib/supabase/sync.ts`, dipasang oleh `DesktopSync` (berkala +
-      saat `online`/`focus`). Tarik awal untuk PC baru: **belum** (lihat
-      catatan "Restore" di bawah).
+      saat `online`/`focus`). Tarik awal untuk PC baru: lihat Fase 5.
 - [x] **Fase 3a — Infrastruktur bundel statis.** `scripts/export-desktop.mjs`
       + `next.config.mjs` kondisional, server HTTP lokal (`desktop/src/localServer.cjs`),
       jendela memuat app lokal (`http://127.0.0.1:PORT`) bila `localDb` aktif
       dan berkas bundel tersedia. Nepotisme? Tidak. Aplikasi web tetap terpisah;
       bundel statis bisa dihasilkan saat build installer.
-- [ ] **Fase 3b — Integrasi bundel ke CI.** Tambah langkah ekspor → salin
-      ke `desktop/app/` di workflow build-windows, serta pastikan `app/`
-      masuk asar/installer. Belum dilakukan (untuk menghemat waktu, bisa
-      dijalankan lokal: `npm run export:desktop` lalu `npm run build` di `desktop/`).
-- [ ] **Fase 4 — Login offline.** Aktivasi pertama online → simpan
-      `localUserId` + sesi; start berikutnya tanpa internet. (Saat ini sudah
-      menyimpan `localUserId`/`authSession` dari respons login; perlu diuji.)
-- [ ] **Fase 4 — Login offline.** Aktivasi pertama online → simpan
-      `localUserId` + sesi; start berikutnya tanpa internet.
+- [x] **Fase 3b — Integrasi bundel ke CI.** Workflow `build-windows.yml`
+      menjalankan `npm run export:desktop` (dengan env Supabase dari secrets)
+      sebelum `npm ci` + build di `desktop/`, lalu memverifikasi
+      `desktop/app/kasir/index.html` ada. `desktop/app/` di-gitignore
+      (artefak build, dihasilkan CI).
+- [x] **Fase 4 — Login offline.** Aktivasi pertama online menyimpan
+      `localUserId` + `authSession` + `lastLicenseCheck`. Start berikutnya
+      tanpa internet langsung memakai aplikasi + data lokal (masa tenggang
+      verifikasi 45 hari). Saat masa tenggang habis, halaman offline meminta
+      internet sekali lagi.
+- [x] **Fase 5 — Restore / sinkronisasi turun.** `pullFromRemote()` menarik
+      semua tabel dari Supabase lalu `engine.importRows()` menuliskannya ke
+      SQLite **tanpa** mencatat ke `_outbox`. Tarikan awal otomatis sekali per
+      user (ditandai `_meta.initialPull:<uid>`), plus menu tray
+      **Ambil Data dari Server** untuk restore manual. Baris yang masih punya
+      perubahan lokal tertunda tidak ditimpa.
 
-## Sinkronisasi (Fase 2)
+## Sinkronisasi
 
 - Tiap tulis (CRUD + efek RPC) mencatat baris di `_outbox`.
 - `pushLocalChanges()` membaca outbox, lalu meng-`upsert`/menghapus baris ke
-  Supabase memakai sesi login (cookie) yang sama. Baris yang sukses ditandai
-  `done`.
-- Dipasang otomatis oleh komponen `DesktopSync` (di root layout): tiap 60 dtk,
-  saat event `online`, dan saat jendela `focus`.
+  Supabase memakai sesi login yang sama. Baris yang sukses ditandai `done`
+  (`outbox.mark`).
+- `pullFromRemote()` arah sebaliknya (restore): ambil dari Supabase →
+  `importRows` → SQLite. Idempoten; kolom yang tidak ada di skema lokal dibuang.
+- Dipasang otomatis oleh komponen `DesktopSync` (di root layout): tarikan awal
+  ~1,5 dtk setelah aplikasi tampil, lalu push tiap 60 dtk, saat event `online`,
+  dan saat jendela `focus`. Menu tray: **Sinkronkan Sekarang** /
+  **Ambil Data dari Server**, plus status "N data menunggu".
 - `kasir_settings` memakai kunci `user_id,key`; tabel lain memakai `id`.
-- **Restore (belum):** untuk mengisi DB lokal dari Supabase (PC baru/ganti
-  perangkat), perlu tombol "Tarik data dari server" yang mengunduh semua tabel
-  lalu menandai outbox bersih. Belum diimplementasikan.
 
 ## Aktifkan/matikan mode lokal
 
 Mode lokal dikendalikan `localDb` di `electron-store` (config.json).
-Default: **mati** (desktop masih lewat Supabase) sampai Fase 4 selesai, agar
-aplikasi yang dipakai sekarang tidak terganggu. Bisa dinyalakan dari menu
+Sejak bundel offline ikut terpasang, `localDb` **menyala otomatis** pada
+instalasi baru/upgrade (bila bundel `app/kasir/index.html` ada dan user belum
+pernah mengubah setelan ini). Bisa dimatikan dari menu
 **Tray › Database Lokal (offline)** (aplikasi dimuat ulang otomatis), atau:
 
 ```bash
@@ -95,6 +103,14 @@ node -e "const S=require('electron-store');new S({name:'config'}).set('localDb',
 
 Saat `localDb` mati, `desktop:db` tidak dipakai dan `createClient()` memakai
 Supabase seperti biasa.
+
+## Keamanan saat layar blank
+
+Bila aplikasi lokal gagal menampilkan konten (mis. bundel tidak lengkap),
+`loadApp()` mendeteksinya (`loadAndVerify`) lalu **otomatis jatuh ke versi
+server** — tidak lagi menampilkan layar kosong. Server lokal juga mengembalikan
+404 untuk aset `_next/*` yang hilang (bukan HTML), supaya modul JS tidak salah
+di-parse.
 
 ## Skema & penyimpangan kecil dari Postgres
 

@@ -6,6 +6,9 @@ release/
 dist/
 out/
 
+# bundel aplikasi offline (dihasilkan `npm run export:desktop`)
+app/
+
 # log & editor
 *.log
 .DS_Store

@@ -404,6 +404,18 @@ const SAMPLES = [
 
 export async function ensureSeeded(): Promise<void> {
   try {
+    // Desktop offline-first: sebelum tarikan pertama dari server selesai,
+    // database lokal masih kosong — jangan tanam data contoh supaya tidak
+    // tercampur ke akun asli (dan ikut tersinkron ke Supabase).
+    if (typeof window !== 'undefined') {
+      const b = (window as unknown as { kasirproDesktop?: { localDb?: boolean; dbPullDone?: () => Promise<{ ok: boolean; done?: boolean }> } })
+        .kasirproDesktop;
+      if (b && b.localDb && typeof b.dbPullDone === 'function') {
+        const st = await b.dbPullDone();
+        if (st && st.ok && !st.done) return;
+      }
+    }
+
     const uid = await currentUserId();
 
     const { count } = await createClient()

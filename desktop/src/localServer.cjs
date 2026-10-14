@@ -35,11 +35,12 @@ const MIME = {
 };
 
 function resolveFile(rootDir, urlPath) {
+  const root = path.resolve(rootDir);
   let rel = decodeURIComponent(urlPath.split('?')[0]).replace(/^\/+/, '');
   if (rel === '') rel = 'kasir/index.html';
 
-  let file = path.normalize(path.join(rootDir, rel));
-  if (!file.startsWith(rootDir)) return null; // cegah path traversal
+  let file = path.resolve(path.join(root, rel));
+  if (file !== root && !file.startsWith(root + path.sep)) return null; // cegah path traversal
 
   try {
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) {
@@ -65,8 +66,15 @@ function startLocalServer(rootDir) {
           res.end('Method Not Allowed');
           return;
         }
+        const reqPath = (req.url || '/').split('?')[0];
         let file = resolveFile(rootDir, req.url || '/');
-        if (!file || !fs.existsSync(file)) file = fs.existsSync(fallback) ? fallback : null;
+        if (!file || !fs.existsSync(file)) {
+          // Rute aplikasi (tanpa ekstensi berkas) boleh jatuh ke halaman kasir
+          // (SPA). Aset yang hilang (mis. /_next/*.js) HARUS 404 — kalau tidak,
+          // browser menerima HTML sebagai JavaScript → halaman blank.
+          const hasExt = path.extname(reqPath) !== '';
+          file = !hasExt && fs.existsSync(fallback) ? fallback : null;
+        }
         if (!file) {
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('Not found');

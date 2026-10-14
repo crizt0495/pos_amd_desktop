@@ -1,6 +1,11 @@
 name: Build KasirPro POS (Windows)
 
-# Membangun installer 1 file: KasirPro-Setup-Windows.exe
+# Membangun installer 1 file: KasirPro-Setup-Windows.exe (+ KasirPro-Portable.exe)
+#
+# Langkah penting: aplikasi web diekspor statis lebih dulu (bundel offline)
+# lalu ikut dibungkus ke dalam installer supaya kasir tetap bisa jalan tanpa
+# internet. Lihat desktop/OFFLINE.md.
+#
 #  - push biasa / manual  -> hasil build diunggah sebagai artifact
 #  - tag versi (v*)       -> sekaligus dipublikasikan ke GitHub Releases
 #                            (dipakai auto-update electron-updater)
@@ -11,6 +16,13 @@ on:
     branches: [main]
     paths:
       - 'desktop/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'next.config.mjs'
+      - 'tsconfig.json'
       - '.github/workflows/build-windows.yml'
     tags:
       - 'v*'
@@ -20,9 +32,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-    defaults:
-      run:
-        working-directory: desktop
 
     steps:
       - name: Checkout
@@ -33,12 +42,43 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
 
-      - name: Install dependencies
+      # ------------------------------------------------------------------
+      # 1) Bundel offline: ekspor statis aplikasi web ke desktop/app/
+      # ------------------------------------------------------------------
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build static export (bundel offline)
+        env:
+          DESKTOP_EXPORT: '1'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_APP_NAME: KasirPro POS
+        run: npm run export:desktop
+
+      - name: Verify offline bundle
+        shell: pwsh
+        run: |
+          $index = 'desktop/app/kasir/index.html'
+          if (-not (Test-Path $index)) { throw "Bundel offline tidak ditemukan: $index" }
+          $size = (Get-Item $index).Length
+          Write-Host "bundel offline OK ($size byte): $index"
+          if (-not (Test-Path 'desktop/app/_next')) { throw "Aset _next tidak ada di bundel offline" }
+
+      # ------------------------------------------------------------------
+      # 2) Bungkus jadi installer Windows
+      # ------------------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
         run: npm ci
 
       - name: Build installer (Windows x64)
+        working-directory: desktop
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -47,7 +87,6 @@ jobs:
           } else {
             npm run dist
           }
-        shell: pwsh
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -55,6 +94,7 @@ jobs:
           name: KasirPro-Setup-Windows
           path: |
             desktop/release/KasirPro-Setup-Windows.exe
+            desktop/release/KasirPro-Portable.exe
             desktop/release/*.blockmap
             desktop/release/latest.yml
           if-no-files-found: error

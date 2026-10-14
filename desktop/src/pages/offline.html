@@ -9,8 +9,8 @@
 <body>
   <div class="card">
     <div class="big warn">⚠</div>
-    <div class="brand"><h1>Tidak ada koneksi internet</h1></div>
-    <p class="sub">Periksa kabel / Wi-Fi, lalu coba lagi.</p>
+    <div class="brand"><h1 id="title">Tidak ada koneksi internet</h1></div>
+    <p class="sub" id="sub">Periksa kabel / Wi-Fi, lalu coba lagi.</p>
     <p class="hint" id="status">Mencoba menyambung ulang otomatis setiap 5 detik…</p>
     <button id="retry">Coba lagi sekarang</button>
   </div>
@@ -18,6 +18,18 @@
     var statusEl = document.getElementById('status');
     var btn = document.getElementById('retry');
     var n = 0;
+
+    // Mode offline lokal (data tersimpan) tidak lagi bisa dipakai setelah masa
+    // tenggang verifikasi — butuh internet sekali untuk memperbarui lisensi.
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get('reason') === 'grace') {
+        document.getElementById('title').textContent = 'Perlu internet sekali lagi';
+        document.getElementById('sub').textContent =
+          'Masa verifikasi offline sudah habis. Sambungkan internet sebentar supaya lisensi & data bisa diperbarui.';
+      }
+    } catch (e) {}
+
     setInterval(function () {
       n += 1;
       statusEl.textContent = 'Mencoba menyambung ulang otomatis setiap 5 detik… (' + n + ')';

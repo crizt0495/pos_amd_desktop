@@ -113,9 +113,23 @@ function createEngine(dbPath) {
   }
 
   // ----------------------- normalisasi -----------------------
+  /** Kolom yang benar-benar ada di tabel lokal (cache). */
+  const localCols = new Map();
+  function localColumns(table) {
+    if (!localCols.has(table)) {
+      const rows = qa(`pragma table_info("${table}")`);
+      localCols.set(table, new Set(rows.map((r) => r.name)));
+    }
+    return localCols.get(table);
+  }
+
   function normalize(table, obj) {
     const out = {};
+    const cols = localColumns(table);
     for (const k of Object.keys(obj)) {
+      // Buang kolom yang tidak dikenal skema lokal (mis. migrasi server baru)
+      // supaya penulisan tidak gagal dengan "no such column".
+      if (cols.size && !cols.has(k)) continue;
       let v = obj[k];
       if (v === undefined) v = null;
       const jsonCols = JSON_COLS[table] || [];
@@ -166,6 +180,7 @@ function createEngine(dbPath) {
   function insertRow(table, obj) {
     const o = normalize(table, obj);
     const cols = Object.keys(o);
+    if (!cols.length) return;
     run(
       `insert into "${table}" (${cols.map((c) => `"${c}"`).join(',')}) values (${cols
         .map(() => '?')
@@ -177,6 +192,7 @@ function createEngine(dbPath) {
   function upsertRow(table, obj, conflictCols) {
     const o = normalize(table, obj);
     const cols = Object.keys(o);
+    if (!cols.length) return;
     const upd = cols.filter((c) => !conflictCols.includes(c));
     let sql = `insert into "${table}" (${cols.map((c) => `"${c}"`).join(',')}) values (${cols
       .map(() => '?')
@@ -1207,6 +1223,53 @@ function createEngine(dbPath) {
     return row ? rowsToObj(tbl, row) : null;
   }
 
+  /**
+   * Impor baris hasil tarikan dari Supabase (restore / sinkronisasi turun).
+   *
+   * Berbeda dari `doUpsert`: penulisan di sini TIDAK dicatat ke `_outbox`,
+   * supaya data yang baru diambil dari server tidak dikirim balik ke server.
+   * Idempoten — aman dijalankan berkali-kali.
+   */
+  function importRows(tbl, list, uid) {
+    const table = assertTable(tbl);
+    const rows = Array.isArray(list) ? list : [list];
+    const conflict = NO_ID.has(table) ? ['user_id', 'key'] : ['id'];
+    let n = 0;
+    db.transaction(() => {
+      for (const item of rows) {
+        if (!item || typeof item !== 'object') continue;
+        const row = Object.assign({}, item);
+        if (!row.user_id) row.user_id = uid || meta('localUserId') || '';
+        if (!NO_ID.has(table) && !row.id) row.id = randomUUID();
+        if (!NO_CREATED.has(table) && !row.created_at) row.created_at = nowIso();
+        if (HAS_UPDATED.has(table) && !row.updated_at) row.updated_at = nowIso();
+        upsertRow(table, row, conflict);
+        n++;
+      }
+    })();
+    return n;
+  }
+
+  /** Tandai bahwa tarikan awal dari server sudah selesai (per user). */
+  function markInitialPull(uid) {
+    setMeta(`initialPull:${uid || meta('localUserId') || ''}`, nowIso());
+  }
+
+  function initialPullDone(uid) {
+    return !!meta(`initialPull:${uid || meta('localUserId') || ''}`);
+  }
+
+  /** Kumpulkan baris lokal untuk semua tabel (dipakai untuk verifikasi/backup). */
+  function exportAll(uid) {
+    const out = {};
+    for (const t of APP_TABLES) {
+      const keyCol = NO_ID.has(t) ? 'key' : 'id';
+      out[t] = qa(`select * from "${t}" where user_id = ?`, uid).map((r) => rowsToObj(t, r));
+      void keyCol;
+    }
+    return out;
+  }
+
   function stats() {
     const out = {};
     for (const t of APP_TABLES) out[t] = num(q1(`select count(*) as c from "${t}"`).c);
@@ -1230,16 +1293,21 @@ function createEngine(dbPath) {
     setUserId,
     stats,
     getRowForSync,
+    importRows,
+    markInitialPull,
+    initialPullDone,
+    exportAll,
     outbox: {
       pending: () => qa('select tbl, row_id as row_id, op, ts from _outbox where done = 0 order by ts'),
       done: (tbl, rowId, op) =>
+        run('update _outbox set done = 1 where tbl = ? and row_id = ? and op = ?', tbl, String(rowId), op),
+      // Alias: main.js memanggil `outbox.mark(tbl, rowId, op)`.
+      mark: (tbl, rowId, op) =>
         run('update _outbox set done = 1 where tbl = ? and row_id = ? and op = ?', tbl, String(rowId), op),
     },
     close,
     _db: db,
   };
 }
-
-module.exports = { createEngine, APP_TABLES };
 
 module.exports = { createEngine, APP_TABLES };

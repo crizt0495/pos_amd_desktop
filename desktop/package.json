@@ -1,7 +1,7 @@
 {
   "name": "kasirpro-pos-desktop",
   "productName": "KasirPro POS",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "KasirPro POS — aplikasi kasir desktop Windows (Electron) untuk https://pos-amd-desktop.vercel.app",
   "author": {
     "name": "KasirPro",
@@ -15,9 +15,10 @@
     "dev": "electron . --dev",
     "reset": "electron . --reset",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis --x64 --publish never",
-    "dist:publish": "electron-builder --win nsis --x64 --publish always",
-    "dist:dir": "electron-builder --win --dir --x64"
+    "dist": "electron-builder --win nsis portable --x64 --publish never",
+    "dist:publish": "electron-builder --win nsis portable --x64 --publish always",
+    "dist:dir": "electron-builder --win --dir --x64",
+    "test": "node test/engine.test.cjs && node test/sync.test.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

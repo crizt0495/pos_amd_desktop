@@ -49,6 +49,7 @@ const store = new Store({
     localDb: false,
     localUserId: '',
     authSession: null,
+    lastLicenseCheck: '',
   },
 });
 
@@ -56,6 +57,12 @@ if (wantReset) {
   store.clear();
   store.set('deviceId', randomUUID());
 }
+
+// Mode offline-first menyala otomatis begitu aplikasi lokal ikut terpasang.
+// (Bundle `app/kasir/index.html` ada → data disimpan di SQLite lalu disinkronkan.)
+try {
+  if (!store.has('localDb') && localAppAvailable()) store.set('localDb', true);
+} catch { /* abaikan */ }
 
 /** HWID stabil per instalasi (dipakai lisensi: 1 key = 1 perangkat). */
 function deviceId() {
@@ -82,6 +89,7 @@ let tray = null;
 let ses = null;
 let offlineTimer = null;
 let booting = false;
+let loadingApp = false;
 let db = null;
 
 // ---------------------------------------------------------------------------
@@ -156,6 +164,39 @@ function offlineMode() {
   return dbEnabled() && localAppAvailable();
 }
 
+/** Masa tenggang lisensi saat offline (hari) sejak verifikasi online terakhir. */
+const OFFLINE_GRACE_DAYS = 45;
+
+/**
+ * Boleh mulai tanpa internet? Perlu: mode lokal aktif, sudah pernah aktivasi
+ * (ada user tersimpan), dan masih dalam masa tenggang sejak verifikasi terakhir.
+ */
+function offlineStartAllowed() {
+  if (!offlineMode()) return false;
+  if (!String(store.get('localUserId') || '').trim()) return false;
+  const last = String(store.get('lastLicenseCheck') || '').trim();
+  if (!last) return true; // instalasi lama: belum ada cap waktu — izinkan.
+  const t = Date.parse(last);
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t <= OFFLINE_GRACE_DAYS * 24 * 60 * 60 * 1000;
+}
+
+/** Sisa hari masa tenggang offline (untuk pesan ke kasir). */
+function offlineGraceDaysLeft() {
+  const last = String(store.get('lastLicenseCheck') || '').trim();
+  const t = Date.parse(last);
+  if (!last || !Number.isFinite(t)) return OFFLINE_GRACE_DAYS;
+  const left = OFFLINE_GRACE_DAYS - Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+  return Math.max(0, left);
+}
+
+/** Alasan halaman offline ditampilkan: 'grace' (masa verifikasi habis) atau 'noconn'. */
+function offlinePageReason() {
+  const hasUser = !!String(store.get('localUserId') || '').trim();
+  if (hasUser && offlineMode() && !offlineStartAllowed()) return 'grace';
+  return 'noconn';
+}
+
 /** Nyalakan/matikan mode database lokal lalu muat ulang aplikasi. */
 function toggleLocalDb(on) {
   store.set('localDb', !!on);
@@ -181,10 +222,11 @@ function toggleLocalDb(on) {
 // ---------------------------------------------------------------------------
 // Login via window tersembunyi (cookie ditangani Chromium → tersimpan di sesi)
 // ---------------------------------------------------------------------------
-function login(serial) {
+function login(serial, opts = {}) {
   return new Promise((resolve) => {
     const server = serverUrl();
     const loginUrl = `${server}/login`;
+    const guardMs = Number(opts.timeout) > 0 ? Number(opts.timeout) : 25000;
     const body = JSON.stringify({
       serial_key: serial,
       device_id: deviceId(),
@@ -219,7 +261,7 @@ function login(serial) {
       try { hidden.destroy(); } catch { /* abaikan */ }
       resolve(res);
     };
-    const guard = setTimeout(() => finish({ ok: false, offline: true, message: 'Server tidak merespons.' }), 25000);
+    const guard = setTimeout(() => finish({ ok: false, offline: true, message: 'Server tidak merespons.' }), guardMs);
 
     hidden.webContents.on('did-finish-load', async () => {
       try {
@@ -243,6 +285,7 @@ function login(serial) {
         );
         if (result && result.ok && result.json && result.json.ok) {
           const j = result.json || {};
+          try { store.set('lastLicenseCheck', new Date().toISOString()); } catch (e) {}
           try { if (j.user_id) store.set('localUserId', String(j.user_id)); } catch (e) {}
           try { if (j.session) store.set('authSession', j.session); } catch (e) {}
           try { initDb(); if (db && j.user_id) db.setUserId(String(j.user_id)); } catch (e) {}
@@ -306,8 +349,12 @@ function stopOfflineTimer() {
   }
 }
 
-async function showOffline() {
-  await showPage('offline.html');
+async function showOffline(reason) {
+  const query = {};
+  if (reason === 'grace') query.reason = 'grace';
+  else if (reason === 'noconn') query.reason = 'noconn';
+  if (reason) query.days = String(offlineGraceDaysLeft());
+  await showPage('offline.html', Object.keys(query).length ? query : undefined);
   stopOfflineTimer();
   offlineTimer = setInterval(async () => {
     if (await reachable()) {
@@ -324,19 +371,85 @@ async function showSetup(opts = {}) {
   await showPage('setup.html', query);
 }
 
-async function loadApp() {
-  let url = `${serverUrl()}/kasir`;
+// Skrip pemeriksa: apakah halaman benar-benar menampilkan konten?
+// Dipakai untuk mendeteksi "layar blank" (halaman termuat HTTP 200 tapi kosong)
+// lalu otomatis jatuh ke server remote — bug yang dulu membuat mode offline
+// ditinggalkan.
+const RENDER_CHECK = `(() => {
+  try {
+    const root = document.getElementById('__next');
+    const text = ((document.body && document.body.innerText) || '').trim();
+    const nodes = root ? root.childElementCount : (document.body ? document.body.childElementCount : 0);
+    return nodes > 0 && (text.length > 20 || !!document.querySelector('canvas, svg, img, input, button'));
+  } catch (e) { return false; }
+})()`;
+
+async function pageRendered() {
+  try {
+    return !!(await win.webContents.executeJavaScript(RENDER_CHECK, true));
+  } catch {
+    return false;
+  }
+}
+
+/** Muat URL lalu pastikan halaman menampilkan konten. `false` = kosong/gagal. */
+async function loadAndVerify(url) {
+  const started = Date.now();
   try {
     await win.loadURL(url);
-  } catch (err) {
-    console.error('[app] gagal memuat URL:', err && err.message);
-    // Coba fallback ke remote sekali lagi
+  } catch {
+    return false;
+  }
+  const base = url.replace(/\/+$/, '');
+  let rendered = false;
+  // Periksa beberapa kali pada waktu tertentu (ms sejak load). Keberhasilan
+  // baru diterima setelah hidrasi (>= 1500 ms) supaya halaman yang rusak saat
+  // hidrasi (jadi kosong) ikut terdeteksi dan kita bisa jatuh ke server.
+  for (const at of [600, 1500, 3000, 5000, 8000]) {
+    const wait = at - (Date.now() - started);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    if (!win || win.isDestroyed()) return false;
+    const now = String(win.webContents.getURL() || '');
+    // Dialihkan ke halaman lain (mis. /login) berarti aplikasi hidup.
+    if (now && !now.startsWith(base) && !now.startsWith('http://127.0.0.1:')) return true;
+    rendered = await pageRendered();
+    if (rendered && at >= 1500) return true;
+  }
+  return rendered;
+}
+
+async function loadApp() {
+  loadingApp = true;
+  try {
+    win.show();
+    win.focus();
+
+    // 1) Coba aplikasi lokal (bundel offline di dalam installer).
+    if (offlineMode()) {
+      const origin = await ensureLocalServer();
+      if (origin) {
+        const ok = await loadAndVerify(`${origin}/kasir/`);
+        if (ok) {
+          console.log('[app] memakai aplikasi lokal (offline-first).');
+          sendCommand('sync-now');
+          return;
+        }
+        console.warn('[app] aplikasi lokal tidak menampilkan konten — beralih ke server.');
+      }
+    }
+
+    // 2) Aplikasi dari server (butuh internet).
     try {
       await win.loadURL(`${serverUrl()}/kasir`);
-    } catch { /* biarkan did-fail-load menangani */ }
+    } catch (err) {
+      console.error('[app] gagal memuat URL:', err && err.message);
+      try {
+        await win.loadURL(`${serverUrl()}/kasir`);
+      } catch { /* biarkan did-fail-load menangani */ }
+    }
+  } finally {
+    loadingApp = false;
   }
-  win.show();
-  win.focus();
 }
 
 async function boot() {
@@ -349,14 +462,24 @@ async function boot() {
       await showSetup({ mode: 'first' });
       return;
     }
+
+    // Sudah pernah aktivasi & data lokal tersedia → jangan biarkan kasir
+    // menunggu lama saat internet mati; coba login dengan batas singkat.
+    const cached = offlineStartAllowed();
     await showPage('loading.html');
-    const res = await login(serial);
+    const res = await login(serial, { timeout: cached ? 8000 : 25000 });
+
     if (res.ok) {
       await loadApp();
       return;
     }
     if (res.offline) {
-      await showOffline();
+      if (offlineStartAllowed()) {
+        console.log('[app] offline: memakai aplikasi + data lokal.');
+        await loadApp();
+        return;
+      }
+      await showOffline(offlinePageReason());
       return;
     }
     // Serial salah / hangus — buang lalu minta input ulang.
@@ -374,12 +497,15 @@ async function loadAppSafe() {
     await showSetup({ mode: 'first' });
     return;
   }
+  const cached = offlineStartAllowed();
   await showPage('loading.html');
-  const res = await login(serial);
+  const res = await login(serial, { timeout: cached ? 8000 : 25000 });
   if (res.ok) {
     await loadApp();
+  } else if (res.offline && offlineStartAllowed()) {
+    await loadApp();
   } else if (res.offline) {
-    await showOffline();
+    await showOffline(offlinePageReason());
   } else {
     store.set('serialKey', '');
     await showSetup({ mode: 'first', error: res.message });
@@ -486,7 +612,8 @@ function createWindow() {
     if (!isMainFrame) return;
     if (code === -3) return; // ERR_ABORTED — navigasi normal
     if (!url || url.startsWith('file://')) return;
-    void showOffline();
+    if (loadingApp) return; // loadApp() sedang menangani fallback-nya sendiri
+    void showOffline(offlinePageReason());
   });
 
   // Kunci pintasan browser: cegah reload / devtools / tutup jendela.
@@ -526,15 +653,41 @@ function createWindow() {
 // ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
-function createTray() {
+/** Status sinkron terakhir yang dilaporkan renderer (dipakai di menu tray). */
+let lastSyncStatus = null;
+
+function sendCommand(cmd) {
   try {
-    const img = nativeImage.createFromPath(path.join(ASSETS_DIR, 'tray.png'));
-    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+    if (win && !win.isDestroyed()) win.webContents.send('desktop:command', String(cmd));
+  } catch { /* abaikan */ }
+}
+
+function currentIsLocalApp() {
+  try {
+    const url = String((win && win.webContents.getURL()) || '');
+    return !!localOrigin && url.startsWith(localOrigin);
   } catch {
-    return;
+    return false;
   }
-  const menu = Menu.buildFromTemplate([
+}
+
+function syncStatusLabel() {
+  const s = lastSyncStatus || {};
+  const pending = Number(s.pending);
+  if (Number.isFinite(pending)) {
+    if (pending <= 0) return 'Sinkron: semua terkirim';
+    return `Sinkron: ${pending} data menunggu`;
+  }
+  return 'Sinkron: menunggu data…';
+}
+
+function trayTemplate() {
+  return [
     { label: 'Buka KasirPro POS', click: () => { if (win) { win.show(); win.focus(); } } },
+    { type: 'separator' },
+    { label: 'Sinkronkan Sekarang', click: () => sendCommand('sync-now') },
+    { label: 'Ambil Data dari Server', click: () => sendCommand('pull-remote') },
+    { label: syncStatusLabel(), enabled: false },
     { type: 'separator' },
     { label: 'Ganti Serial (Owner)', click: () => openOwner() },
     { label: 'Muat Ulang Aplikasi', click: () => { void loadAppSafe(); } },
@@ -547,7 +700,23 @@ function createTray() {
     { type: 'separator' },
     { label: 'Versi ' + app.getVersion(), enabled: false },
     { label: 'Keluar', click: () => { app.isQuiting = true; app.quit(); } },
-  ]);
+  ];
+}
+
+function refreshTray() {
+  try {
+    if (tray && !tray.isDestroyed()) tray.setContextMenu(Menu.buildFromTemplate(trayTemplate()));
+  } catch { /* abaikan */ }
+}
+
+function createTray() {
+  try {
+    const img = nativeImage.createFromPath(path.join(ASSETS_DIR, 'tray.png'));
+    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+  } catch {
+    return;
+  }
+  const menu = Menu.buildFromTemplate(trayTemplate());
   tray.setToolTip('KasirPro POS');
   tray.setContextMenu(menu);
   tray.on('double-click', () => { if (win) { win.show(); win.focus(); } });
@@ -596,6 +765,35 @@ function registerIpc() {
   ipcMain.handle('desktop:db-sync-row', (_e, e) => {
     if (!db || !e || !e.tbl || e.rowId == null) return { ok: false, data: null };
     return { ok: true, data: db.getRowForSync(e.tbl, String(e.rowId), db.getUserId()) };
+  });
+
+  // ---------------------- sinkronisasi turun (tarik data) --------------------
+  ipcMain.handle('desktop:db-import', (_e, payload) => {
+    initDb();
+    if (!db) return { ok: false, error: 'Database lokal tidak aktif.' };
+    try {
+      const tbl = payload && payload.tbl;
+      const rows = (payload && payload.rows) || [];
+      const n = db.importRows(tbl, rows, db.getUserId());
+      return { ok: true, data: { imported: n } };
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || 'Impor gagal.' };
+    }
+  });
+
+  ipcMain.handle('desktop:db-mark-pull', () => {
+    if (db) db.markInitialPull(db.getUserId());
+    return { ok: true };
+  });
+
+  ipcMain.handle('desktop:db-pull-done', () => ({
+    ok: true,
+    done: db ? db.initialPullDone(db.getUserId()) : false,
+  }));
+
+  ipcMain.on('desktop:sync-status', (_e, status) => {
+    lastSyncStatus = status && typeof status === 'object' ? status : null;
+    refreshTray();
   });
 
   ipcMain.handle('desktop:submit-serial', async (_e, raw) => {
@@ -713,8 +911,22 @@ function registerIpc() {
     if (win) win.setTitle(`KasirPro POS - ${name}`);
   });
 
-  ipcMain.on('desktop:offline', () => { void showOffline(); });
-  ipcMain.on('desktop:online', () => { void boot(); });
+  ipcMain.on('desktop:offline', () => {
+    // Kalau aplikasi lokal sedang dipakai, internet mati bukan masalah —
+    // biarkan kasir terus bekerja, jangan ganti ke halaman offline.
+    if (offlineMode() && currentIsLocalApp()) {
+      sendCommand('sync-now');
+      return;
+    }
+    void showOffline(offlinePageReason());
+  });
+  ipcMain.on('desktop:online', () => {
+    if (currentIsLocalApp()) {
+      sendCommand('sync-now');
+      return;
+    }
+    void boot();
+  });
   ipcMain.on('desktop:open-owner', () => openOwner());
   ipcMain.handle('desktop:quit', () => { app.isQuiting = true; app.quit(); });
 }
