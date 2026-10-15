@@ -46,7 +46,10 @@ const store = new Store({
     pageSize: '80mm',
     deviceName: '',
     deviceId: '',
-    localDb: false,
+    localDb: true,
+    // True hanya bila pemilik sengaja mengubah mode lokal lewat menu tray.
+    // Dipakai supaya mode lokal (SQLite) tetap menyala secara default.
+    localDbExplicit: false,
     localUserId: '',
     authSession: null,
     lastLicenseCheck: '',
@@ -58,10 +61,22 @@ if (wantReset) {
   store.set('deviceId', randomUUID());
 }
 
-// Mode offline-first menyala otomatis begitu aplikasi lokal ikut terpasang.
-// (Bundle `app/kasir/index.html` ada → data disimpan di SQLite lalu disinkronkan.)
+// Mode offline-first (SQLite) menyala otomatis begitu bundel aplikasi lokal
+// ikut terpasang. Tanpa ini, data barang/transaksi tersimpan di server — atau,
+// bila server tak terjangkau, hanya menumpang di penyimpanan kecil browser.
+//
+// CATATAN: `store.has()` TIDAK bisa dipakai di sini karena electron-store
+// menulis semua nilai `defaults` ke file config saat pertama dibuat, sehingga
+// `has('localDb')` selalu bernilai true. Akibatnya pengecekan lama
+// (`!store.has('localDb')`) tidak pernah jalan dan mode lokal tidak pernah
+// menyala — inilah penyebab data tidak tersimpan ke file SQLite.
+//
+// Pilihan pemilik yang sengaja mematikan mode lokal lewat tray ditandai
+// `localDbExplicit=true` dan tetap dihormati.
 try {
-  if (!store.has('localDb') && localAppAvailable()) store.set('localDb', true);
+  if (localAppAvailable() && store.get('localDbExplicit') !== true) {
+    store.set('localDb', true);
+  }
 } catch { /* abaikan */ }
 
 /** HWID stabil per instalasi (dipakai lisensi: 1 key = 1 perangkat). */
@@ -108,16 +123,57 @@ function dbEnabled() {
   return !!store.get('localDb');
 }
 
-function dbPath() {
+/**
+ * Lokasi file database SQLite lokal.
+ *
+ * Fungsi ini satu-satunya sumber kebenaran lokasi file DB. Dipanggil dari
+ * `logDatabasePath()` saat start sehingga pemilik bisa memverifikasi keberadaan
+ * file `kasir.db` di komputernya.
+ */
+function getDatabasePath() {
+  return path.join(app.getPath('userData'), 'kasir.db');
+}
+
+/** `dbPath` lama (nama file sebelum migrasi) — dipakai sekali untuk memindahkan data. */
+function legacyDatabasePath() {
   return path.join(app.getPath('userData'), 'kasirpro.db');
+}
+
+/**
+ * Pindahkan database lama `kasirpro.db` ke `kasir.db` bila file baru belum ada.
+ * Data toko yang sudah tersimpan tidak hilang saat aplikasi diperbarui.
+ */
+function migrateLegacyDatabase() {
+  try {
+    const baru = getDatabasePath();
+    const lama = legacyDatabasePath();
+    if (!fs.existsSync(baru) && fs.existsSync(lama)) {
+      fs.copyFileSync(lama, baru);
+      console.log('[db] memindahkan database lama ke:', baru);
+    }
+  } catch (err) {
+    console.error('[db] gagal memindahkan database lama:', err.message);
+  }
+}
+
+/** Catat lokasi file database ke log supaya bisa diverifikasi user. */
+function logDatabasePath() {
+  const p = getDatabasePath();
+  const ada = fs.existsSync(p);
+  console.log(
+    '[db] lokasi file database:',
+    p,
+    ada ? '(file ada)' : '(belum dibuat — akan dibuat saat mode lokal aktif)',
+  );
 }
 
 /** Buka database lokal bila mode lokal aktif. Aman dipanggil berkali-kali. */
 function initDb() {
   if (db || !dbEnabled()) return;
   try {
-    db = createEngine(dbPath());
-    console.log('[db] database lokal siap:', dbPath());
+    migrateLegacyDatabase();
+    db = createEngine(getDatabasePath());
+    console.log('[db] database lokal siap:', getDatabasePath());
   } catch (err) {
     db = null;
     console.error('[db] gagal membuka database lokal:', err.message);
@@ -209,6 +265,8 @@ function offlinePageReason() {
 /** Nyalakan/matikan mode database lokal lalu muat ulang aplikasi. */
 function toggleLocalDb(on) {
   store.set('localDb', !!on);
+  // Tandai bahwa pemilik sengaja memilih → hormati pilihan ini saat start.
+  store.set('localDbExplicit', true);
   if (on) {
     initDb();
   } else {
@@ -833,6 +891,64 @@ function registerIpc() {
     done: db ? db.initialPullDone(db.getUserId()) : false,
   }));
 
+  // --------------- penyimpanan draft lokal (keranjang & pending) -------------
+  // Ditulis ke tabel `local_kv` di file SQLite yang sama (kasir.db), BUKAN
+  // localStorage. Tersedia walau sesi user belum diinisialisasi.
+  ipcMain.handle('desktop:kv-get', (_e, key) => {
+    initDb();
+    if (!db) return null;
+    try {
+      return db.kvGet(String(key || ''));
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('desktop:kv-set', (_e, key, value) => {
+    initDb();
+    if (!db) return false;
+    try {
+      db.kvSet(String(key || ''), value == null ? null : String(value));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('desktop:kv-del', (_e, key) => {
+    initDb();
+    if (!db) return false;
+    try {
+      db.kvDelete(String(key || ''));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  // ------------------------ kontrol jendela (title bar) ----------------------
+  ipcMain.on('desktop:window-minimize', () => {
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+
+  ipcMain.on('desktop:window-maximize', () => {
+    if (!win || win.isDestroyed()) return;
+    // Jendela kasir berjalan fullscreen; tombol "Perbesar" mengalihkan
+    // fullscreen <-> jendela (perilaku seperti maximize / restore).
+    if (win.isFullScreen()) {
+      win.setFullScreen(false);
+      win.maximize();
+    } else if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  });
+
+  ipcMain.on('desktop:window-close', () => {
+    if (win && !win.isDestroyed()) win.close();
+  });
+
   ipcMain.on('desktop:sync-status', (_e, status) => {
     lastSyncStatus = status && typeof status === 'object' ? status : null;
     refreshTray();
@@ -1020,6 +1136,9 @@ if (gotLock) {
     ses = session.fromPartition(PARTITION);
     Menu.setApplicationMenu(null);
     deviceId();
+    // Catat lokasi file database lebih dulu supaya pemilik bisa memverifikasi
+    // keberadaan `kasir.db` di log aplikasi.
+    logDatabasePath();
     initDb();
     try { if (db && store.get('localUserId')) db.setUserId(String(store.get('localUserId'))); } catch (e) {}
     createWindow();

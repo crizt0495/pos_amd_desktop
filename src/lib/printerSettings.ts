@@ -1,3 +1,5 @@
+import { draftGet, draftSet } from './localStore';
+
 export type UkuranPrinter = '58mm' | '80mm' | 'A4';
 
 export interface PreferensiPrinter {
@@ -26,11 +28,16 @@ const DEFAULT: PreferensiPrinter = {
   btAutoConnect: true,
 };
 
-export function bacaPrinterSettings(): PreferensiPrinter {
+/** Cache memori untuk mempertahankan sinkronitas baca. */
+let cache: PreferensiPrinter | null = null;
+let memuat = false;
+
+/** Baca nilai lama dari localStorage — untuk migrasi. */
+function bacaDariLocalStorage(): PreferensiPrinter | null {
   try {
-    if (typeof localStorage === 'undefined') return { ...DEFAULT };
+    if (typeof localStorage === 'undefined') return null;
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT };
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PreferensiPrinter>;
     return {
       nama: parsed.nama ?? DEFAULT.nama,
@@ -44,13 +51,66 @@ export function bacaPrinterSettings(): PreferensiPrinter {
       btAutoConnect: parsed.btAutoConnect !== false,
     };
   } catch {
-    return { ...DEFAULT };
+    return null;
   }
 }
 
-export function setPrinterSettings(p: PreferensiPrinter): void {
+/** Normalisasi objek. */
+function rapikan(p: Partial<PreferensiPrinter> | null): PreferensiPrinter {
+  if (!p) return { ...DEFAULT };
+  return {
+    nama: p.nama ?? DEFAULT.nama,
+    namaManual: Array.isArray(p.namaManual)
+      ? p.namaManual.filter((x): x is string => typeof x === 'string')
+      : [],
+    ukuran: (p.ukuran as UkuranPrinter) ?? DEFAULT.ukuran,
+    autoPrint: p.autoPrint !== false,
+    btDeviceId: p.btDeviceId ?? null,
+    btDeviceName: p.btDeviceName ?? null,
+    btAutoConnect: p.btAutoConnect !== false,
+  };
+}
+
+/** Muat dari SQLite dan migrasi. */
+async function muatDariDb() {
+  if (memuat) return;
+  memuat = true;
   try {
-    localStorage.setItem(KEY, JSON.stringify(p));
+    const db = await draftGet<PreferensiPrinter>(KEY);
+    if (db) {
+      cache = rapikan(db);
+    } else if (cache) {
+      draftSet(KEY, cache);
+    }
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY);
+    } catch {
+      /* ignore */
+    }
+  } finally {
+    memuat = false;
+  }
+}
+
+export function bacaPrinterSettings(): PreferensiPrinter {
+  try {
+    if (typeof window === 'undefined') return { ...DEFAULT };
+  } catch {
+    return { ...DEFAULT };
+  }
+  if (cache) return cache;
+  const lama = bacaDariLocalStorage();
+  cache = lama ? lama : { ...DEFAULT };
+  void muatDariDb();
+  return cache;
+}
+
+export function setPrinterSettings(p: PreferensiPrinter): void {
+  const next = rapikan(p);
+  cache = next;
+  draftSet(KEY, next);
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY);
   } catch {
     /* ignore */
   }

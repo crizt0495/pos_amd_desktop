@@ -1,28 +1,25 @@
+import { draftGet, draftSet } from './localStore';
+
 /**
  * Preferensi tampilan kasir untuk "Total Besar" (display untuk pelanggan).
  *
- * Disimpan di localStorage per perangkat — bukan ke kasir_settings — karena ini
- * murni preferensi tampilan mesin kasir: posisinya harus tetap sama setelah
- * reload, dan tidak perlu ikut ke akun kasir lain. Perubahan disiarkan lewat
- * event window supaya Pengaturan dan layar kasir selalu sinkron tanpa reload.
+ * Disimpan di database lokal per perangkat (tabel `local_kv` di `kasir.db`),
+ * bukan di localStorage. Murni preferensi tampilan mesin kasir.
  */
 
 export type PosisiTotal = 'kanan-atas' | 'tengah-atas' | 'bawah' | 'floating';
 export type UkuranTotal = 'kecil' | 'sedang' | 'besar' | 'jumbo';
 
 export type PreferensiTampilan = {
-  /** Sakelar utama: display ditampilkan atau disembunyikan seluruhnya. */
   aktif: boolean;
-  /** true = panel besar; false = pil kecil (tombol [X] Mengecilkan). */
   terbuka: boolean;
   posisi: PosisiTotal;
   ukuran: UkuranTotal;
-  /** Posisi px kiri-atas untuk mode bebas (null = pakai preset posisi). */
   x: number | null;
   y: number | null;
 };
 
-export const TAMPILAN_KEY = 'kpro_tampilan';
+export const TAMPILAN_KEY = 'tampilan';
 export const TAMPILAN_EVENT = 'kpro:tampilan';
 
 export const TAMPILAN_AWAL: PreferensiTampilan = {
@@ -48,12 +45,6 @@ export const OPSI_UKURAN: { value: UkuranTotal; label: string; px: number }[] = 
   { value: 'jumbo', label: 'Jumbo', px: 56 },
 ];
 
-/**
- * Jarak tepi layar untuk posisi preset (px).
- * `JARAK_ATAS` sengaja dilebihkan sedikit: di bawah title bar + ribbon (~78px)
- * dan sub-ribbon kasir (~50px) — jadi kotak tidak menutupi tombol Bayar/Cetak.
- * `JARAK_BAWAH` di atas tinggi footer kasir, lestari menutupi tombol Bayar.
- */
 export const JARAK_ATAS = 132;
 export const JARAK_SISI = 20;
 export const JARAK_BAWAH = 78;
@@ -129,25 +120,57 @@ function gabung(v: unknown): PreferensiTampilan {
   };
 }
 
+let cache: PreferensiTampilan | null = null;
+let memuat = false;
+
+const LS_KEY_LAMA = 'kpro_tampilan';
+
+function bacaDariLS(): PreferensiTampilan | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(LS_KEY_LAMA);
+    return raw ? gabung(JSON.parse(raw)) : null;
+  } catch { return null; }
+}
+
+async function muatDariDb() {
+  if (memuat) return;
+  memuat = true;
+  try {
+    const db = await draftGet<PreferensiTampilan>(TAMPILAN_KEY);
+    if (db) {
+      cache = gabung(db);
+    } else if (cache) {
+      draftSet(TAMPILAN_KEY, cache);
+    }
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(LS_KEY_LAMA);
+    } catch {}
+  } finally {
+    memuat = false;
+  }
+}
+
 /** Preferensi saat ini (aman dipanggil sebelum mount / di server). */
 export function bacaTampilan(): PreferensiTampilan {
-  if (typeof window === 'undefined') return { ...TAMPILAN_AWAL };
   try {
-    const raw = window.localStorage.getItem(TAMPILAN_KEY);
-    return raw ? gabung(JSON.parse(raw)) : { ...TAMPILAN_AWAL };
-  } catch {
-    return { ...TAMPILAN_AWAL };
-  }
+    if (typeof window === 'undefined') return { ...TAMPILAN_AWAL };
+  } catch { return { ...TAMPILAN_AWAL }; }
+  if (cache) return cache;
+  const lama = bacaDariLS();
+  cache = lama ? lama : { ...TAMPILAN_AWAL };
+  void muatDariDb();
+  return cache;
 }
 
 /** Gabung patch ke preferensi, simpan, lalu siarkan ke layar lain. */
 export function setTampilan(patch: Partial<PreferensiTampilan>): PreferensiTampilan {
-  const next = gabung({ ...bacaTampilan(), ...patch });
+  const next = gabung({ ...(cache ?? TAMPILAN_AWAL), ...patch });
+  cache = next;
+  draftSet(TAMPILAN_KEY, next);
   try {
-    window.localStorage.setItem(TAMPILAN_KEY, JSON.stringify(next));
-  } catch {
-    /* localStorage penuh / diblokir — preferensi tetap berlaku di sesi ini */
-  }
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(LS_KEY_LAMA);
+  } catch {}
   window.dispatchEvent(new CustomEvent(TAMPILAN_EVENT, { detail: next }));
   return next;
 }
@@ -155,13 +178,8 @@ export function setTampilan(patch: Partial<PreferensiTampilan>): PreferensiTampi
 /** Dengarkan perubahan dari Pengaturan (tab Tampilan) dan tab lain. */
 export function dengarTampilan(cb: (p: PreferensiTampilan) => void): () => void {
   const onPES = (e: Event) => cb(gabung((e as CustomEvent).detail));
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === TAMPILAN_KEY) cb(bacaTampilan());
-  };
   window.addEventListener(TAMPILAN_EVENT, onPES);
-  window.addEventListener('storage', onStorage);
   return () => {
     window.removeEventListener(TAMPILAN_EVENT, onPES);
-    window.removeEventListener('storage', onStorage);
   };
 }

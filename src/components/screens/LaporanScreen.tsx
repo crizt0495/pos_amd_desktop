@@ -237,6 +237,13 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
 
   const omzetMax = Math.max(1, ...daily.map((d) => d.omzet));
 
+  // Shift yang sudah ditutup: laporan shift ini tidak bisa diedit lagi, jadi
+  // transaksi yang terikat padanya tidak boleh diretur/dibatalkan.
+  const closedShiftIds = React.useMemo(
+    () => new Set(shifts.filter((sh) => sh.status === 'closed').map((sh) => sh.id)),
+    [shifts],
+  );
+
   // Diskon transaksi = potongan tiap item + diskon level transaksi (hanya
   // transaksi lama yang memakainya). Transaksi baru diskonnya per item.
   const potonganDetail = detail
@@ -451,7 +458,10 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                     </td>
                   </tr>
                 ) : (
-                  list.map((tx) => (
+                  list.map((tx) => {
+                    // Transaksi pada shift yang sudah ditutup: laporan terkunci.
+                    const shiftTerkunci = tx.shift_id != null && closedShiftIds.has(tx.shift_id);
+                    return (
                     <tr key={tx.id} className="bg-white transition hover:bg-[#f6f9fd]">
                       <td className="td font-mono text-[12px] font-semibold text-[#35485c]">{tx.invoice_no}</td>
                       <td className="td text-[#5b6b80]">{tanggalWaktu(tx.created_at)}</td>
@@ -491,18 +501,20 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                             <>
                               <button
                                 type="button"
-                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#b0720a] hover:bg-[#fff9db]"
+                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#b0720a] hover:bg-[#fff9db] disabled:opacity-40"
                                 onClick={() => ui.run(() => void bukaRetur(tx), `retur-${tx.id}`)}
-                                disabled={ui.locked(`retur-${tx.id}`)}
+                                disabled={ui.locked(`retur-${tx.id}`) || shiftTerkunci}
+                                title={shiftTerkunci ? 'Shift sudah ditutup — laporan tidak bisa diedit' : undefined}
                                 aria-label={`Retur transaksi ${tx.invoice_no}`}
                               >
                                 <Undo2 className="h-3.5 w-3.5" /> Retur
                               </button>
                               <button
                                 type="button"
-                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5]"
+                                className="btn-ghost px-2 py-1 text-[11.5px] text-[#e03131] hover:bg-[#fff5f5] disabled:opacity-40"
                                 onClick={() => ui.run(() => setVoiding(tx), `void-${tx.id}`)}
-                                disabled={ui.locked(`void-${tx.id}`)}
+                                disabled={ui.locked(`void-${tx.id}`) || shiftTerkunci}
+                                title={shiftTerkunci ? 'Shift sudah ditutup — laporan tidak bisa diedit' : undefined}
                                 aria-label={`Batalkan transaksi ${tx.invoice_no}`}
                               >
                                 <Ban className="h-3.5 w-3.5" />
@@ -512,7 +524,8 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -633,7 +646,17 @@ export default function LaporanScreen({ onVoid }: { onVoid?: (invoiceNo: string)
                           : null;
                       return (
                         <tr key={sh.id} className="bg-white transition hover:bg-[#f6f9fd]">
-                          <td className="td font-mono text-[12px] font-semibold text-[#35485c]">{sh.shift_no}</td>
+                          <td className="td font-mono text-[12px] font-semibold text-[#35485c]">
+                            {sh.shift_no}
+                            {sh.close_note ? (
+                              <span
+                                className="ml-1.5 inline-block rounded bg-[#fff4e5] px-1 py-0.5 align-middle text-[9.5px] font-semibold text-[#b0720a]"
+                                title={`Catatan tutup: ${sh.close_note}`}
+                              >
+                                catatan
+                              </span>
+                            ) : null}
+                          </td>
                           <td className="td text-[#5b6b80]">{sh.cashier_name}</td>
                           <td className="td text-[#5b6b80]">{tanggalWaktu(sh.opened_at)}</td>
                           <td className="td text-[#5b6b80]">

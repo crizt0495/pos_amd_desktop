@@ -28,6 +28,10 @@ interface ListPrinterResponse {
 interface DesktopBridge {
   platform?: string;
   listPrinters?: () => Promise<ListPrinterResponse>;
+  /** Kontrol jendela dari title bar kustom (Electron). */
+  minimize?: () => void;
+  maximize?: () => void;
+  close?: () => void;
 }
 
 /** Ambil objek jembatan bila aplikasi berjalan di dalam shell desktop. */
@@ -40,6 +44,18 @@ export function desktopBridge(): DesktopBridge | null {
 /** True bila dijalankan sebagai aplikasi desktop (Electron). */
 export function desktopAktif(): boolean {
   return desktopBridge() !== null;
+}
+
+/**
+ * Kontrol jendela dari title bar kustom (hanya berlaku di aplikasi desktop).
+ * Di browser biasa panggilan ini tidak melakukan apa-apa.
+ */
+export function kontrolJendela(action: 'minimize' | 'maximize' | 'close'): void {
+  const b = desktopBridge();
+  if (!b) return;
+  if (action === 'minimize') b.minimize?.();
+  else if (action === 'maximize') b.maximize?.();
+  else b.close?.();
 }
 
 /**

@@ -35,6 +35,7 @@ export function RupiahInput({
   inputRef,
   autoFocus,
   onBlur,
+  onRawChange,
 }: {
   id?: string;
   /** Angka (bukan string terformat) — sumber kebenaran. */
@@ -56,6 +57,12 @@ export function RupiahInput({
   autoFocus?: boolean;
   /** Dipanggil saat input kehilangan fokus (setelah format ulang). */
   onBlur?: () => void;
+  /**
+   * Teks mentah yang sedang diketik (sebelum pemisah dibuang/diformat).
+   * Dipakai pemanggil yang perlu tahu field kosong vs berisi 0, mis. validasi
+   * "wajib diisi" pada modal shift.
+   */
+  onRawChange?: (raw: string) => void;
 }) {
   const [teks, setTeks] = React.useState(() => format(String(value ?? '')));
   const elRef = React.useRef<HTMLInputElement | null>(null);
@@ -101,6 +108,7 @@ export function RupiahInput({
         const n = parse(e.target.value);
         setTeks(format(e.target.value));
         onChange(n < min ? min : n);
+        onRawChange?.(e.target.value);
         caretKeUjung();
       }}
       onBlur={(e) => {

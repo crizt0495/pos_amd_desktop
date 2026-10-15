@@ -18,6 +18,7 @@ import {
 
 import { customersApi, nextInvoicePreview, productsApi, satuanApi, settingsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
+import { draftDel, draftGet, draftSet } from '@/lib/localStore';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
   angka,
@@ -67,6 +68,7 @@ import {
   type PaymentMethod,
   type Product,
   type ReceiptData,
+  type ShiftPreview,
 } from '@/lib/types';
 
 /** Baris kosong sebagai penutup grid — ala iPOS. */
@@ -84,7 +86,7 @@ function potonganAuto(l: CartLine): number {
   return l.potonganPct != null ? potonganDariPct(l, l.potonganPct) : potonganEfektif(l);
 }
 
-const PENDING_KEY = 'kasirpro.pending.v1';
+const PENDING_KEY = 'pending';
 
 type Pending = {
   id: string;
@@ -214,9 +216,11 @@ export default function KasirScreen() {
   // ke shift ini (shift_id) — laporan per kasir & hitung kas saat tutup.
   const [shift, setShift] = React.useState<KasirShift | null>(null);
   const [shiftModalOpen, setShiftModalOpen] = React.useState(false);
-  /** Perkiraan kas dari RPC `kasir_shift_preview` (tampil di modal tutup). */
-  const [shiftExpected, setShiftExpected] = React.useState<number | null>(null);
+  /** Rincian kas dari RPC `kasir_shift_preview` (tampil di modal tutup). */
+  const [shiftPreview, setShiftPreview] = React.useState<ShiftPreview | null>(null);
   const shiftGuard = useButtonGuard();
+  /** Wajib buka shift dulu: semua tombol transaksi terkunci bila belum ada shift. */
+  const shiftAktif = Boolean(shift);
 
   /* ------------------- diskon paten (dikunci dari Pengaturan) ----------- */
   // Owners toko bisa menetapkan diskon tetap di Pengaturan > Diskon. Kalau
@@ -296,21 +300,21 @@ export default function KasirScreen() {
   }, []);
 
   React.useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(PENDING_KEY);
-      if (raw) setPending(JSON.parse(raw) as Pending[]);
-    } catch {
-      /* abaikan pending yang rusak */
-    }
+    let batal = false;
+    void draftGet<Pending[]>(PENDING_KEY).then((list) => {
+      if (batal || !Array.isArray(list)) return;
+      setPending(list);
+    });
+    return () => {
+      batal = true;
+    };
   }, []);
 
   const simpanPending = React.useCallback((list: Pending[]) => {
     setPending(list);
-    try {
-      window.localStorage.setItem(PENDING_KEY, JSON.stringify(list));
-    } catch {
-      /* penyimpanan penuh / diblokir */
-    }
+    // Disimpan ke database lokal (tabel `local_kv` di kasir.db), bukan localStorage.
+    if (list.length) draftSet(PENDING_KEY, list);
+    else draftDel(PENDING_KEY);
   }, []);
 
   React.useEffect(() => {
@@ -354,6 +358,12 @@ export default function KasirScreen() {
    * cakupan masuk tanpa potongan.
    */
   function masukkanProduk(p: Product, qty?: number, satuanAwal?: string) {
+    // Wajib buka shift: tolak penambahan item bila belum ada shift aktif.
+    if (!shift) {
+      toast.error('Shift belum dibuka', 'Buka shift terlebih dahulu sebelum menambah barang.');
+      setShiftModalOpen(true);
+      return;
+    }
     const units = satuanOptions(p, opsiSatuan);
     const varian = normalisasiVarian(p.variants);
     const v0 = satuanAwal ? cariVarian(varian, satuanAwal) : varian[0];
@@ -772,6 +782,11 @@ export default function KasirScreen() {
   }
 
   function lanjutPending(p: Pending) {
+    if (!shift) {
+      toast.error('Shift belum dibuka', 'Buka shift terlebih dahulu sebelum melanjutkan pending.');
+      setShiftModalOpen(true);
+      return;
+    }
     setLines(p.lines);
     setCustomer(p.customer);
     setPendListOpen(false);
@@ -785,6 +800,11 @@ export default function KasirScreen() {
 
   /** Buka modal pembayaran. State disetel ulang tiap kali dibuka. */
   function bukaBayar() {
+    if (!shift) {
+      toast.error('Shift belum dibuka', 'Buka shift terlebih dahulu sebelum bertransaksi.');
+      setShiftModalOpen(true);
+      return;
+    }
     if (!lines.length) return;
     if (bayarGuard.busy || saving) {
       toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
@@ -827,6 +847,12 @@ export default function KasirScreen() {
 
   /** Tombol Simpan Transaksi: tolak klik ganda, kurang, keranjang kosong, potongan liar. */
   function klikSimpanTransaksi() {
+    if (!shift) {
+      toast.error('Shift belum dibuka', 'Buka shift terlebih dahulu sebelum bertransaksi.');
+      setPayOpen(false);
+      setShiftModalOpen(true);
+      return;
+    }
     if (!lines.length) return;
     if (bayarGuard.busy) {
       toast.info('Mohon tunggu…', 'Transaksi sedang diproses.');
@@ -851,6 +877,12 @@ export default function KasirScreen() {
   }
 
   async function bayar() {
+    if (!shift) {
+      toast.error('Shift belum dibuka', 'Buka shift terlebih dahulu sebelum bertransaksi.');
+      setPayOpen(false);
+      setShiftModalOpen(true);
+      return;
+    }
     if (!lines.length) return;
     if (diskonTidakSah) {
       toast.error(
@@ -906,7 +938,7 @@ export default function KasirScreen() {
         note: catatan || null,
         cashierName: cashier,
         customerName: customer,
-        shiftId: shift?.id,
+        shiftId: shift.id,
       });
 
       if (!res.ok) {
@@ -939,6 +971,9 @@ export default function KasirScreen() {
       produkSiapRef.current?.();
       produkSiapRef.current = null;
       setInvoiceNo(await nextInvoicePreview());
+      // Ambil shift aktif (mengantisipasi kalau ada refresh / jadi null)
+      const sNow = await shiftsApi.active();
+      if (sNow.ok) setShift(sNow.data);
     } finally {
       setSaving(false);
     }
@@ -954,18 +989,19 @@ export default function KasirScreen() {
   }
 
   /* ------------------------------ shift kasir ------------------------ */
-  /** Buka modal shift; saat ada shift aktif, ambil dulu perkiraan kasnya. */
+  /** Buka modal shift; saat ada shift aktif, ambil dulu rincian kasnya. */
   function bukaShiftModal() {
-    setShiftExpected(null);
+    setShiftPreview(null);
     setShiftModalOpen(true);
     if (shift) {
       void shiftsApi.preview(shift.id).then((res) => {
-        if (res.ok) setShiftExpected(res.data.expected);
+        if (res.ok) setShiftPreview(res.data);
+        else toast.error('Gagal memuat rincian shift', res.error);
       });
     }
   }
 
-  /** Konfirmasi buka shift (modal awal > 0). */
+  /** Konfirmasi buka shift (modal awal wajib diisi & numeric). */
   function bukaShift(openingCash: number) {
     void shiftGuard.guard(
       async () => {
@@ -982,12 +1018,12 @@ export default function KasirScreen() {
     );
   }
 
-  /** Konfirmasi tutup shift (uang aktual di laci). */
-  function tutupShift(actualCash: number) {
+  /** Konfirmasi tutup shift (uang aktual di laci + catatan bila selisih != 0). */
+  function tutupShift(actualCash: number, note: string) {
     void shiftGuard.guard(
       async () => {
         if (!shift) return;
-        const res = await shiftsApi.close(shift.id, actualCash);
+        const res = await shiftsApi.close(shift.id, actualCash, note);
         if (!res.ok) {
           toast.error('Gagal tutup shift', res.error);
           return;
@@ -995,10 +1031,13 @@ export default function KasirScreen() {
         const s = res.data.selisih;
         const kata = s === 0 ? 'kas pas' : s > 0 ? `lebih ${rupiah(s)}` : `kurang ${rupiah(Math.abs(s))}`;
         setShift(null);
+        setShiftPreview(null);
         setShiftModalOpen(false);
+        // Setelah tutup: form dikosongkan & transaksi terkunci sampai shift baru.
+        resetForm();
         toast.ok(
           'Shift ditutup',
-          `${res.data.shift.shift_no} — perkiraan ${rupiah(res.data.expected)} (${kata})`,
+          `${res.data.shift.shift_no} — seharusnya ${rupiah(res.data.expected)} (${kata})`,
         );
       },
       { pesanTunggu: 'Menutup shift…' },
@@ -1046,7 +1085,16 @@ export default function KasirScreen() {
         return;
       }
 
-      // F-key & navigasi tetap aktif meski sedang mengetik
+      // F-key & navigasi tetap aktif meski sedang mengetik.
+      // Tanpa shift aktif, semua pintasan transaksi diblokir; F4/End mengarah
+      // ke modal buka shift supaya kasir tahu kenapa tombolnya mati.
+      const butuhShift = e.key === 'F5' || e.key === 'F6' || e.key === 'F8' || e.key === 'F9' || e.key === 'F10' || e.key === 'End';
+      if (butuhShift && !shiftAktif) {
+        e.preventDefault();
+        toast.error('Shift belum dibuka', 'Silakan buka shift terlebih dahulu.');
+        setShiftModalOpen(true);
+        return;
+      }
       if (e.key === 'F5') {
         e.preventDefault();
         if (lines.length) setSavePendOpen(true);
@@ -1114,6 +1162,8 @@ export default function KasirScreen() {
     listBarangOpen,
     tambahPlgOpen,
     success,
+    shiftAktif,
+    toast,
     fokusKode,
     resetForm,
   ]);
@@ -1131,35 +1181,35 @@ export default function KasirScreen() {
           label="Baru"
           Icon={FilePlus2}
           onClick={() => ui.run(resetForm, 'kasir-baru')}
-          disabled={ui.locked('kasir-baru')}
+          disabled={!shiftAktif || ui.locked('kasir-baru')}
         />
         <RbBtn
           kbd="F5"
           label="Simpan Pending"
           Icon={BookmarkPlus}
           onClick={() => ui.run(() => setSavePendOpen(true), 'kasir-f5')}
-          disabled={!lines.length || pendingGuard.busy || ui.locked('kasir-f5')}
+          disabled={!shiftAktif || !lines.length || pendingGuard.busy || ui.locked('kasir-f5')}
         />
         <RbBtn
           kbd="F6"
           label="Daftar Pending"
           Icon={BookOpen}
           onClick={() => ui.run(() => setPendListOpen(true), 'kasir-f6')}
-          disabled={ui.locked('kasir-f6')}
+          disabled={!shiftAktif || ui.locked('kasir-f6')}
         />
         <RbBtn
           kbd="F8"
           label="Kode Item"
           Icon={CornerDownLeft}
           onClick={() => ui.run(fokusKode, 'kasir-f8')}
-          disabled={ui.locked('kasir-f8')}
+          disabled={!shiftAktif || ui.locked('kasir-f8')}
         />
         <RbBtn
           kbd="F10"
           label="Cari Barang"
           Icon={List}
           onClick={() => ui.run(() => setListBarangOpen(true), 'kasir-f10')}
-          disabled={ui.locked('kasir-f10')}
+          disabled={!shiftAktif || ui.locked('kasir-f10')}
         />
 
         <button
@@ -1183,7 +1233,7 @@ export default function KasirScreen() {
         <button
           type="button"
           onClick={bukaBayar}
-          disabled={!lines.length || bayarGuard.busy || saving}
+          disabled={!shiftAktif || !lines.length || bayarGuard.busy || saving}
           data-loading={bayarGuard.busy}
           className="rb-btn-go"
         >
@@ -1220,6 +1270,24 @@ export default function KasirScreen() {
         </span>
       </div>
 
+      {/* ==================== HEADER INFO SHIFT AKTIF ================= */}
+      {shift ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#cfe0f2] bg-[#e8f1fa] px-3 py-1.5 text-[11.5px] font-semibold text-[#134a85] sm:px-4">
+          <span className="flex items-center gap-1.5">
+            <Wallet className="h-3.5 w-3.5" />
+            Shift: <b className="font-bold">{shift.shift_no}</b>
+          </span>
+          <span className="text-[#5b87b5]">|</span>
+          <span>
+            Kasir: <b className="font-bold">{shift.cashier_name}</b>
+          </span>
+          <span className="text-[#5b87b5]">|</span>
+          <span>
+            Kas Awal: <b className="tnum font-bold">{rupiah(shift.opening_cash)}</b>
+          </span>
+        </div>
+      ) : null}
+
       {/* ====================== HEADER FORM (Kode Item) ================= */}
       <div className="shrink-0 border-b border-[#d8e0ec] bg-[#f6f9fd] px-3 py-2.5">
         <div className="flex flex-wrap items-end gap-2">
@@ -1231,7 +1299,7 @@ export default function KasirScreen() {
               id="kode-item"
               ref={codeRef}
               className="frm-key"
-              placeholder="Scan barcode atau ketik nama barang"
+              placeholder={shiftAktif ? 'Scan barcode atau ketik nama barang' : 'Buka shift untuk mulai transaksi'}
               value={itemCode}
               onChange={onItemChange}
               onKeyDown={(e) => void onKodeEnter(e)}
@@ -1239,6 +1307,7 @@ export default function KasirScreen() {
               autoFocus
               autoComplete="off"
               spellCheck={false}
+              disabled={!shiftAktif}
               role="combobox"
               aria-expanded={saranTampil}
               aria-autocomplete="list"
@@ -1358,7 +1427,35 @@ export default function KasirScreen() {
       {/* Wrapper bg-white + thead/th berlatar solid: kalau header tembus
           transparan, nama barang di baris yang di-scroll akan "nembus" dari
           belakang saat header ini nempel di atas. */}
-      <div className="min-h-0 flex-1 overflow-auto bg-white">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-white">
+        {/* Wajib buka shift: selama belum ada shift aktif, seluruh area
+            transaksi ditutup overlay — hanya "Buka Shift" yang bisa diklik. */}
+        {!shiftAktif ? (
+          <div
+            data-testid="overlay-shift-belum-dibuka"
+            className="absolute inset-0 z-30 flex items-center justify-center bg-white/85 backdrop-blur-[1px]"
+          >
+            <div className="mx-4 max-w-md rounded-xl border border-[#f0c98a] bg-[#fffaf0] px-6 py-7 text-center shadow-[0_8px_28px_rgba(16,40,70,0.14)]">
+              <AlertTriangle className="mx-auto h-8 w-8 text-[#b0720a]" />
+              <p className="mt-3 text-[16px] font-extrabold uppercase tracking-wide text-[#b0720a]">
+                Shift Belum Dibuka
+              </p>
+              <p className="mt-1 text-[13px] font-semibold text-[#7a5a12]">
+                Silakan Buka Shift Terlebih Dahulu
+              </p>
+              <button
+                type="button"
+                onClick={() => ui.run(bukaShiftModal, 'kasir-shift-overlay')}
+                disabled={shiftGuard.busy || ui.locked('kasir-shift-overlay')}
+                data-loading={shiftGuard.busy}
+                className="btn-primary mt-4"
+              >
+                {shiftGuard.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+                Buka Shift
+              </button>
+            </div>
+          </div>
+        ) : null}
         <table className="w-full min-w-[940px] border-collapse">
           <thead className="sticky top-0 z-20 bg-white shadow-[0_2px_4px_rgba(16,40,70,0.10)]">
             <tr>
@@ -1642,7 +1739,7 @@ export default function KasirScreen() {
             <button
               type="button"
               onClick={bukaBayar}
-              disabled={!lines.length || diskonTidakSah || bayarGuard.busy || saving}
+              disabled={!shiftAktif || !lines.length || diskonTidakSah || bayarGuard.busy || saving}
               title={diskonTidakSah ? 'Periksa potongan yang melebihi subtotal' : undefined}
               data-loading={bayarGuard.busy}
               className="rb-btn-go !h-11 !px-6"
@@ -1681,7 +1778,8 @@ export default function KasirScreen() {
       <ShiftModal
         open={shiftModalOpen}
         shift={shift}
-        expectedCash={shiftExpected}
+        preview={shiftPreview}
+        cashierName={cashier}
         busy={shiftGuard.busy}
         onClose={() => setShiftModalOpen(false)}
         onOpen={bukaShift}

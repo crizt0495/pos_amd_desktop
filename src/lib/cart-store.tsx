@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 
+import { draftDel, draftGet, draftSet } from './localStore';
 import type { CartLine } from './types';
 
 /**
@@ -9,11 +10,12 @@ import type { CartLine } from './types';
  *
  * Dipasang di `app/(app)/layout.tsx` sehingga tidak pernah unmount saat user
  * berpindah modul di ribbon (Master Data <-> Penjualan <-> Laporan) — keranjang
- * tidak ikut ter-reset. State juga dicerminkan ke localStorage agar tetap ada
- * setelah reload atau tab ditutup.
+ * tidak ikut ter-reset. State juga dicerminkan ke database lokal (tabel
+ * `local_kv` di file SQLite `kasir.db`) agar tetap ada setelah reload atau
+ * aplikasi ditutup — BUKAN ke localStorage.
  */
 
-const STORAGE_KEY = 'kasirpro.cart.v1';
+const STORAGE_KEY = 'cart';
 
 export interface CartState {
   lines: CartLine[];
@@ -44,65 +46,54 @@ interface CartContextValue extends CartState {
 
 const CartContext = React.createContext<CartContextValue | null>(null);
 
-/** Hanya simpan field yang serializable & relevan. */
-function bacaStorage(): CartState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CartState>;
-    if (!Array.isArray(parsed.lines)) return null;
-    return {
-      lines: parsed.lines as CartLine[],
-      itemQty: typeof parsed.itemQty === 'number' && parsed.itemQty >= 1 ? parsed.itemQty : 1,
-      customer: typeof parsed.customer === 'string' && parsed.customer ? parsed.customer : 'Umum',
-      sales: typeof parsed.sales === 'string' ? parsed.sales : '',
-      keterangan: typeof parsed.keterangan === 'string' ? parsed.keterangan : '',
-    };
-  } catch {
-    return null;
-  }
+/** Validasi & normalisasi nilai yang dibaca dari penyimpanan draft. */
+function rapikanCart(parsed: Partial<CartState> | null): CartState | null {
+  if (!parsed || !Array.isArray(parsed.lines)) return null;
+  return {
+    lines: parsed.lines as CartLine[],
+    itemQty: typeof parsed.itemQty === 'number' && parsed.itemQty >= 1 ? parsed.itemQty : 1,
+    customer: typeof parsed.customer === 'string' && parsed.customer ? parsed.customer : 'Umum',
+    sales: typeof parsed.sales === 'string' ? parsed.sales : '',
+    keterangan: typeof parsed.keterangan === 'string' ? parsed.keterangan : '',
+  };
 }
 
-function tulisStorage(state: CartState) {
-  if (typeof window === 'undefined') return;
-  try {
-    // Keranjang kosong tidak perlu disimpan.
-    if (!state.lines.length && !state.keterangan && !state.sales) {
-      window.localStorage.removeItem(STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* storage penuh / diblokir (mode privat) */
+async function bacaDraft(): Promise<CartState | null> {
+  return rapikanCart(await draftGet<Partial<CartState>>(STORAGE_KEY));
+}
+
+function tulisDraft(state: CartState) {
+  // Keranjang kosong tidak perlu disimpan.
+  if (!state.lines.length && !state.keterangan && !state.sales) {
+    draftDel(STORAGE_KEY);
+    return;
   }
+  draftSet(STORAGE_KEY, state);
 }
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  // Lazy init: baca localStorage sekali di mount supaya tidak ada hydration mismatch.
   const [state, setState] = React.useState<CartState>(KOSONG);
+  // Cegah menimpa draft tersimpan dengan state kosong sebelum draft dibaca.
+  const siap = React.useRef(false);
 
+  // Muat draft tersimpan (dari SQLite) sekali di mount.
   React.useEffect(() => {
-    const saved = bacaStorage();
-    if (saved) setState(saved);
-  }, []);
-
-  // Cermin ke localStorage setiap perubahan.
-  React.useEffect(() => {
-    tulisStorage(state);
-  }, [state]);
-
-  // Sinkronkan antar tab: transaksi di tab lain langsung terlihat di sini.
-  React.useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY) return;
-      const next = bacaStorage();
-      if (next) setState(next);
-      else setState((prev) => ({ ...prev, lines: [] }));
+    let batal = false;
+    void bacaDraft().then((saved) => {
+      if (batal) return;
+      if (saved) setState(saved);
+      siap.current = true;
+    });
+    return () => {
+      batal = true;
     };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // Cermin ke database lokal setiap perubahan (setelah draft awal dimuat).
+  React.useEffect(() => {
+    if (!siap.current) return;
+    tulisDraft(state);
+  }, [state]);
 
   /* Aksi selalu identity-stabil supaya tidak ikut memicu re-render/efek
      di pemanggil (mis. listener hotkey kasir). */

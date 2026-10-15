@@ -45,6 +45,13 @@ ok('produk dibuat + variants json', () => {
   assert.equal(created.data[0].variants[0].konversi, 6);
 });
 
+// ---- shift kasir (wajib dibuka sebelum transaksi apa pun) ----
+const shift = rpc('kasir_open_shift', { p_opening_cash: 100000, p_cashier_name: 'Kasir' });
+ok('shift dibuka', () => {
+  assert.match(shift.shift_no, /^SHIFT-\d{8}-\d{4}$/);
+  assert.equal(shift.status, 'open');
+});
+
 // ---- transaksi ----
 const tx = rpc('kasir_create_transaction', {
   p_lines: [{ product_id: pid, name: 'Indomie', price: 3500, cost: 3000, qty: 2, discount: 0, konversi: 1, unit: 'Pcs' }],
@@ -54,6 +61,7 @@ const tx = rpc('kasir_create_transaction', {
   p_paid: 10000,
   p_note: null,
   p_cashier_name: 'Kasir',
+  p_shift_id: shift.id,
 });
 ok('transaksi: invoice + total + stok', () => {
   assert.match(tx.transaction.invoice_no, /^INV-\d{8}-0001$/);
@@ -109,6 +117,7 @@ ok('retur penjualan', () => {
     p_payment_method: 'cash',
     p_paid: 20000,
     p_cashier_name: 'Kasir',
+    p_shift_id: shift.id,
   });
   const items = eng.handle({ kind: 'select', table: 'kasir_transaction_items', filters: [{ op: 'eq', col: 'transaction_id', val: tx2.transaction.id }] }).data;
   const r = rpc('kasir_create_return', { p_tx_id: tx2.transaction.id, p_items: [{ transaction_item_id: items[0].id, qty: 1 }], p_note: null });
@@ -155,17 +164,52 @@ ok('pergerakan stok ada mutasi', () => {
 });
 
 // ---- shift ----
-ok('shift buka/preview/tutup', () => {
-  const s = rpc('kasir_open_shift', { p_opening_cash: 100000, p_cashier_name: 'Kasir' });
-  assert.match(s.shift_no, /^SHIFT-\d{8}-\d{4}$/);
+ok('shift: tolak buka kedua selagi masih terbuka', () => {
   let err = null;
   try { rpc('kasir_open_shift', { p_opening_cash: 0, p_cashier_name: 'Kasir' }); } catch (e) { err = e.message; }
   assert.ok(/masih terbuka/.test(err || ''));
-  const pv = rpc('kasir_shift_preview', { p_shift_id: s.id });
-  assert.equal(pv.expected, 100000);
-  const c = rpc('kasir_close_shift', { p_shift_id: s.id, p_actual_cash: 100000 });
+});
+
+ok('shift: preview rincian kas', () => {
+  const pv = rpc('kasir_shift_preview', { p_shift_id: shift.id });
+  // Seharusnya = kas awal + penjualan tunai - retur tunai.
+  // tx1 sudah di-void (tak dihitung); tx2 tunai 14000; retur tunai 3500.
+  assert.equal(pv.kasAwal, 100000);
+  assert.equal(pv.tunai, 14000);
+  assert.equal(pv.nonTunai, 0);
+  assert.equal(pv.pengeluaran, 3500);
+  assert.equal(pv.expected, 110500);
+});
+
+ok('shift: tutup dengan kas pas (selisih 0)', () => {
+  const c = rpc('kasir_close_shift', { p_shift_id: shift.id, p_actual_cash: 110500 });
   assert.equal(c.selisih, 0);
   assert.equal(c.shift.status, 'closed');
+});
+
+ok('shift: transaksi ditolak setelah shift ditutup', () => {
+  let err = null;
+  try {
+    rpc('kasir_create_transaction', {
+      p_lines: [{ product_id: pid, name: 'Indomie', price: 3500, cost: 3000, qty: 1, discount: 0, konversi: 1, unit: 'Pcs' }],
+      p_discount_type: 'none',
+      p_discount_value: 0,
+      p_payment_method: 'cash',
+      p_paid: 3500,
+      p_cashier_name: 'Kasir',
+      p_shift_id: shift.id,
+    });
+  } catch (e) { err = e.message; }
+  assert.ok(/Shift tidak aktif/i.test(err || ''));
+});
+
+ok('shift: retur transaksi ditolak setelah shift ditutup', () => {
+  const txs = eng.handle({ kind: 'select', table: 'kasir_transactions', filters: [{ op: 'eq', col: 'shift_id', val: shift.id }] }).data;
+  const closedTx = txs.find((t) => t.status === 'completed');
+  const items = eng.handle({ kind: 'select', table: 'kasir_transaction_items', filters: [{ op: 'eq', col: 'transaction_id', val: closedTx.id }] }).data;
+  let err = null;
+  try { rpc('kasir_create_return', { p_tx_id: closedTx.id, p_items: [{ transaction_item_id: items[0].id, qty: 1 }], p_note: null }); } catch (e) { err = e.message; }
+  assert.ok(/sudah ditutup/i.test(err || ''));
 });
 
 // ---- laporan ringkas & outbox ----

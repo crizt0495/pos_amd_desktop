@@ -127,6 +127,9 @@ create table if not exists public.kasir_shifts (
   status        text not null default 'open' check (status in ('open', 'closed'))
 );
 
+-- Catatan penutupan shift (wajib bila kas tutup tidak pas / selisih != 0).
+alter table public.kasir_shifts add column if not exists close_note text;
+
 create unique index if not exists kasir_shifts_user_no on public.kasir_shifts (user_id, shift_no);
 create index if not exists kasir_shifts_user on public.kasir_shifts (user_id, opened_at desc);
 
@@ -362,13 +365,15 @@ begin
     raise exception 'Sesi tidak valid.';
   end if;
 
-  -- pastikan shift milik user & masih aktif (bila dikirim)
-  if p_shift_id is not null then
-    perform 1 from public.kasir_shifts
-     where id = p_shift_id and user_id = v_user and status = 'open';
-    if not found then
-      raise exception 'Shift tidak aktif.';
-    end if;
+  -- WAJIB: transaksi harus terikat shift yang masih terbuka. Mencegah
+  -- penjualan tanpa shift sehingga laporan kas per shift tetap akurat.
+  if p_shift_id is null then
+    raise exception 'Shift kasir belum dibuka. Buka shift sebelum bertransaksi.';
+  end if;
+  perform 1 from public.kasir_shifts
+   where id = p_shift_id and user_id = v_user and status = 'open';
+  if not found then
+    raise exception 'Shift tidak aktif.';
   end if;
 
   -- hitung subtotal & total cost dari keranjang
@@ -495,6 +500,16 @@ begin
     return v_tx;
   end if;
 
+  -- Laporan per shift tidak bisa diedit setelah tutup: transaksi yang sudah
+  -- masuk shift yang ditutup tidak boleh dibatalkan (akan mengubah kas shift itu).
+  if v_tx.shift_id is not null then
+    perform 1 from public.kasir_shifts
+     where id = v_tx.shift_id and user_id = v_user and status = 'open';
+    if not found then
+      raise exception 'Transaksi terikat shift yang sudah ditutup dan tidak bisa dibatalkan.';
+    end if;
+  end if;
+
   for v_item in
     select * from public.kasir_transaction_items
      where transaction_id = p_tx_id and user_id = v_user
@@ -572,6 +587,16 @@ begin
   end if;
   if v_tx.status = 'void' then
     raise exception 'Transaksi sudah dibatalkan, tidak bisa diretur.';
+  end if;
+
+  -- Laporan per shift tidak bisa diedit setelah tutup: retur transaksi yang
+  -- terikat shift ditutup akan mengubah kas shift itu, jadi ditolak.
+  if v_tx.shift_id is not null then
+    perform 1 from public.kasir_shifts
+     where id = v_tx.shift_id and user_id = v_user and status = 'open';
+    if not found then
+      raise exception 'Transaksi terikat shift yang sudah ditutup dan tidak bisa diretur.';
+    end if;
   end if;
 
   -- nomor retur harian: RET-YYYYMMDD-0001
@@ -984,6 +1009,12 @@ end;
 $$;
 
 -- Pratinjau perkiraan kas untuk shift yang masih berjalan.
+-- Mengembalikan rincian untuk modal tutup shift:
+--   kasAwal      : uang modal awal di laci
+--   tunai        : total penjualan tunai (paid - kembalian) selama shift
+--   nonTunai     : total penjualan QRIS/transfer selama shift
+--   pengeluaran  : uang tunai keluar dari laci (retur tunai shift ini)
+--   expected     : total seharusnya = kas awal + tunai - pengeluaran
 create or replace function public.kasir_shift_preview(p_shift_id uuid)
 returns jsonb
 language plpgsql
@@ -991,11 +1022,12 @@ security invoker
 set search_path = public
 as $$
 declare
-  v_user     uuid := auth.uid();
-  v_shift    public.kasir_shifts%rowtype;
-  v_masuk    numeric;
-  v_expected numeric;
-  v_retur_cash numeric;
+  v_user        uuid := auth.uid();
+  v_shift       public.kasir_shifts%rowtype;
+  v_masuk       numeric;
+  v_non_tunai   numeric;
+  v_retur_cash  numeric;
+  v_expected    numeric;
 begin
   select * into v_shift from public.kasir_shifts
    where id = p_shift_id and user_id = v_user;
@@ -1010,8 +1042,15 @@ begin
      and status = 'completed'
      and payment_method = 'cash';
 
-  -- Kurangi pengembalian uang (retur) yang masih berasal dari transaksi shift
-  -- ini agar perkiraan kas kasir tidak melaporkan uang yang sudah dikembalikan.
+  select coalesce(sum(total), 0) into v_non_tunai
+    from public.kasir_transactions
+   where user_id = v_user
+     and shift_id = p_shift_id
+     and status = 'completed'
+     and payment_method <> 'cash';
+
+  -- Pengembalian uang tunai (retur) yang masih berasal dari transaksi shift
+  -- ini dihitung sebagai pengeluaran laci.
   select coalesce(sum(r.total), 0) into v_retur_cash
     from public.kasir_returns r
     join public.kasir_transactions t on t.id = r.transaction_id
@@ -1020,14 +1059,23 @@ begin
      and t.payment_method = 'cash';
 
   v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk - coalesce(v_retur_cash, 0), 2);
-  return jsonb_build_object('expected', v_expected);
+  return jsonb_build_object(
+    'kasAwal',     round(coalesce(v_shift.opening_cash, 0), 2),
+    'tunai',       round(coalesce(v_masuk, 0), 2),
+    'nonTunai',    round(coalesce(v_non_tunai, 0), 2),
+    'pengeluaran', round(coalesce(v_retur_cash, 0), 2),
+    'expected',    v_expected
+  );
 end;
 $$;
 
 -- Tutup shift: hitung perkiraan kas & selisih dari uang aktual.
+-- `p_note` WAJIB diisi bila kas tutup tidak pas (selisih != 0).
+drop function if exists public.kasir_close_shift(uuid, numeric);
 create or replace function public.kasir_close_shift(
   p_shift_id    uuid,
-  p_actual_cash numeric default null
+  p_actual_cash numeric default null,
+  p_note        text default null
 )
 returns jsonb
 language plpgsql
@@ -1035,12 +1083,14 @@ security invoker
 set search_path = public
 as $$
 declare
-  v_user     uuid := auth.uid();
-  v_shift    public.kasir_shifts%rowtype;
-  v_masuk    numeric;
-  v_expected numeric;
-  v_retur_cash numeric;
-  v_actual   numeric;
+  v_user        uuid := auth.uid();
+  v_shift       public.kasir_shifts%rowtype;
+  v_masuk       numeric;
+  v_expected    numeric;
+  v_retur_cash  numeric;
+  v_actual      numeric;
+  v_selisih     numeric;
+  v_note        text;
 begin
   select * into v_shift from public.kasir_shifts
    where id = p_shift_id and user_id = v_user;
@@ -1069,11 +1119,24 @@ begin
 
   v_expected := round(coalesce(v_shift.opening_cash, 0) + v_masuk - coalesce(v_retur_cash, 0), 2);
   v_actual   := round(coalesce(p_actual_cash, v_expected), 2);
+  v_selisih  := round(v_actual - v_expected, 2);
+  v_note     := nullif(btrim(coalesce(p_note, '')), '');
+
+  -- Kas akhir fisik wajib diisi (tidak boleh null).
+  if p_actual_cash is null then
+    raise exception 'Kas akhir fisik wajib diisi.';
+  end if;
+  -- Kas tidak pas (selisih != 0) wajib disertai catatan.
+  if v_selisih <> 0 and v_note is null then
+    raise exception 'Selisih kas % — catatan wajib diisi saat tutup shift.',
+      to_char(v_selisih, 'FM999999999990.00');
+  end if;
 
   update public.kasir_shifts
      set closed_at     = now(),
          closing_cash  = v_actual,
          expected_cash = v_expected,
+         close_note    = v_note,
          status        = 'closed'
    where id = p_shift_id
   returning * into v_shift;
@@ -1081,7 +1144,7 @@ begin
   return jsonb_build_object(
     'shift', to_jsonb(v_shift),
     'expected', v_expected,
-    'selisih', round(v_actual - v_expected, 2)
+    'selisih', v_selisih
   );
 end;
 $$;

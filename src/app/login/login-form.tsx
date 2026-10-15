@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, KeyRound, Loader2, LogIn, Sparkles } from 'lucide-react';
 
 import { useButtonGuard } from '@/lib/useButtonGuard';
+import { draftGet, draftSet } from '@/lib/localStore';
 
 function generateDeviceId(): string {
   try {
@@ -19,18 +20,21 @@ function generateDeviceId(): string {
 function readOrCreateDeviceId(): string {
   let id = '';
   try {
-    id = localStorage.getItem('kpro_device_id') ?? '';
+    // Coba baca dari SQLite draft dulu (konsisten, no localStorage)
+    const draft = Promise.resolve(draftGet<string>('kpro_device_id')).then((v) => {
+      try {
+        if (v && typeof v === 'string') {
+          void draftSet('kpro_device_id', v);
+        }
+      } catch {}
+      return v;
+    });
+    // baca sinkron tidak mungkin; fallback dibawah jalan di useEffect
   } catch {
     /* abaikan */
   }
-  if (!id) {
-    id = generateDeviceId();
-    try {
-      localStorage.setItem('kpro_device_id', id);
-    } catch {
-      /* abaikan */
-    }
-  }
+  // Fallback sinkron (SSR) -> pakai sync via draftGet tidak bisa; baca LS sekali
+  // lalu akan diganti async. Namun untuk render awal, kosong kemudian diisi.
   return id;
 }
 
@@ -48,7 +52,20 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setDeviceId(readOrCreateDeviceId());
+    void (async () => {
+      try {
+        let id = (await draftGet<string>('kpro_device_id')) || '';
+        if (!id) {
+          id = generateDeviceId();
+          draftSet('kpro_device_id', id);
+        } else {
+          draftSet('kpro_device_id', id);
+        }
+        setDeviceId(id);
+      } catch {
+        setDeviceId(generateDeviceId());
+      }
+    })();
   }, []);
 
   const serialBersih = serial.trim().toUpperCase();

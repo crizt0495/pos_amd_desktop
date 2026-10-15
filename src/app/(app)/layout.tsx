@@ -14,9 +14,11 @@ import {
   Settings,
   Store,
   Truck,
+  X,
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
+import { kontrolJendela } from '@/lib/desktop';
 import {
   autoSambungBluetooth,
   dengarStatusBluetooth,
@@ -149,6 +151,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               title="Perkecil"
+              aria-label="Perkecil jendela"
+              onClick={() => kontrolJendela('minimize')}
               className="grid h-7 w-8 place-items-center text-white/80 hover:bg-white/15"
             >
               <Minus className="h-3.5 w-3.5" />
@@ -156,9 +160,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               title="Perbesar"
+              aria-label="Perbesar / kembalikan jendela"
+              onClick={() => kontrolJendela('maximize')}
               className="grid h-7 w-8 place-items-center text-white/80 hover:bg-white/15"
             >
               <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              title="Tutup jendela"
+              aria-label="Tutup jendela"
+              onClick={() => kontrolJendela('close')}
+              className="grid h-7 w-8 place-items-center text-white/80 hover:bg-[#c92a2a]"
+            >
+              <X className="h-3.5 w-3.5" />
             </button>
           </span>
 

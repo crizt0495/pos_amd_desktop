@@ -195,6 +195,8 @@ export interface Transaction {
   cashier_name: string | null;
   customer_name: string | null;
   status: TxStatus;
+  /** Shift kasir yang menaungi transaksi ini (null = transaksi lama tanpa shift). */
+  shift_id: string | null;
   created_at: string;
 }
 
@@ -286,7 +288,24 @@ export interface KasirShift {
   opening_cash: number;
   closing_cash: number | null;
   expected_cash: number | null;
+  /** Catatan wajib saat kas tutup tidak pas (selisih != 0). */
+  close_note: string | null;
   status: 'open' | 'closed';
+}
+
+/**
+ * Ringkasan kas shift untuk modal tutup shift:
+ * - `tunai`       : total penjualan tunai (paid - kembalian) shift ini
+ * - `nonTunai`    : total penjualan QRIS/transfer shift ini
+ * - `pengeluaran` : uang tunai keluar dari laci (retur tunai)
+ * - `expected`    : total seharusnya = kas awal + tunai - pengeluaran
+ */
+export interface ShiftPreview {
+  kasAwal: number;
+  tunai: number;
+  nonTunai: number;
+  pengeluaran: number;
+  expected: number;
 }
 
 /** Baris laporan per kasir (kasir_report_by_cashier). */

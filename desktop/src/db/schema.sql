@@ -124,6 +124,7 @@ create table if not exists kasir_shifts (
   opening_cash  real not null default 0,
   closing_cash  real,
   expected_cash real,
+  close_note    text,
   status        text not null default 'open',
   unique (user_id, shift_no)
 );
@@ -219,3 +220,13 @@ create table if not exists _outbox (
   primary key (tbl, row_id)
 );
 create index if not exists idx_outbox_pending on _outbox (done, ts);
+
+-- Penyimpanan draft lokal (keranjang berjalan & transaksi pending).
+-- Khusus perangkat, TIDAK ikut disinkronkan ke Supabase. Menyimpan data ini di
+-- file SQLite (bukan localStorage) supaya tidak kena batas kecil penyimpanan
+-- browser. `key` mis. 'cart' / 'pending'.
+create table if not exists local_kv (
+  key        text primary key,
+  value      text,
+  updated_at text
+);

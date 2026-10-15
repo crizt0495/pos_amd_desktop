@@ -317,6 +317,12 @@
   .uang-input {
     @apply rounded border border-[#cdd8e6] bg-white outline-none transition
       focus:border-[#1b5fa8] focus:shadow-[0_0_0_2px_rgba(27,95,168,0.14)];
+    /* Beri jarak dari tepi: angka & kursor tidak menempel ke border kanan. */
+    padding-left: 12px;
+    padding-right: 16px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    text-align: right;
   }
 
   /* ------------------------------------------------------------------ */

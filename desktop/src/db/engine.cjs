@@ -95,6 +95,18 @@ function createEngine(dbPath) {
   db.pragma('foreign_keys = OFF');
   db.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
 
+  // Migrasi aditif (idempotent): kolom yang ditambahkan setelah rilis pertama
+  // tidak ikut terpasang oleh `create table if not exists`, jadi ditambahkan
+  // manual di sini. Aman dijalankan berulang.
+  (function migrate() {
+    const ensure = (table, column, ddl) => {
+      const cols = db.prepare(`pragma table_info("${table}")`).all().map((r) => r.name);
+      if (!cols.includes(column)) db.exec(`alter table ${table} add column ${ddl}`);
+    };
+    ensure('kasir_shifts', 'close_note', 'close_note text');
+    ensure('kasir_transactions', 'shift_id', 'shift_id text');
+  })();
+
   const q1 = (sql, ...a) => db.prepare(sql).get(...a);
   const qa = (sql, ...a) => db.prepare(sql).all(...a);
   const run = (sql, ...a) => db.prepare(sql).run(...a);
@@ -709,6 +721,8 @@ function createEngine(dbPath) {
   function kasirOpenShift(uid, a) {
     const active = kasirActiveShift(uid);
     if (active) throw new Error(`Shift ${active.shift_no} masih terbuka. Tutup dulu sebelum buka yang baru.`);
+    // Kas awal wajib diisi angka (tidak boleh kosong). Nol tetap boleh.
+    if (isEmpty(a.p_opening_cash)) throw new Error('Kas awal wajib diisi.');
     const prefix = `SHIFT-${jakartaYMD()}-`;
     const no = nextNumber(uid, 'kasir_shifts', 'shift_no', prefix, 4);
     const row = {
@@ -721,6 +735,7 @@ function createEngine(dbPath) {
       opening_cash: Math.max(0, num(a.p_opening_cash)),
       closing_cash: null,
       expected_cash: null,
+      close_note: null,
       status: 'open',
     };
     insertRow('kasir_shifts', row);
@@ -734,6 +749,11 @@ function createEngine(dbPath) {
       uid,
       shiftId,
     );
+    const nonTunai = q1(
+      "select coalesce(sum(total),0) as v from kasir_transactions where user_id = ? and shift_id = ? and status = 'completed' and payment_method <> 'cash'",
+      uid,
+      shiftId,
+    );
     const retur = q1(
       `select coalesce(sum(r.total),0) as v from kasir_returns r
          join kasir_transactions t on t.id = r.transaction_id
@@ -741,37 +761,60 @@ function createEngine(dbPath) {
       uid,
       shiftId,
     );
-    return { masuk: num(masuk.v), retur: num(retur.v) };
+    return { masuk: num(masuk.v), nonTunai: num(nonTunai.v), retur: num(retur.v) };
   }
 
   function kasirShiftPreview(uid, a) {
     const s = q1('select * from kasir_shifts where id = ? and user_id = ?', a.p_shift_id, uid);
     if (!s) throw new Error('Shift tidak ditemukan.');
     const c = shiftCash(uid, a.p_shift_id);
-    return { expected: round2(num(s.opening_cash) + c.masuk - c.retur) };
+    return {
+      kasAwal: round2(num(s.opening_cash)),
+      tunai: round2(c.masuk),
+      nonTunai: round2(c.nonTunai),
+      pengeluaran: round2(c.retur),
+      expected: round2(num(s.opening_cash) + c.masuk - c.retur),
+    };
   }
 
   function kasirCloseShift(uid, a) {
     const s = q1('select * from kasir_shifts where id = ? and user_id = ?', a.p_shift_id, uid);
     if (!s) throw new Error('Shift tidak ditemukan.');
     if (s.status === 'closed') throw new Error('Shift sudah ditutup.');
+    // Kas akhir fisik wajib diisi.
+    if (isEmpty(a.p_actual_cash)) throw new Error('Kas akhir fisik wajib diisi.');
     const c = shiftCash(uid, a.p_shift_id);
     const expected = round2(num(s.opening_cash) + c.masuk - c.retur);
-    const actual = a.p_actual_cash == null ? expected : round2(num(a.p_actual_cash));
-    run('update kasir_shifts set closed_at = ?, closing_cash = ?, expected_cash = ?, status = ? where id = ?', nowIso(), actual, expected, 'closed', a.p_shift_id);
+    const actual = round2(num(a.p_actual_cash));
+    const selisih = round2(actual - expected);
+    const note = isEmpty(a.p_note) ? null : String(a.p_note).trim();
+    // Kas tidak pas wajib disertai catatan.
+    if (selisih !== 0 && !note) {
+      throw new Error('Selisih kas — catatan wajib diisi saat tutup shift.');
+    }
+    run(
+      'update kasir_shifts set closed_at = ?, closing_cash = ?, expected_cash = ?, close_note = ?, status = ? where id = ?',
+      nowIso(),
+      actual,
+      expected,
+      note,
+      'closed',
+      a.p_shift_id,
+    );
     touch('kasir_shifts', a.p_shift_id, 'upsert');
     const shift = q1('select * from kasir_shifts where id = ?', a.p_shift_id);
-    return { shift, expected, selisih: round2(actual - expected) };
+    return { shift, expected, selisih };
   }
 
   // ------------------------- transaksi -------------------------
   function kasirCreateTransaction(uid, a) {
     const lines = a.p_lines;
     if (!Array.isArray(lines) || !lines.length) throw new Error('Keranjang masih kosong.');
-    if (!isEmpty(a.p_shift_id)) {
-      const sh = q1("select 1 as x from kasir_shifts where id = ? and user_id = ? and status = 'open'", a.p_shift_id, uid);
-      if (!sh) throw new Error('Shift tidak aktif.');
-    }
+    // WAJIB: transaksi terikat shift yang masih terbuka (mencegah penjualan
+    // tanpa shift / laporan kas per shift tidak akurat).
+    if (isEmpty(a.p_shift_id)) throw new Error('Shift kasir belum dibuka. Buka shift sebelum bertransaksi.');
+    const sh = q1("select 1 as x from kasir_shifts where id = ? and user_id = ? and status = 'open'", a.p_shift_id, uid);
+    if (!sh) throw new Error('Shift tidak aktif.');
 
     let subtotal = 0;
     let totalCost = 0;
@@ -883,6 +926,12 @@ function createEngine(dbPath) {
     const tx = q1('select * from kasir_transactions where id = ? and user_id = ?', a.p_tx_id, uid);
     if (!tx) throw new Error('Transaksi tidak ditemukan.');
     if (tx.status === 'void') return tx;
+    // Laporan per shift tidak bisa diedit setelah tutup: transaksi yang sudah
+    // masuk shift yang ditutup tidak boleh dibatalkan.
+    if (!isEmpty(tx.shift_id)) {
+      const openShift = q1("select 1 as x from kasir_shifts where id = ? and user_id = ? and status = 'open'", tx.shift_id, uid);
+      if (!openShift) throw new Error('Transaksi terikat shift yang sudah ditutup dan tidak bisa dibatalkan.');
+    }
     const items = qa('select * from kasir_transaction_items where transaction_id = ? and user_id = ?', a.p_tx_id, uid);
     db.transaction(() => {
       for (const it of items) {
@@ -915,6 +964,12 @@ function createEngine(dbPath) {
     const tx = q1('select * from kasir_transactions where id = ? and user_id = ?', a.p_tx_id, uid);
     if (!tx) throw new Error('Transaksi tidak ditemukan.');
     if (tx.status === 'void') throw new Error('Transaksi sudah dibatalkan, tidak bisa diretur.');
+    // Laporan per shift tidak bisa diedit setelah tutup: retur transaksi yang
+    // terikat shift ditutup akan mengubah kas shift itu, jadi ditolak.
+    if (!isEmpty(tx.shift_id)) {
+      const openShift = q1("select 1 as x from kasir_shifts where id = ? and user_id = ? and status = 'open'", tx.shift_id, uid);
+      if (!openShift) throw new Error('Transaksi terikat shift yang sudah ditutup dan tidak bisa diretur.');
+    }
     const items = Array.isArray(a.p_items) ? a.p_items : [];
     if (!items.length) throw new Error('Tidak ada item yang diretur.');
 
@@ -1278,6 +1333,31 @@ function createEngine(dbPath) {
     return out;
   }
 
+  // ------------------- penyimpanan draft lokal (device) -------------------
+  // Keranjang berjalan & transaksi pending disimpan di file SQLite yang sama
+  // (tabel `local_kv`), bukan di localStorage. Tidak memakai user_id dan tidak
+  // ikut disinkronkan ke Supabase.
+  function kvGet(key) {
+    const r = q1('select value from local_kv where key = ?', String(key));
+    return r ? r.value : null;
+  }
+
+  function kvSet(key, value) {
+    run(
+      `insert into local_kv (key, value, updated_at) values (?, ?, ?)
+       on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+      String(key),
+      value == null ? null : String(value),
+      nowIso(),
+    );
+    return true;
+  }
+
+  function kvDelete(key) {
+    run('delete from local_kv where key = ?', String(key));
+    return true;
+  }
+
   function close() {
     try {
       db.close();
@@ -1289,6 +1369,9 @@ function createEngine(dbPath) {
   return {
     handle,
     doRpc,
+    kvGet,
+    kvSet,
+    kvDelete,
     getUserId: () => meta('localUserId'),
     setUserId,
     stats,

@@ -32,6 +32,15 @@ contextBridge.exposeInMainWorld('kasirproDesktop', {
   dbUser: (id) => ipcRenderer.invoke('desktop:db-user', id == null ? null : String(id)),
   dbStats: () => ipcRenderer.invoke('desktop:db-stats'),
   dbOutbox: () => ipcRenderer.invoke('desktop:db-outbox'),
+  // Draft lokal (keranjang & transaksi pending) → tabel `local_kv` di SQLite.
+  kvGet: (key) => ipcRenderer.invoke('desktop:kv-get', String(key || '')),
+  kvSet: (key, value) =>
+    ipcRenderer.invoke('desktop:kv-set', String(key || ''), value == null ? null : String(value)),
+  kvDel: (key) => ipcRenderer.invoke('desktop:kv-del', String(key || '')),
+  // Kontrol jendela dari title bar kustom.
+  minimize: () => ipcRenderer.send('desktop:window-minimize'),
+  maximize: () => ipcRenderer.send('desktop:window-maximize'),
+  close: () => ipcRenderer.send('desktop:window-close'),
   dbOutboxDone: (e) => ipcRenderer.invoke('desktop:db-outbox-done', e || {}),
   dbSyncRow: (tbl, rowId) => ipcRenderer.invoke('desktop:db-sync-row', { tbl, rowId }),
   dbImport: (payload) => ipcRenderer.invoke('desktop:db-import', payload || {}),

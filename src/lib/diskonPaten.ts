@@ -12,11 +12,13 @@
  * "ganti diskon tak menyentuh baris lama"), jadi kasir masih bisa mengoreksi
  * satu baris bila perlu.
  *
- * Disimpan di localStorage per perangkat — sama seperti preferensi tampilan —
- * supaya terbaca seketika tanpa query database. Tidak ada kolom baru di
- * database: nilai paten sudah ikut tersimpan per item di `transaction_items`.
+ * Disimpan di database lokal per perangkat (tabel `local_kv` di file SQLite
+ * `kasir.db`) — bukan di localStorage — dan dibaca lewat cache memori supaya
+ * terbaca seketika tanpa query database. Nilai paten juga ikut tersimpan per
+ * item di `transaction_items`.
  */
 
+import { draftGet, draftSet } from './localStore';
 import { potonganDariDefault, round2, rupiah } from './format';
 
 export type TipeDiskonPaten = 'rp' | 'pct';
@@ -84,40 +86,75 @@ export function rapikanDiskonPaten(v: unknown): DiskonPaten {
   };
 }
 
-/** Config saat ini (aman dipanggil sebelum mount / di server). */
-export function bacaDiskonPaten(): DiskonPaten {
-  if (typeof window === 'undefined') return { ...DISKON_PATEN_AWAL };
+/** Cache memori supaya `bacaDiskonPaten()` tetap sinkron (dipakai saat render). */
+let cache: DiskonPaten | null = null;
+let memuat = false;
+
+/** Baca nilai lama dari localStorage — hanya sekali untuk migrasi ke SQLite. */
+function bacaDariLocalStorage(): DiskonPaten | null {
+  if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(DISKON_PATEN_KEY);
-    return raw ? rapikanDiskonPaten(JSON.parse(raw)) : { ...DISKON_PATEN_AWAL };
+    return raw ? rapikanDiskonPaten(JSON.parse(raw)) : null;
   } catch {
-    return { ...DISKON_PATEN_AWAL };
+    return null;
   }
 }
 
-/** Gabung patch ke config, simpan, lalu siarkan ke layar lain. */
-export function setDiskonPaten(patch: Partial<DiskonPaten>): DiskonPaten {
-  const next = rapikanDiskonPaten({ ...bacaDiskonPaten(), ...patch });
+/** Muat config dari database lokal (sekali), lalu beri tahu layar. */
+async function muatDariDb() {
+  if (memuat) return;
+  memuat = true;
   try {
-    window.localStorage.setItem(DISKON_PATEN_KEY, JSON.stringify(next));
+    const db = await draftGet<DiskonPaten>(DISKON_PATEN_KEY);
+    if (db) {
+      cache = rapikanDiskonPaten(db);
+      window.dispatchEvent(new CustomEvent(DISKON_PATEN_EVENT, { detail: cache }));
+    } else if (cache) {
+      // Migrasi: nilai lama (localStorage / default) dipindah ke SQLite.
+      draftSet(DISKON_PATEN_KEY, cache);
+    }
+    try {
+      window.localStorage.removeItem(DISKON_PATEN_KEY);
+    } catch {
+      /* abaikan */
+    }
+  } finally {
+    memuat = false;
+  }
+}
+
+/** Config saat ini (aman dipanggil sebelum mount / di server). */
+export function bacaDiskonPaten(): DiskonPaten {
+  if (typeof window === 'undefined') return { ...DISKON_PATEN_AWAL };
+  if (cache) return cache;
+  // Seed sinkron (dari penyimpanan lama bila ada), lalu segarkan dari SQLite.
+  const lama = bacaDariLocalStorage();
+  cache = lama ? lama : { ...DISKON_PATEN_AWAL };
+  void muatDariDb();
+  return cache;
+}
+
+/** Gabung patch ke config, simpan ke database lokal, lalu siarkan ke layar lain. */
+export function setDiskonPaten(patch: Partial<DiskonPaten>): DiskonPaten {
+  const next = rapikanDiskonPaten({ ...(cache ?? DISKON_PATEN_AWAL), ...patch });
+  cache = next;
+  draftSet(DISKON_PATEN_KEY, next);
+  try {
+    window.localStorage.removeItem(DISKON_PATEN_KEY);
   } catch {
-    /* localStorage penuh / diblokir — config tetap berlaku di sesi ini */
+    /* abaikan */
   }
   window.dispatchEvent(new CustomEvent(DISKON_PATEN_EVENT, { detail: next }));
   return next;
 }
 
-/** Dengarkan perubahan dari Pengaturan (dan tab lain). */
+/** Dengarkan perubahan dari Pengaturan. */
 export function dengarDiskonPaten(cb: (c: DiskonPaten) => void): () => void {
   const onPES = (e: Event) => cb(rapikanDiskonPaten((e as CustomEvent).detail));
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === DISKON_PATEN_KEY) cb(bacaDiskonPaten());
-  };
   window.addEventListener(DISKON_PATEN_EVENT, onPES);
-  window.addEventListener('storage', onStorage);
   return () => {
     window.removeEventListener(DISKON_PATEN_EVENT, onPES);
-    window.removeEventListener('storage', onStorage);
   };
 }
 

@@ -20,6 +20,7 @@ import type {
   ReturnLineInput,
   ReturnRecord,
   SatuanMaster,
+  ShiftPreview,
   StockLog,
   StockMovement,
   TopProduct,
@@ -493,9 +494,10 @@ export const transactionsApi = {
     note?: string | null;
     cashierName: string;
     customerName?: string;
-    shiftId?: string | null;
+    /** WAJIB: transaksi tanpa shift ditolak (kasir harus buka shift dulu). */
+    shiftId: string;
   }): Promise<Result<CreatedTx>> {
-    const panggil = async (pakaiShift: boolean) =>
+    const panggil = async () =>
       createClient().rpc('kasir_create_transaction', {
         p_lines: data.lines,
         p_discount_type: data.discountType,
@@ -505,17 +507,25 @@ export const transactionsApi = {
         p_note: data.note ?? null,
         p_cashier_name: data.cashierName,
         p_customer_name: data.customerName ?? null,
-        // Coba dengan shift dulu; gagal (DB versi 8-param) -> ulang tanpa p_shift_id.
-        ...(pakaiShift && data.shiftId ? { p_shift_id: data.shiftId } : {}),
+        p_shift_id: data.shiftId,
       });
     try {
-      let { data: result, error } = await panggil(Boolean(data.shiftId));
-      if (error && data.shiftId && /p_shift_id|PGRST202|function public\.kasir_create_transaction/i.test(error.message)) {
-        const fallback = await panggil(false);
-        result = fallback.data;
-        error = fallback.error;
+      if (!data.shiftId) {
+        return { ok: false, error: 'Shift kasir belum dibuka. Buka shift sebelum menyimpan transaksi.' };
       }
-      if (error) return { ok: false, error: error.message };
+      const { data: result, error } = await panggil();
+      if (error) {
+        // DB lama (belum ada p_shift_id) / fungsi belum dimigrasi: jangan
+        // simpan transaksi tanpa shift — arahkan user menjalankan migrasi.
+        if (/p_shift_id|PGRST202|function public\.kasir_create_transaction/i.test(error.message)) {
+          return {
+            ok: false,
+            error:
+              'Database belum mendukung shift kasir (p_shift_id). Jalankan migrasi di Supabase → SQL Editor, lalu muat ulang aplikasi.',
+          };
+        }
+        return { ok: false, error: error.message };
+      }
       const body = result as { transaction: Record<string, unknown>; totals?: Record<string, unknown>; changeDue?: number };
       return {
         ok: true,
@@ -621,6 +631,7 @@ const mapShift = (r: Record<string, unknown>): KasirShift => ({
   opening_cash: num(r.opening_cash),
   closing_cash: r.closing_cash == null ? null : num(r.closing_cash),
   expected_cash: r.expected_cash == null ? null : num(r.expected_cash),
+  close_note: r.close_note == null || r.close_note === '' ? null : String(r.close_note),
   status: String(r.status ?? 'open') as KasirShift['status'],
 });
 
@@ -1016,22 +1027,41 @@ export const shiftsApi = {
     }
   },
 
-  async preview(id: string): Promise<Result<{ expected: number }>> {
+  async preview(id: string): Promise<Result<ShiftPreview>> {
     try {
       const { data, error } = await createClient().rpc('kasir_shift_preview', { p_shift_id: id });
       if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       const r = (data ?? {}) as Record<string, unknown>;
-      return { ok: true, data: { expected: num(r.expected) } };
+      const kasAwal = num(r.kasAwal ?? r.kas_awal);
+      const tunai = num(r.tunai);
+      const nonTunai = num(r.nonTunai ?? r.non_tunai);
+      const pengeluaran = num(r.pengeluaran);
+      return {
+        ok: true,
+        data: {
+          kasAwal,
+          tunai,
+          nonTunai,
+          pengeluaran,
+          expected: num(r.expected),
+        },
+      };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }
   },
 
-  async close(id: string, actualCash: number): Promise<Result<{ shift: KasirShift; expected: number; selisih: number }>> {
+  async close(
+    id: string,
+    actualCash: number,
+    note?: string | null,
+  ): Promise<Result<{ shift: KasirShift; expected: number; selisih: number }>> {
     try {
       const { data, error } = await createClient().rpc('kasir_close_shift', {
         p_shift_id: id,
         p_actual_cash: num(actualCash),
+        // Catatan wajib saat kas tidak pas — ditegakkan lagi di RPC.
+        p_note: note?.trim() ? note.trim() : null,
       });
       if (error) return { ok: false, error: rpcMsg(error, 'shift kasir') };
       const r = (data ?? {}) as Record<string, unknown>;
