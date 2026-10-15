@@ -1,7 +1,7 @@
 {
   "name": "kasirpro-pos-desktop",
   "productName": "KasirPro POS",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "KasirPro POS — aplikasi kasir desktop Windows (Electron) untuk https://pos-amd-desktop.vercel.app",
   "author": {
     "name": "KasirPro",
