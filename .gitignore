@@ -27,3 +27,12 @@ desktop/app/
 next-env.d.ts
 .env*
 .vercel
+
+# config electron-store (BISA berisi token/serial — jangan pernah di-commit).
+# Normalnya ada di %APPDATA%/KasirPro POS (di luar repo), ini jaring pengaman.
+config.json
+secrets.json
+**/KasirPro POS/config.json
+**/KasirPro POS/secrets.json
+**/userData/**/config.json
+**/userData/**/secrets.json

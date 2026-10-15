@@ -15,7 +15,7 @@
  *   serial invalid -> setup.html + pesan error
  */
 
-const { app, BrowserWindow, session, Menu, Tray, ipcMain, shell, dialog, nativeImage, net } = require('electron');
+const { app, BrowserWindow, session, Menu, Tray, ipcMain, shell, dialog, nativeImage, net, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -24,6 +24,7 @@ const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
 const { createEngine } = require('./db/engine.cjs');
 const { startLocalServer } = require('./localServer.cjs');
+const { createSecrets } = require('./secrets.cjs');
 
 const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-desktop.vercel.app';
 const PARTITION = 'persist:kasirpro';
@@ -38,8 +39,6 @@ const wantReset = process.argv.includes('--reset');
 const store = new Store({
   name: 'config',
   defaults: {
-    serialKey: '',
-    ownerPassword: '',
     storeName: 'Toko',
     serverUrl: DEFAULT_SERVER,
     printerName: '',
@@ -51,13 +50,24 @@ const store = new Store({
     // Dipakai supaya mode lokal (SQLite) tetap menyala secara default.
     localDbExplicit: false,
     localUserId: '',
-    authSession: null,
     lastLicenseCheck: '',
+    // Versi skema keamanan config (lihat migrateSecrets). Dinaikkan bila perlu
+    // memaksa tindakan sekali, mis. membersihkan token lama yang terpapar.
+    securityVersion: 0,
   },
 });
 
+/**
+ * Store terpisah KHUSUS nilai sensitif (token sesi, serial, password owner).
+ * Nilainya dienkripsi via safeStorage (lihat secrets.cjs). Dipisah dari
+ * `config.json` supaya file config tidak pernah memuat materi kredensial
+ * (temuan audit F-005 / rekomendasi P1: pisahkan secrets dari config).
+ */
+const secretStore = new Store({ name: 'secrets' });
+
 if (wantReset) {
   store.clear();
+  try { secretStore.clear(); } catch { /* abaikan */ }
   store.set('deviceId', randomUUID());
 }
 
@@ -90,6 +100,52 @@ function deviceId() {
 }
 
 const serverUrl = () => String(store.get('serverUrl') || DEFAULT_SERVER).replace(/\/+$/, '');
+
+// ---------------------------------------------------------------------------
+// Penyimpanan rahasia (token sesi, serial key, password owner)
+// ---------------------------------------------------------------------------
+// Rahasia disimpan TERPISAH dari `config.json` (di `secrets.json`) dan
+// dienkripsi at-rest memakai `safeStorage` (Windows DPAPI / macOS Keychain /
+// libsecret Linux), supaya refresh_token/access_token/serial key/password
+// tidak bocor sebagai plaintext (temuan audit F-001..F-005). Nilai lama yang
+// masih plaintext di `config.json` dipindahkan otomatis saat start.
+// Logika enkripsi ada di `./secrets.cjs` agar bisa diuji terpisah.
+// Naikkan SECURITY_VERSION bila perlu memaksa tindakan sekali (mis. buang
+// token lama yang mungkin sudah terpapar).
+const SECURITY_VERSION = 1;
+
+const secrets = createSecrets({ store: secretStore, safeStorage });
+const getSecret = (key) => secrets.get(key);
+const setSecret = (key, value) => secrets.set(key, value);
+
+/**
+ * Amankan kredensial: (1) pindahkan rahasia lama dari `config.json` ke
+ * `secrets.json`, (2) enkripsi nilai yang masih plaintext, lalu (3) sekali per
+ * skema keamanan buang token sesi lama agar login berikutnya mengambil token
+ * baru (rekomendasi audit: logout + login ulang). Serial & localUserId
+ * dipertahankan supaya aplikasi tetap jalan offline.
+ */
+function migrateSecrets() {
+  const moved = secrets.relocateFrom(store);
+  const upgraded = secrets.upgradeLegacy();
+
+  try {
+    const cur = Number(store.get('securityVersion') || 0);
+    if (cur < SECURITY_VERSION) {
+      setSecret('authSession', null);
+      store.set('securityVersion', SECURITY_VERSION);
+      console.log('[security] token sesi lama dibersihkan — login ulang mengambil token baru.');
+    }
+  } catch { /* abaikan */ }
+
+  if (moved > 0) {
+    console.log(`[security] ${moved} kredensial dipindahkan dari config.json ke secrets.json (terenkripsi).`);
+  }
+  if (upgraded > 0) console.log(`[security] ${upgraded} nilai sensitif dienkripsi (at-rest).`);
+  if (!secrets.encryptionAvailable()) {
+    console.warn('[security] enkripsi OS (safeStorage) tidak tersedia — rahasia disimpan tanpa enkripsi.');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -354,7 +410,7 @@ function login(serial, opts = {}) {
           const j = result.json || {};
           try { store.set('lastLicenseCheck', new Date().toISOString()); } catch (e) {}
           try { if (j.user_id) store.set('localUserId', String(j.user_id)); } catch (e) {}
-          try { if (j.session) store.set('authSession', j.session); } catch (e) {}
+          try { if (j.session) setSecret('authSession', j.session); } catch (e) {}
           try { initDb(); if (db && j.user_id) db.setUserId(String(j.user_id)); } catch (e) {}
           finish({ ok: true });
         } else if (result && result.status === 0) {
@@ -524,7 +580,7 @@ async function boot() {
   booting = true;
   try {
     stopOfflineTimer();
-    const serial = String(store.get('serialKey') || '').trim();
+    const serial = String(getSecret('serialKey') || '').trim();
     if (!serial) {
       await showSetup({ mode: 'first' });
       return;
@@ -550,7 +606,7 @@ async function boot() {
       return;
     }
     // Serial salah / hangus — buang lalu minta input ulang.
-    store.set('serialKey', '');
+    setSecret('serialKey', '');
     await showSetup({ mode: 'first', error: res.message || 'Serial Key tidak valid. Masukkan kembali.' });
   } finally {
     booting = false;
@@ -559,7 +615,7 @@ async function boot() {
 
 /** Muat ulang ke aplikasi (dipakai setelah ganti serial / retry). */
 async function loadAppSafe() {
-  const serial = String(store.get('serialKey') || '').trim();
+  const serial = String(getSecret('serialKey') || '').trim();
   if (!serial) {
     await showSetup({ mode: 'first' });
     return;
@@ -574,7 +630,7 @@ async function loadAppSafe() {
   } else if (res.offline) {
     await showOffline(offlinePageReason());
   } else {
-    store.set('serialKey', '');
+    setSecret('serialKey', '');
     await showSetup({ mode: 'first', error: res.message });
   }
 }
@@ -583,7 +639,7 @@ async function loadAppSafe() {
 // Ganti serial (owner)
 // ---------------------------------------------------------------------------
 function openOwner() {
-  const has = !!String(store.get('ownerPassword') || '');
+  const has = !!String(getSecret('ownerPassword') || '');
   void showPage('owner.html', { state: has ? 'verify' : 'set' });
 }
 
@@ -833,7 +889,7 @@ function registerIpc() {
   ipcMain.on('desktop:local-db', (event) => {
     event.returnValue = dbEnabled();
   });
-  ipcMain.handle('desktop:auth-session', () => ({ ok: true, session: store.get('authSession') || null }));
+  ipcMain.handle('desktop:auth-session', () => ({ ok: true, session: getSecret('authSession') || null }));
 
   ipcMain.handle('desktop:db', (_e, op) => {
     initDb();
@@ -959,7 +1015,7 @@ function registerIpc() {
     if (serial.length < 3) return { ok: false, message: 'Serial Key minimal 3 karakter.' };
     const res = await login(serial);
     if (res.ok) {
-      store.set('serialKey', serial);
+      setSecret('serialKey', serial);
       await loadApp();
       return { ok: true };
     }
@@ -973,12 +1029,12 @@ function registerIpc() {
 
     if (action === 'set') {
       if (pw.length < 4) return { ok: false, message: 'Password owner minimal 4 karakter.' };
-      store.set('ownerPassword', pw);
+      setSecret('ownerPassword', pw);
       await showSetup({ mode: 'ganti' });
       return { ok: true };
     }
     if (action === 'verify') {
-      const saved = String(store.get('ownerPassword') || '');
+      const saved = String(getSecret('ownerPassword') || '');
       if (!pw || pw !== saved) return { ok: false, message: 'Password owner salah.' };
       await showSetup({ mode: 'ganti' });
       return { ok: true };
@@ -1136,6 +1192,10 @@ if (gotLock) {
     ses = session.fromPartition(PARTITION);
     Menu.setApplicationMenu(null);
     deviceId();
+    // Amankan rahasia (token sesi, serial, password): pindah ke secrets.json +
+    // enkripsi at-rest via safeStorage. Harus setelah app ready karena
+    // safeStorage bergantung pada keyring/DPAPI OS.
+    migrateSecrets();
     // Catat lokasi file database lebih dulu supaya pemilik bisa memverifikasi
     // keberadaan `kasir.db` di log aplikasi.
     logDatabasePath();

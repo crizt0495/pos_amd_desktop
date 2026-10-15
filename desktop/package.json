@@ -18,7 +18,7 @@
     "dist": "electron-builder --win nsis --x64 --publish never",
     "dist:publish": "electron-builder --win nsis --x64 --publish always",
     "dist:dir": "electron-builder --win --dir --x64",
-    "test": "node test/engine.test.cjs && node test/sync.test.cjs"
+    "test": "node test/engine.test.cjs && node test/sync.test.cjs && node test/secrets.test.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
