@@ -26,6 +26,10 @@ desktop/app/
 *.tsbuildinfo
 next-env.d.ts
 .env*
+# Contoh env BOLEH di-commit (hanya placeholder, tanpa rahasia) — dipakai
+# panduan setup di README/SETUP.md.
+!.env.example
+!.env.*.example
 .vercel
 
 # config electron-store (BISA berisi token/serial — jangan pernah di-commit).

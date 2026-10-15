@@ -50,11 +50,18 @@ scripts/check-supabase.mjs verifikasi skema (tabel + RPC semua fitur)
 
 ## Menjalankan lokal
 
+> Pindah komputer / setup dari nol? Lihat **[SETUP.md](./SETUP.md)** (clone →
+> env → install → uji → jalankan, plus checklist berkas yang tak ada di git).
+
 ```bash
-npm install
+nvm use                      # Node 24.20.0 (lihat .nvmrc)
+npm ci
 cp .env.example .env.local   # lalu isi nilai Supabase (sama dengan portal)
 npm run dev                  # http://localhost:3001
 ```
+
+`.env.local` **tidak** ikut ke git (berisi rahasia) — isi manual dari
+`.env.example`. Untuk pembungkus Electron: `cd desktop && npm ci`.
 
 ## Menyiapkan Supabase
 
