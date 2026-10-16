@@ -40,3 +40,8 @@ secrets.json
 **/KasirPro POS/secrets.json
 **/userData/**/config.json
 **/userData/**/secrets.json
+
+# installer / artefak build (binary besar, jangan di-commit). Installer resmi
+# ada di GitHub Releases; di sini hanya untuk kemudahan unduh/uji lokal.
+*.exe
+*.blockmap
