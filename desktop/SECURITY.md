@@ -42,11 +42,25 @@ otomatis ke `secrets.json` saat start.
 Implementasi: `desktop/src/secrets.cjs` (murni, tanpa `require('electron')`,
 diuji oleh `desktop/test/secrets.test.cjs`).
 
+## Sesi browser (cookie) — tidak lagi ditulis ke disk
+
+Aplikasi login lewat window tersembunyi ke `/api/auth/login`; cookie sesi
+Supabase disimpan Chromium di partisi `persist:kasirpro`, sehingga
+`%APPDATA%\KasirPro POS\Partitions\kasirpro\Cookies` menyimpan token sebagai
+**plaintext** (satu kelas dengan F-005, meski di luar cakupan `config.json`).
+
+Perbaikan: partisi diubah menjadi **in-memory** (`const PARTITION = 'kasirpro'`
+tanpa awalan `persist:`), jadi cookie/token hanya ada di memori dan **tidak
+pernah ditulis ke disk**. Karena `boot()` selalu login ulang via Serial Key saat
+start, sesi tidak perlu bertahan antar-restart. Folder partisi lama
+(`Partitions/kasirpro`) dihapus sekali oleh `purgeLegacyPersistedSession()`.
+
 ## Pembersihan token lama
 
 Saat pertama kali menjalankan versi ini, `migrateSecrets()` (di `main.js`)
-membuang `authSession` lama sekali (`SECURITY_VERSION = 1`) agar login
-berikutnya mengambil token baru. `serialKey` dan `localUserId` dipertahankan,
+membuang `authSession` lama sekali (`SECURITY_VERSION = 2`) agar login
+berikutnya mengambil token baru, sekaligus **menghapus sesi Chromium lama** yang
+tersimpan plaintext di disk. `serialKey` dan `localUserId` dipertahankan,
 sehingga **aplikasi tetap bisa jalan offline**; sinkronisasi Supabase saja yang
 menunggu login online berikutnya.
 
@@ -68,3 +82,5 @@ valid di server** sampai di-revoke:
 - Refresh-token rotation/reuse detection (setelan Supabase Auth).
 - `deviceId`/`fingerprint` binding per sesi.
 - Zeroization di memori (keterbatasan runtime JS/Electron).
+- Paparan token ke **renderer**: sinkronisasi Supabase masih berjalan di
+  renderer dan menerima token lewat IPC (rekomendasi P2.4).

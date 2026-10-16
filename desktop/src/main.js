@@ -27,7 +27,13 @@ const { startLocalServer } = require('./localServer.cjs');
 const { createSecrets } = require('./secrets.cjs');
 
 const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-desktop.vercel.app';
-const PARTITION = 'persist:kasirpro';
+// Sesi Chromium IN-MEMORY (tanpa awalan `persist:`). Login memakai cookie
+// Supabase; partisi lama `persist:kasirpro` menuliskannya sebagai plaintext ke
+// `%APPDATA%\KasirPro POS\Partitions\kasirpro\Cookies` — satu kelas dengan
+// temuan F-005. Karena `boot()` selalu login ulang via Serial Key saat start,
+// sesi tidak perlu bertahan di disk. Folder lama dibersihkan sekali oleh
+// `purgeLegacyPersistedSession()` (lihat SECURITY_VERSION).
+const PARTITION = 'kasirpro';
 const PAGES_DIR = path.join(__dirname, 'pages');
 const ASSETS_DIR = path.join(__dirname, '..', 'assets');
 /** Ekspor statis aplikasi POS yang dibundel (lihat scripts/export-desktop.mjs). */
@@ -112,11 +118,31 @@ const serverUrl = () => String(store.get('serverUrl') || DEFAULT_SERVER).replace
 // Logika enkripsi ada di `./secrets.cjs` agar bisa diuji terpisah.
 // Naikkan SECURITY_VERSION bila perlu memaksa tindakan sekali (mis. buang
 // token lama yang mungkin sudah terpapar).
-const SECURITY_VERSION = 1;
+//   1 -> buang `authSession` lama (login ulang ambil token baru).
+//   2 -> + hapus sesi Chromium lama yang tersimpan plaintext di disk.
+const SECURITY_VERSION = 2;
 
 const secrets = createSecrets({ store: secretStore, safeStorage });
 const getSecret = (key) => secrets.get(key);
 const setSecret = (key, value) => secrets.set(key, value);
+
+/**
+ * Hapus sesi Chromium lama yang tersimpan plaintext di disk
+ * (`%APPDATA%\KasirPro POS\Partitions\kasirpro`) dari skema partisi
+ * `persist:kasirpro`. Dipanggil sekali saat migrasi keamanan; partisi sekarang
+ * in-memory sehingga cookie/token tidak lagi ditulis ke disk.
+ */
+function purgeLegacyPersistedSession() {
+  const dir = path.join(app.getPath('userData'), 'Partitions', 'kasirpro');
+  try {
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log('[security] sesi Chromium lama (cookie plaintext) dihapus dari disk.');
+    }
+  } catch (err) {
+    console.warn('[security] gagal menghapus sesi Chromium lama:', err && err.message);
+  }
+}
 
 /**
  * Amankan kredensial: (1) pindahkan rahasia lama dari `config.json` ke
@@ -133,6 +159,7 @@ function migrateSecrets() {
     const cur = Number(store.get('securityVersion') || 0);
     if (cur < SECURITY_VERSION) {
       setSecret('authSession', null);
+      purgeLegacyPersistedSession();
       store.set('securityVersion', SECURITY_VERSION);
       console.log('[security] token sesi lama dibersihkan — login ulang mengambil token baru.');
     }
