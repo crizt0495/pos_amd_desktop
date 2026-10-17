@@ -372,21 +372,76 @@ function toggleLocalDb(on) {
 }
 
 // ---------------------------------------------------------------------------
-// Login via window tersembunyi (cookie ditangani Chromium → tersimpan di sesi)
+// Login: verifikasi serial + ambil token sesi.
+// Jalur cepat  : POST /api/auth/login langsung dari proses utama (TIDAK memuat
+//                halaman /login sama sekali → jauh lebih cepat).
+// Jalur cadangan: cara lama (muat halaman /login di jendela tersembunyi) bila
+//                jawaban jalur cepat tidak bisa dipastikan, mis. server
+//                menuntut cookie yang hanya dibuat oleh halaman /login.
 // ---------------------------------------------------------------------------
-function login(serial, opts = {}) {
-  return new Promise((resolve) => {
-    const server = serverUrl();
-    const loginUrl = `${server}/login`;
-    const guardMs = Number(opts.timeout) > 0 ? Number(opts.timeout) : 25000;
-    const body = JSON.stringify({
-      serial_key: serial,
-      device_id: deviceId(),
-      device_name: (os.hostname() || 'Perangkat Kasir').slice(0, 120),
-      app_version: app.getVersion(),
-      next: '/kasir',
-    });
 
+/** Terapkan efek samping login sukses: cap waktu, user, token, dan DB. */
+function applyLoginSuccess(j) {
+  try { store.set('lastLicenseCheck', new Date().toISOString()); } catch { /* abaikan */ }
+  try { if (j && j.user_id) store.set('localUserId', String(j.user_id)); } catch { /* abaikan */ }
+  try { if (j && j.session) setSecret('authSession', j.session); } catch { /* abaikan */ }
+  try { initDb(); if (db && j && j.user_id) db.setUserId(String(j.user_id)); } catch { /* abaikan */ }
+}
+
+/**
+ * Jalur cepat: POST /api/auth/login dari proses utama. Cookie dari respons
+ * tetap disimpan Chromium ke sesi in-memory (lewat opsi `session`).
+ * Hasil: { ok:true, json } | { ok:false, message } | { ok:false, offline:true }
+ *        | { ambiguous:true } → jawaban bukan JSON, pakai jalur cadangan.
+ */
+function loginDirect(server, body, guardMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const done = (res) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(res);
+    };
+    let req;
+    try {
+      req = net.request({ method: 'POST', url: `${server}/api/auth/login`, session: ses });
+    } catch {
+      done({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' });
+      return;
+    }
+    timer = setTimeout(() => {
+      try { req.abort(); } catch { /* abaikan */ }
+      done({ ok: false, offline: true, message: 'Server tidak merespons.' });
+    }, guardMs);
+    try {
+      req.setHeader('Content-Type', 'application/json');
+      req.setHeader('Accept', 'application/json');
+      req.setHeader('X-KasirPro-Desktop', '1');
+    } catch { /* abaikan */ }
+    req.on('response', (res) => {
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.from(c)); });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* bukan JSON */ }
+        if (!j || typeof j !== 'object') { done({ ambiguous: true, status: res.statusCode }); return; }
+        if (res.statusCode >= 200 && res.statusCode < 300 && j.ok) { done({ ok: true, json: j }); return; }
+        done({ ok: false, message: j.message || `Login gagal (HTTP ${res.statusCode}).` });
+      });
+      res.on('error', () => done({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' }));
+    });
+    req.on('error', () => done({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' }));
+    req.write(body);
+    req.end();
+  });
+}
+
+/** Jalur cadangan: muat /login di jendela tersembunyi lalu panggil API dari sana. */
+function loginViaPage(server, body, guardMs) {
+  return new Promise((resolve) => {
+    const loginUrl = `${server}/login`;
     let hidden;
     try {
       hidden = new BrowserWindow({
@@ -436,12 +491,7 @@ function login(serial, opts = {}) {
           true,
         );
         if (result && result.ok && result.json && result.json.ok) {
-          const j = result.json || {};
-          try { store.set('lastLicenseCheck', new Date().toISOString()); } catch (e) {}
-          try { if (j.user_id) store.set('localUserId', String(j.user_id)); } catch (e) {}
-          try { if (j.session) setSecret('authSession', j.session); } catch (e) {}
-          try { initDb(); if (db && j.user_id) db.setUserId(String(j.user_id)); } catch (e) {}
-          finish({ ok: true });
+          finish({ ok: true, json: result.json || {} });
         } else if (result && result.status === 0) {
           finish({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' });
         } else {
@@ -460,6 +510,30 @@ function login(serial, opts = {}) {
       finish({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' });
     });
   });
+}
+
+/** Verifikasi serial: coba jalur cepat, jatuh ke jalur cadangan bila perlu. */
+async function login(serial, opts = {}) {
+  const server = serverUrl();
+  const guardMs = Number(opts.timeout) > 0 ? Number(opts.timeout) : 25000;
+  const body = JSON.stringify({
+    serial_key: serial,
+    device_id: deviceId(),
+    device_name: (os.hostname() || 'Perangkat Kasir').slice(0, 120),
+    app_version: app.getVersion(),
+    next: '/kasir',
+  });
+
+  let res = await loginDirect(server, body, guardMs);
+  if (res && res.ambiguous) {
+    console.warn('[app] login cepat tidak dapat dipastikan — memakai halaman /login.');
+    res = await loginViaPage(server, body, guardMs);
+  }
+  if (res && res.ok) {
+    applyLoginSuccess(res.json);
+    return { ok: true };
+  }
+  return res || { ok: false, message: 'Login gagal.' };
 }
 
 /** Cek server terjangkau (untuk halaman offline). */
@@ -555,9 +629,9 @@ async function loadAndVerify(url) {
   const base = url.replace(/\/+$/, '');
   let rendered = false;
   // Periksa beberapa kali pada waktu tertentu (ms sejak load). Keberhasilan
-  // baru diterima setelah hidrasi (>= 1500 ms) supaya halaman yang rusak saat
-  // hidrasi (jadi kosong) ikut terdeteksi dan kita bisa jatuh ke server.
-  for (const at of [600, 1500, 3000, 5000, 8000]) {
+  // diterima mulai 800 ms (cukup untuk hidrasi awal) supaya aplikasi tampil
+  // lebih cepat, namun halaman yang gagal/hidrasi rusak tetap jatuh ke server.
+  for (const at of [400, 800, 1500, 3000, 5000, 8000]) {
     const wait = at - (Date.now() - started);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     if (!win || win.isDestroyed()) return false;
@@ -565,7 +639,7 @@ async function loadAndVerify(url) {
     // Dialihkan ke halaman lain (mis. /login) berarti aplikasi hidup.
     if (now && !now.startsWith(base) && !now.startsWith('http://127.0.0.1:')) return true;
     rendered = await pageRendered();
-    if (rendered && at >= 1500) return true;
+    if (rendered && at >= 800) return true;
   }
   return rendered;
 }
@@ -623,7 +697,14 @@ async function boot() {
     // sebelumnya belum selesai; tanpa `.catch` reaksi itu batal dan aplikasi
     // macet di layar "Memuat aplikasi kasir…". Abaikan — layar sudah termuat.
     await showPage('loading.html').catch(() => {});
+    // Hangatkan server aplikasi lokal BERSAMAAN dengan cek login, bukan
+    // sesudahnya, supaya aplikasi tampil lebih cepat. `loadApp()` nanti memakai
+    // origin yang sudah siap ini (ensureLocalServer meng-cache hasilnya).
+    const warm = Promise.resolve()
+      .then(() => (offlineMode() ? ensureLocalServer() : ''))
+      .catch(() => '');
     const res = await login(serial, { timeout: cached ? 8000 : 25000 });
+    await warm;
 
     if (res.ok) {
       await loadApp();
