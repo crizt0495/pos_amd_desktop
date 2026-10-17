@@ -30,8 +30,9 @@ const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-deskt
 // Sesi Chromium IN-MEMORY (tanpa awalan `persist:`). Login memakai cookie
 // Supabase; partisi lama `persist:kasirpro` menuliskannya sebagai plaintext ke
 // `%APPDATA%\KasirPro POS\Partitions\kasirpro\Cookies` — satu kelas dengan
-// temuan F-005. Karena `boot()` selalu login ulang via Serial Key saat start,
-// sesi tidak perlu bertahan di disk. Folder lama dibersihkan sekali oleh
+// temuan F-005. Aplikasi memakai sesi login tersimpan (`authSession` di
+// secrets.json) untuk mengakses Supabase dari renderer, jadi cookie tidak perlu
+// bertahan di disk. Folder lama dibersihkan sekali oleh
 // `purgeLegacyPersistedSession()` (lihat SECURITY_VERSION).
 const PARTITION = 'kasirpro';
 const PAGES_DIR = path.join(__dirname, 'pages');
@@ -428,7 +429,7 @@ function loginDirect(server, body, guardMs) {
         try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* bukan JSON */ }
         if (!j || typeof j !== 'object') { done({ ambiguous: true, status: res.statusCode }); return; }
         if (res.statusCode >= 200 && res.statusCode < 300 && j.ok) { done({ ok: true, json: j }); return; }
-        done({ ok: false, message: j.message || `Login gagal (HTTP ${res.statusCode}).` });
+        done({ ok: false, status: res.statusCode, message: j.message || `Login gagal (HTTP ${res.statusCode}).` });
       });
       res.on('error', () => done({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' }));
     });
@@ -495,7 +496,7 @@ function loginViaPage(server, body, guardMs) {
         } else if (result && result.status === 0) {
           finish({ ok: false, offline: true, message: 'Tidak bisa menghubungi server.' });
         } else {
-          finish({ ok: false, message: (result && result.json && result.json.message) || `Login gagal (HTTP ${result && result.status}).` });
+          finish({ ok: false, status: (result && result.status) || 0, message: (result && result.json && result.json.message) || `Login gagal (HTTP ${result && result.status}).` });
         }
       } catch (err) {
         finish({ ok: false, message: `Login gagal: ${err.message}` });
@@ -534,6 +535,49 @@ async function login(serial, opts = {}) {
     return { ok: true };
   }
   return res || { ok: false, message: 'Login gagal.' };
+}
+
+/**
+ * True bila server MENOLAK serial secara pasti (serial salah/hangus/dipindah ke
+ * perangkat lain). Bedakan dari masalah sementara (jaringan mati, HTTP 5xx, 429)
+ * supaya serial yang masih sah tidak ikut dibuang hanya karena server sibuk.
+ */
+function licenseRejected(res) {
+  return !!res && !res.ok && !res.offline && (res.status === 401 || res.status === 403);
+}
+
+/**
+ * Buka aplikasi LANGSUNG memakai status login yang tersimpan, lalu verifikasi
+ * lisensi ke server di LATAR BELAKANG (tidak memblokir tampilnya aplikasi).
+ *
+ * Ini yang membuat "masukkan serial sekali, buka lagi tidak perlu login" jadi
+ * nyata: kasir tidak menunggu pemeriksaan lisensi online saat membuka aplikasi.
+ * Verifikasi tetap berjalan — bila server menolak serial, barulah minta input
+ * ulang; bila hanya offline, aplikasi tetap jalan dalam masa tenggang.
+ */
+let verifyInFlight = false;
+function startCachedThenVerify(serial) {
+  if (!verifyInFlight) {
+    verifyInFlight = true;
+    login(serial, { timeout: 8000 })
+      .then((res) => {
+        if (res && res.ok) {
+          console.log('[app] lisensi terverifikasi (latar belakang).');
+          // Sesi baru sudah tersimpan — dorong sinkronisasi yang tertunda.
+          sendCommand('sync-now');
+          return;
+        }
+        if (licenseRejected(res)) {
+          console.warn('[app] lisensi ditolak server:', res && res.message);
+          setSecret('serialKey', '');
+          return showSetup({ mode: 'first', error: (res && res.message) || 'Serial Key tidak valid. Masukkan kembali.' });
+        }
+        console.log('[app] verifikasi lisensi tertunda (offline/server sibuk) — memakai masa tenggang.');
+      })
+      .catch(() => { /* abaikan: verifikasi latar belakang tidak boleh mengganggu */ })
+      .finally(() => { verifyInFlight = false; });
+  }
+  return loadApp();
 }
 
 /** Cek server terjangkau (untuk halaman offline). */
@@ -689,9 +733,17 @@ async function boot() {
       return;
     }
 
-    // Sudah pernah aktivasi & data lokal tersedia → jangan biarkan kasir
-    // menunggu lama saat internet mati; coba login dengan batas singkat.
+    // Sudah pernah aktivasi & data lokal tersedia → tampilkan aplikasi SEKARANG,
+    // tanpa menunggu pemeriksaan lisensi online (verifikasi jalan di latar
+    // belakang). Inilah yang membuat buka-ulang tidak perlu login lagi.
     const cached = offlineStartAllowed();
+    if (cached) {
+      await startCachedThenVerify(serial);
+      bootAttempts = 0;
+      return;
+    }
+
+    // Belum pernah aktivasi (atau masa tenggang habis) → verifikasi dulu.
     // createWindow() sudah memuat loading.html untuk memicu `ready-to-show`.
     // Memuatnya ulang di sini kadang memicu ERR_ABORTED (-3) karena navigasi
     // sebelumnya belum selesai; tanpa `.catch` reaksi itu batal dan aplikasi
@@ -703,7 +755,7 @@ async function boot() {
     const warm = Promise.resolve()
       .then(() => (offlineMode() ? ensureLocalServer() : ''))
       .catch(() => '');
-    const res = await login(serial, { timeout: cached ? 8000 : 25000 });
+    const res = await login(serial, { timeout: 25000 });
     await warm;
 
     if (res.ok) {
@@ -722,8 +774,9 @@ async function boot() {
       bootAttempts = 0;
       return;
     }
-    // Serial salah / hangus — buang lalu minta input ulang.
-    setSecret('serialKey', '');
+    // Serial salah / hangus — buang lalu minta input ulang. Masalah sementara
+    // (5xx/jaringan) tidak membuang serial supaya tidak perlu input ulang.
+    if (licenseRejected(res)) setSecret('serialKey', '');
     await showSetup({ mode: 'first', error: res.message || 'Serial Key tidak valid. Masukkan kembali.' });
     bootAttempts = 0;
   } catch (err) {
@@ -750,8 +803,12 @@ async function loadAppSafe() {
     return;
   }
   const cached = offlineStartAllowed();
+  if (cached) {
+    await startCachedThenVerify(serial);
+    return;
+  }
   await showPage('loading.html');
-  const res = await login(serial, { timeout: cached ? 8000 : 25000 });
+  const res = await login(serial, { timeout: 25000 });
   if (res.ok) {
     await loadApp();
   } else if (res.offline && offlineStartAllowed()) {
@@ -759,7 +816,7 @@ async function loadAppSafe() {
   } else if (res.offline) {
     await showOffline(offlinePageReason());
   } else {
-    setSecret('serialKey', '');
+    if (licenseRejected(res)) setSecret('serialKey', '');
     await showSetup({ mode: 'first', error: res.message });
   }
 }
