@@ -198,6 +198,8 @@ let offlineTimer = null;
 let booting = false;
 let loadingApp = false;
 let db = null;
+/** Penghitung percobaan boot yang gagal — supaya aplikasi tidak macet/loop. */
+let bootAttempts = 0;
 
 // ---------------------------------------------------------------------------
 // Database lokal (SQLite) — mode offline-first (lihat desktop/OFFLINE.md)
@@ -616,25 +618,44 @@ async function boot() {
     // Sudah pernah aktivasi & data lokal tersedia → jangan biarkan kasir
     // menunggu lama saat internet mati; coba login dengan batas singkat.
     const cached = offlineStartAllowed();
-    await showPage('loading.html');
+    // createWindow() sudah memuat loading.html untuk memicu `ready-to-show`.
+    // Memuatnya ulang di sini kadang memicu ERR_ABORTED (-3) karena navigasi
+    // sebelumnya belum selesai; tanpa `.catch` reaksi itu batal dan aplikasi
+    // macet di layar "Memuat aplikasi kasir…". Abaikan — layar sudah termuat.
+    await showPage('loading.html').catch(() => {});
     const res = await login(serial, { timeout: cached ? 8000 : 25000 });
 
     if (res.ok) {
       await loadApp();
+      bootAttempts = 0;
       return;
     }
     if (res.offline) {
       if (offlineStartAllowed()) {
         console.log('[app] offline: memakai aplikasi + data lokal.');
         await loadApp();
+        bootAttempts = 0;
         return;
       }
       await showOffline(offlinePageReason());
+      bootAttempts = 0;
       return;
     }
     // Serial salah / hangus — buang lalu minta input ulang.
     setSecret('serialKey', '');
     await showSetup({ mode: 'first', error: res.message || 'Serial Key tidak valid. Masukkan kembali.' });
+    bootAttempts = 0;
+  } catch (err) {
+    // Jangan pernah biarkan aplikasi macet di layar pemuatan (tanpa akun, tanpa
+    // pesan). Catat lalu coba lagi beberapa kali; bila tetap gagal, tunjukkan
+    // halaman offline yang punya tombol coba-lagi sendiri.
+    console.error('[app] boot gagal:', err && err.message);
+    bootAttempts += 1;
+    if (bootAttempts <= 3) {
+      setTimeout(() => { void boot(); }, 2000);
+    } else {
+      await showOffline(offlinePageReason()).catch(() => {});
+    }
   } finally {
     booting = false;
   }
