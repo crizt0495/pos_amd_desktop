@@ -580,6 +580,28 @@ function startCachedThenVerify(serial) {
   return loadApp();
 }
 
+/**
+ * Panaskan tumpukan jaringan Electron (mulai Chromium network service +
+ * negosiasi DNS/TLS) SEBELUM kasir menekan tombol login.
+ *
+ * Tanpa ini, permintaan jaringan PERTAMA aplikasi — yaitu verifikasi lisensi —
+ * memikul seluruh biaya inisialisasi (biasanya 1-3 detik), sehingga layar
+ * "Memeriksa lisensi…" terasa sangat lama. Setelah hangat, login hanya
+ * ~150-250 ms. Murni optimasi: kegagalannya diabaikan.
+ */
+let warmedServer = '';
+function warmUpNetwork() {
+  const server = serverUrl();
+  if (warmedServer === server) return;
+  warmedServer = server;
+  try {
+    const req = net.request({ method: 'GET', url: `${server}/login`, session: ses });
+    req.on('response', (res) => { res.on('data', () => {}); res.on('end', () => {}); res.on('error', () => {}); });
+    req.on('error', () => { /* abaikan — hanya pemanasan */ });
+    req.end();
+  } catch { /* abaikan — hanya pemanasan */ }
+}
+
 /** Cek server terjangkau (untuk halaman offline). */
 function reachable() {
   return new Promise((resolve) => {
@@ -635,6 +657,9 @@ async function showOffline(reason) {
 }
 
 async function showSetup(opts = {}) {
+  // Panaskan jaringan selagi kasir membaca/mengetik serial, supaya tombol
+  // "Aktifkan & Masuk" tidak menunggu inisialisasi jaringan.
+  warmUpNetwork();
   const query = {};
   if (opts.mode) query.mode = opts.mode;
   if (opts.error) query.error = opts.error;
@@ -1378,6 +1403,9 @@ if (gotLock) {
     ses = session.fromPartition(PARTITION);
     Menu.setApplicationMenu(null);
     deviceId();
+    // Panaskan jaringan lebih awal supaya login pertama tidak menunggu
+    // inisialisasi jaringan (lihat warmUpNetwork).
+    warmUpNetwork();
     // Amankan rahasia (token sesi, serial, password): pindah ke secrets.json +
     // enkripsi at-rest via safeStorage. Harus setelah app ready karena
     // safeStorage bergantung pada keyring/DPAPI OS.
