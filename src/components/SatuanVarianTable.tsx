@@ -4,6 +4,7 @@ import * as React from 'react';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 
 import { RupiahInput } from '@/components/RupiahInput';
+import { SatuanSelect } from '@/components/SatuanSelect';
 import { useClickCooldown } from '@/lib/useButtonGuard';
 import {
   parseRupiah,
@@ -157,25 +158,26 @@ export function SatuanVarianTable({
                         Tombol [+] menambah satuan baru langsung ke master.
                         Dropdown + [+] selalu satu baris, tinggi sama (h-9). */}
                     <div className="flex items-center gap-1.5">
-                      <select
-                        className={`input h-9 min-w-0 flex-1 rounded-md text-[12.5px] ${
-                          salah || isKembar || !b.satuan.trim() ? '!border-[#e03131]' : ''
-                        }`}
+                      <SatuanSelect
+                        invalid={salah || isKembar || !b.satuan.trim()}
                         value={b.satuan}
-                        aria-label={`Satuan baris ${i + 1}`}
-                        onChange={(e) => ubah(i, { satuan: e.target.value })}
-                      >
-                        <option value="">— pilih satuan —</option>
-                        {opsiSatuan.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                        {b.satuan &&
-                        !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase()) ? (
-                          <option value={b.satuan}>{b.satuan} (di luar master)</option>
-                        ) : null}
-                      </select>
+                        ariaLabel={`Satuan baris ${i + 1}`}
+                        onChange={(v) => ubah(i, { satuan: v })}
+                        options={[
+                          '',
+                          ...opsiSatuan,
+                          ...(b.satuan &&
+                          !opsiSatuan.some((o) => o.trim().toLowerCase() === b.satuan.trim().toLowerCase())
+                            ? [b.satuan]
+                            : []),
+                        ]}
+                        optionLabel={(v) =>
+                          v &&
+                          !opsiSatuan.some((o) => o.trim().toLowerCase() === v.trim().toLowerCase())
+                            ? `${v} (di luar master)`
+                            : v
+                        }
+                      />
                       {onTambahSatuan ? (
                         <button
                           type="button"
