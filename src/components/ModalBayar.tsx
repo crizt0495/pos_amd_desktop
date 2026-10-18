@@ -94,7 +94,7 @@ export function ModalBayar({
   const nonTunai = method !== 'cash';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#10365c]/45 backdrop-blur-[2px] sm:items-center sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#10365c]/45 sm:items-center sm:p-6">
       <div
         role="dialog"
         aria-modal="true"

@@ -1,6 +1,6 @@
 {
   "name": "kasirpro-pos",
-  "version": "1.0.0",
+  "version": "2.2.6",
   "private": true,
   "description": "KasirPro POS — aplikasi kasir web (layout desktop) di-host Vercel",
   "scripts": {

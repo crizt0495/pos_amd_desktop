@@ -30,7 +30,10 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#10365c]/45 p-4 backdrop-blur-[2px] sm:p-6"
+      /* backdrop-blur sengaja TIDAK dipakai: backdrop-filter pada ancestor
+         <select> membuat popup dropdown native tidak tampil di Chromium/
+         Electron ("dropdown tidak bisa diklik"). Cukup scrim gelap. */
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#10365c]/45 p-4 sm:p-6"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
