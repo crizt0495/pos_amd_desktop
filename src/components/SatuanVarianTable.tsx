@@ -172,10 +172,11 @@ export function SatuanVarianTable({
                             : []),
                         ]}
                         optionLabel={(v) =>
-                          v &&
-                          !opsiSatuan.some((o) => o.trim().toLowerCase() === v.trim().toLowerCase())
-                            ? `${v} (di luar master)`
-                            : v
+                          !v
+                            ? '— pilih satuan —'
+                            : !opsiSatuan.some((o) => o.trim().toLowerCase() === v.trim().toLowerCase())
+                              ? `${v} (di luar master)`
+                              : v
                         }
                       />
                       {onTambahSatuan ? (

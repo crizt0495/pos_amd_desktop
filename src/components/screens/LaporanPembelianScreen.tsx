@@ -16,6 +16,7 @@ import {
 import { purchasesApi, suppliersApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah } from '@/lib/format';
 import { cetakHtml, esc, unduhExcel } from '@/lib/ekspor';
+import { Select } from '@/components/Select';
 import { useToast } from '@/components/Toast';
 import { useClickCooldown } from '@/lib/useButtonGuard';
 import type { PurchaseReportData, Supplier } from '@/lib/types';
@@ -235,19 +236,17 @@ export default function LaporanPembelianScreen() {
           />
         </div>
 
-        <select
-          className="input h-8 w-[180px] cursor-pointer text-[12px]"
+        <Select
+          className="input h-8 cursor-pointer text-[12px]"
+          wrapperClassName="relative w-[180px] shrink-0"
+          ariaLabel="Filter supplier"
           value={supplier}
-          onChange={(e) => setSupplier(e.target.value)}
-          aria-label="Filter supplier"
-        >
-          <option value="">Semua Supplier</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.name}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+          onChange={setSupplier}
+          options={[
+            { value: '', label: 'Semua Supplier' },
+            ...suppliers.map((s) => ({ value: s.name, label: s.name })),
+          ]}
+        />
       </div>
 
       {/* ------------------------------ isi ------------------------------- */}

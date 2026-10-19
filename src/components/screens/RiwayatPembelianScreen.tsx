@@ -17,6 +17,7 @@ import {
 
 import { purchasesApi, suppliersApi } from '@/lib/api';
 import { angka, isoHariIni, isoHariLalu, rupiah, tanggalWaktu } from '@/lib/format';
+import { Select } from '@/components/Select';
 import { cetakHtml, esc } from '@/lib/ekspor';
 import { useToast } from '@/components/Toast';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
@@ -200,19 +201,17 @@ export default function RiwayatPembelianScreen() {
           />
         </div>
 
-        <select
-          className="input h-8 w-[180px] cursor-pointer text-[12px]"
+        <Select
+          className="input h-8 cursor-pointer text-[12px]"
+          wrapperClassName="relative w-[180px] shrink-0"
+          ariaLabel="Filter supplier"
           value={supplier}
-          onChange={(e) => setSupplier(e.target.value)}
-          aria-label="Filter supplier"
-        >
-          <option value="">Semua Supplier</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.name}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+          onChange={setSupplier}
+          options={[
+            { value: '', label: 'Semua Supplier' },
+            ...suppliers.map((s) => ({ value: s.name, label: s.name })),
+          ]}
+        />
 
         <div className="relative min-w-[200px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9fb0c4]" />

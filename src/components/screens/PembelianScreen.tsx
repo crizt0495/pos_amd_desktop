@@ -7,6 +7,7 @@ import { History, ListChecks, Loader2, PackageSearch, Plus, Sparkles, Truck, X }
 
 import { productsApi, purchasesApi, satuanApi, suppliersApi } from '@/lib/api';
 import { angka, rupiah, satuanOptions } from '@/lib/format';
+import { Select } from '@/components/Select';
 import { RupiahInput } from '@/components/RupiahInput';
 import { Modal } from '@/components/Modal';
 import { TeleponInput } from '@/components/TeleponInput';
@@ -478,26 +479,24 @@ export default function PembelianScreen() {
               Supplier
             </label>
             <div className="flex gap-1.5">
-              <select
+              <Select
                 id="cari-supplier"
-                className="frm-key min-w-0 flex-1 cursor-pointer"
+                className="frm-key cursor-pointer"
+                wrapperClassName="relative min-w-0 flex-1"
+                ariaLabel="Supplier"
                 value={supplierName}
-                onChange={(e) => {
-                  const n = e.target.value;
+                onChange={(n) => {
                   setSupplierName(n);
                   setSupplierId(suppliers.find((s) => s.name === n)?.id ?? null);
                 }}
-              >
-                <option value="">— pilih supplier —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-                {supplierName && !suppliers.some((s) => s.name === supplierName) ? (
-                  <option value={supplierName}>{supplierName}</option>
-                ) : null}
-              </select>
+                options={[
+                  { value: '', label: '— pilih supplier —' },
+                  ...suppliers.map((s) => ({ value: s.name, label: s.name })),
+                  ...(supplierName && !suppliers.some((s) => s.name === supplierName)
+                    ? [{ value: supplierName, label: supplierName }]
+                    : []),
+                ]}
+              />
               <button
                 type="button"
                 onClick={() => {
@@ -657,21 +656,17 @@ export default function PembelianScreen() {
                     <td className="px-2 py-2 text-zinc-400">{i + 1}</td>
                     <td className="px-2 py-2 font-medium">{b.name}</td>
                     <td className="px-2 py-1">
-                      <select
+                      <Select
                         className="w-full cursor-pointer rounded-md border border-transparent bg-transparent px-1.5 py-1 text-zinc-600 transition hover:border-zinc-300 focus:border-[#1b5fa8] focus:bg-white"
+                        wrapperClassName="relative min-w-0 w-full"
+                        ariaLabel={`Satuan ${b.name}`}
                         value={nilai}
-                        aria-label={`Satuan ${b.name}`}
-                        onChange={(e) => ubah(i, { unit: e.target.value })}
-                      >
-                        {nilai && !opsi.includes(nilai) ? (
-                          <option value={nilai}>{nilai}</option>
-                        ) : null}
-                        {opsi.map((u) => (
-                          <option key={u} value={u}>
-                            {u}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => ubah(i, { unit: v })}
+                        options={[
+                          ...(nilai && !opsi.includes(nilai) ? [{ value: nilai, label: nilai }] : []),
+                          ...opsi.map((u) => ({ value: u, label: u })),
+                        ]}
+                      />
                     </td>
                     <td className="px-2 py-2">
                       <RupiahInput
@@ -723,15 +718,18 @@ export default function PembelianScreen() {
                 <label className="frm-label" htmlFor="status-bayar">
                   Pembayaran
                 </label>
-                <select
+                <Select
                   id="status-bayar"
                   className="frm-key cursor-pointer"
+                  wrapperClassName="relative min-w-0 w-full"
+                  ariaLabel="Pembayaran"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as PurchaseStatus)}
-                >
-                  <option value="lunas">Lunas</option>
-                  <option value="hutang">Hutang</option>
-                </select>
+                  onChange={(v) => setStatus(v as PurchaseStatus)}
+                  options={[
+                    { value: 'lunas', label: 'Lunas' },
+                    { value: 'hutang', label: 'Hutang' },
+                  ]}
+                />
               </div>
               <div className="min-w-[180px] flex-1">
                 <label className="frm-label" htmlFor="catatan">
@@ -805,21 +803,19 @@ export default function PembelianScreen() {
           <div>
             <label className="label">Satuan</label>
             <div className="flex items-center gap-1.5">
-              <select
-                className="input min-w-0 flex-1 cursor-pointer"
+              <Select
+                className="input cursor-pointer"
+                wrapperClassName="relative min-w-0 flex-1"
+                ariaLabel="Satuan"
                 value={baru.unit}
-                aria-label="Satuan"
-                onChange={(e) => setBaru({ ...baru, unit: e.target.value })}
-              >
-                {!opsiSatuan.includes(baru.unit) && baru.unit ? (
-                  <option value={baru.unit}>{baru.unit}</option>
-                ) : null}
-                {opsiSatuan.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setBaru({ ...baru, unit: v })}
+                options={[
+                  ...(!opsiSatuan.includes(baru.unit) && baru.unit
+                    ? [{ value: baru.unit, label: baru.unit }]
+                    : []),
+                  ...opsiSatuan.map((u) => ({ value: u, label: u })),
+                ]}
+              />
               <button
                 type="button"
                 onClick={() => {

@@ -18,6 +18,7 @@ import {
 
 import { customersApi, nextInvoicePreview, productsApi, satuanApi, settingsApi, shiftsApi, transactionsApi } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
+import { Select } from '@/components/Select';
 import { draftDel, draftGet, draftSet } from '@/lib/localStore';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
 import {
@@ -1366,22 +1367,21 @@ export default function KasirScreen() {
               Pelanggan
             </label>
             <div className="flex gap-1">
-              <select
+              <Select
                 id="pelanggan"
-                className="frm-input min-w-0 flex-1"
+                className="frm-input"
+                wrapperClassName="relative min-w-0 flex-1"
+                ariaLabel="Pelanggan"
                 value={customer}
-                onChange={(e) => setCustomer(e.target.value)}
-              >
-                <option value="Umum">Umum</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-                {customer !== 'Umum' && !customers.some((c) => c.name === customer) ? (
-                  <option value={customer}>{customer}</option>
-                ) : null}
-              </select>
+                onChange={setCustomer}
+                options={[
+                  { value: 'Umum', label: 'Umum' },
+                  ...customers.map((c) => ({ value: c.name, label: c.name })),
+                  ...(customer !== 'Umum' && !customers.some((c) => c.name === customer)
+                    ? [{ value: customer, label: customer }]
+                    : []),
+                ]}
+              />
               <button
                 type="button"
                 onClick={() => ui.run(() => setTambahPlgOpen(true), 'kasir-plg')}
@@ -1523,20 +1523,19 @@ export default function KasirScreen() {
                     ) : null}
                   </td>
                   <td className="td p-0">
-                    <select
+                    <Select
                       className="cell !w-[84px]"
+                      wrapperClassName="relative min-w-0"
+                      ariaLabel={`Satuan baris ${i + 1}`}
                       value={units.includes(satuanBaris) ? satuanBaris : units[0]}
-                      onChange={(e) => ubahSatuan(i, e.target.value)}
-                    >
-                      {!units.includes(satuanBaris) && satuanBaris ? (
-                        <option value={satuanBaris}>{satuanBaris}</option>
-                      ) : null}
-                      {units.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => ubahSatuan(i, v)}
+                      options={[
+                        ...(!units.includes(satuanBaris) && satuanBaris
+                          ? [{ value: satuanBaris, label: satuanBaris }]
+                          : []),
+                        ...units.map((u) => ({ value: u, label: u })),
+                      ]}
+                    />
                   </td>
                   <td className="td tnum text-right text-[#9fb0c4]">{rupiah(l.cost)}</td>
                   <td className="td p-0">

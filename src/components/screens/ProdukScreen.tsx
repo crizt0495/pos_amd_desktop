@@ -22,6 +22,7 @@ import { productsApi, satuanApi, stockApi } from '@/lib/api';
 import { exportProductsCsv, produkInputDariBaris, unduhTeks, type ParsedProdukRow } from '@/lib/csv';
 import { CsvImportModal, type ImportResult } from '@/components/CsvImportModal';
 import { KartuStokModal } from '@/components/KartuStokModal';
+import { Select } from '@/components/Select';
 import { StokMasukModal } from '@/components/StokMasukModal';
 import { StokOpnameModal } from '@/components/StokOpnameModal';
 import { normalisasiVarian, varianKeJson, validasiVarian, type VarianBaris } from '@/lib/format';
@@ -799,21 +800,20 @@ export default function ProdukScreen() {
                 Kategori
               </label>
               <div className="flex gap-1.5">
-                <select
+                <Select
                   id="p-category"
                   className="input"
+                  wrapperClassName="relative min-w-0 flex-1"
+                  ariaLabel="Kategori"
                   value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                >
-                  {!kategoriList.includes(form.category) ? (
-                    <option value={form.category}>{form.category || 'Umum'}</option>
-                  ) : null}
-                  {kategoriList.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, category: v })}
+                  options={[
+                    ...(!kategoriList.includes(form.category)
+                      ? [{ value: form.category, label: form.category || 'Umum' }]
+                      : []),
+                    ...kategoriList.map((k) => ({ value: k, label: k })),
+                  ]}
+                />
                 <button
                   type="button"
                   onClick={() => ui.run(() => setKategoriModal(true), 'kategori-tambah')}

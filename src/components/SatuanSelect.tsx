@@ -52,6 +52,14 @@ export function SatuanSelect({
     setIdx(i >= 0 ? i : 0);
   }, [value, options, open]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    // Pindahkan fokus ke opsi aktif saat terbuka (aksesibilitas keyboard).
+    const el = boxRef.current?.querySelector('[role="option"][aria-selected="true"] button') as HTMLButtonElement | null;
+    el?.focus({ preventScroll: true });
+  }, [open, idx]);
+
+
   const pilih = (v: string) => {
     onChange(v);
     setOpen(false);
@@ -70,7 +78,7 @@ export function SatuanSelect({
         data-testid={ariaLabel}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ' || e.key === ' ') {
             e.preventDefault();
             if (!open) setOpen(true);
           } else if (e.key === 'Escape') {
@@ -106,6 +114,7 @@ export function SatuanSelect({
                   type="button"
                   onClick={() => pilih(o)}
                   onMouseEnter={() => setIdx(i)}
+                  tabIndex={-1}
                   className={`flex w-full items-center px-2.5 py-1.5 text-left text-[12.5px] ${
                     o === value ? 'bg-[#eaf2fb] font-semibold text-[#1b5fa8]' : i === idx ? 'bg-[#f1f5fa]' : ''
                   } text-[#22374b]`}

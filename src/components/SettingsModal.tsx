@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 import { productsApi, satuanApi, settingsApi } from '@/lib/api';
+import { Select } from '@/components/Select';
 import { useButtonGuard } from '@/lib/useButtonGuard';
 import {
   bacaTampilan,
@@ -549,25 +550,24 @@ export function SettingsModal({
                   Kategori tertentu
                 </label>
                 {paten.cakupan === 'kategori' ? (
-                  <select
+                  <Select
                     className="input"
-                    aria-label="Kategori yang mendapat diskon paten"
+                    wrapperClassName="relative min-w-0 w-full"
+                    ariaLabel="Kategori yang mendapat diskon paten"
                     value={paten.kategori}
-                    onChange={(e) => ubahPaten({ kategori: e.target.value })}
-                  >
-                    <option value="">
-                      {kategoriMuat
-                        ? kategori.length
-                          ? '-- pilih kategori --'
-                          : 'Belum ada produk berkategori'
-                        : 'Memuat kategori…'}
-                    </option>
-                    {kategori.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => ubahPaten({ kategori: v })}
+                    options={[
+                      {
+                        value: '',
+                        label: kategoriMuat
+                          ? kategori.length
+                            ? '-- pilih kategori --'
+                            : 'Belum ada produk berkategori'
+                          : 'Memuat kategori…',
+                      },
+                      ...kategori.map((k) => ({ value: k, label: k })),
+                    ]}
+                  />
                 ) : null}
               </div>
             </div>
@@ -631,37 +631,31 @@ export function SettingsModal({
                 </button>
               ) : null}
             </div>
-            <select
+            <Select
               className="input cursor-pointer"
+              wrapperClassName="relative min-w-0 w-full"
+              ariaLabel="Printer"
               value={printer.nama}
-              onChange={(e) => ubahPrinter({ nama: e.target.value })}
-            >
-              <option value="System Printer">System Printer (default perangkat)</option>
-              {terdeteksi.length ? (
-                <optgroup label="Printer terdeteksi di perangkat">
-                  {terdeteksi.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.name}
-                      {p.isDefault ? ' (default)' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-              {printer.namaManual.length ? (
-                <optgroup label="Ditambahkan manual">
-                  {printer.namaManual.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-              {printer.nama !== 'System Printer' &&
-              !terdeteksi.some((p) => p.name === printer.nama) &&
-              !printer.namaManual.includes(printer.nama) ? (
-                <option value={printer.nama}>{printer.nama}</option>
-              ) : null}
-            </select>
+              onChange={(v) => ubahPrinter({ nama: v })}
+              options={[
+                { value: 'System Printer', label: 'System Printer (default perangkat)' },
+                ...terdeteksi.map((p) => ({
+                  value: p.name,
+                  label: `${p.name}${p.isDefault ? ' (default)' : ''}`,
+                  group: 'Printer terdeteksi di perangkat',
+                })),
+                ...printer.namaManual.map((n) => ({
+                  value: n,
+                  label: n,
+                  group: 'Ditambahkan manual',
+                })),
+                ...(printer.nama !== 'System Printer' &&
+                !terdeteksi.some((p) => p.name === printer.nama) &&
+                !printer.namaManual.includes(printer.nama)
+                  ? [{ value: printer.nama, label: printer.nama }]
+                  : []),
+              ]}
+            />
             {isDesktop && terdeteksi.length ? (
               <p className="text-[10.5px] font-semibold text-[#0ca678]">
                 ✓ {terdeteksi.length} printer terdeteksi otomatis dari perangkat.
@@ -947,19 +941,16 @@ export function SettingsModal({
             <label className="label" htmlFor="s-posisi">
               Posisi
             </label>
-            <select
+            <Select
               id="s-posisi"
               className="input"
+              wrapperClassName="relative min-w-0 w-full"
+              ariaLabel="Posisi"
               value={tampilan.posisi}
               disabled={!tampilan.aktif}
-              onChange={(e) => ubahPosisi(e.target.value)}
-            >
-              {OPSI_POSISI.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              onChange={ubahPosisi}
+              options={OPSI_POSISI.map((o) => ({ value: o.value, label: o.label }))}
+            />
             <p className="mt-1 text-[10.5px] text-[#93a5b9]">
               Pilih &ldquo;Floating&rdquo; lalu seret kotaknya di layar kasir — posisinya tersimpan
               otomatis.
