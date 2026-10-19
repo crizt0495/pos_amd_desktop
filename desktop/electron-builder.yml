@@ -25,10 +25,10 @@ win:
 
 nsis:
   oneClick: true
-  perMachine: false
+  perMachine: true
   allowElevation: true
   allowToChangeInstallationDirectory: false
-  createDesktopShortcut: true
+  createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: KasirPro POS
   installerIcon: build/icon.ico
