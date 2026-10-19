@@ -35,6 +35,7 @@ nsis:
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
   deleteAppDataOnUninstall: false
+  include: build/installer.nsh
   runAfterFinish: true
   artifactName: KasirPro-Setup-Windows.exe
 
