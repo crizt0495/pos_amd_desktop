@@ -72,14 +72,18 @@ export function Select({
     if (!b) return;
     const r = b.getBoundingClientRect();
     const gap = 4;
+    let left = r.left;
+    const w = Math.max(120, r.width);
+    if (left + w > window.innerWidth - gap) left = window.innerWidth - gap - w;
+    if (left < gap) left = gap;
     const below = window.innerHeight - r.bottom - gap - 8;
     const above = r.top - gap - 8;
-    const up = below < 170 && above > below;
-    const maxH = Math.max(120, Math.min(320, up ? above : below));
+    const up = below < 180 && above > below;
+    const maxH = Math.max(110, Math.min(340, up ? above : below));
     setPos(
       up
-        ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + gap, maxH }
-        : { left: r.left, width: r.width, top: r.bottom + gap, maxH },
+        ? { left, width: w, bottom: window.innerHeight - r.top + gap, maxH }
+        : { left, width: w, top: r.bottom + gap, maxH },
     );
   }, []);
 
@@ -145,7 +149,7 @@ export function Select({
             ref={menuRef}
             role="listbox"
             aria-label={ariaLabel}
-            className={`fixed z-[9999] overflow-auto rounded border border-[#1b5fa8] bg-white py-0.5 shadow-[0_8px_24px_rgba(27,58,92,0.18)] ${menuClassName ?? ''}`}
+            className={`fixed z-[100000] overflow-auto rounded border border-[#1b5fa8] bg-white py-0.5 shadow-[0_8px_24px_rgba(27,58,92,0.18)] ${menuClassName ?? ''}`}
             style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: pos.maxH }}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') nav(1);
