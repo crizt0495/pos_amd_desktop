@@ -732,7 +732,7 @@ export default function ProdukScreen() {
         open={open}
         title={editing ? 'Ubah Produk' : 'Tambah Produk'}
         onClose={() => !simpan.busy && setOpen(false)}
-        width="max-w-4xl"
+        width="max-w-5xl"
         footer={
           <>
             <button type="button" className="btn-outline" onClick={() => setOpen(false)} disabled={simpan.busy}>
@@ -761,7 +761,7 @@ export default function ProdukScreen() {
             simpanProduk();
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label" htmlFor="p-name">
                 Nama Produk *
