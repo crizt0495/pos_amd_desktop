@@ -1,8 +1,8 @@
 # Konfigurasi build installer KasirPro POS (Electron + electron-builder).
-# Output: release/KasirPro-Setup-Windows.exe  (1 file installer, Windows x64)
+# Output: release/KasirPro-POS-Setup-v${version}.exe  (1 file installer, Windows x64)
 appId: app.kasirpro.pos
 productName: KasirPro POS
-copyright: Copyright (c) 2026 KasirPro
+copyright: Copyright © 2026 KasirPro Indonesia
 
 directories:
   output: release
@@ -21,23 +21,27 @@ win:
       arch:
         - x64
   icon: build/icon.ico
-  legalTrademarks: KasirPro POS
+  legalTrademarks: KasirPro
+  publisherName: KasirPro Indonesia
+  fileDescription: Aplikasi Kasir UMKM - KasirPro POS
 
 nsis:
   oneClick: true
   perMachine: true
   allowElevation: true
   allowToChangeInstallationDirectory: false
+  requestedExecutionLevel: requireAdministrator
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: KasirPro POS
+  uninstallDisplayName: KasirPro POS
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
-  deleteAppDataOnUninstall: false
+  artifactName: KasirPro-POS-Setup-v${version}.${ext}
   include: build/installer.nsh
-  runAfterFinish: true
-  artifactName: KasirPro-Setup-Windows.exe
 
 # Auto-update sederhana: electron-updater membaca latest.yml dari GitHub Releases.
 publish:

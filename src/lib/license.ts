@@ -14,7 +14,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  */
 
 export const APP_NAME = 'KasirPro POS';
-export const APP_VERSION = '2.0.0';
+import { APP_VERSION as _APP_VERSION } from './version';
+export const APP_VERSION = _APP_VERSION;
 export const DEMO_SERIAL = 'KPRO-DEMO-AAAA-0001';
 const DEMO_PREFIX = 'KPRO-DEMO-';
 

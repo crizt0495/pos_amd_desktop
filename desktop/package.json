@@ -1,11 +1,11 @@
 {
   "name": "kasirpro-pos-desktop",
   "productName": "KasirPro POS",
-  "version": "2.3.3",
-  "description": "KasirPro POS — aplikasi kasir desktop Windows (Electron) untuk https://pos-amd-desktop.vercel.app",
+  "version": "2.3.4",
+  "description": "Aplikasi Kasir UMKM - KasirPro POS",
   "author": {
-    "name": "KasirPro",
-    "email": "support@kasirpro.app"
+    "name": "KasirPro Indonesia",
+    "email": "support@kasirpro.id"
   },
   "license": "UNLICENSED",
   "private": true,
@@ -18,7 +18,8 @@
     "dist": "electron-builder --win nsis --x64 --publish never",
     "dist:publish": "electron-builder --win nsis --x64 --publish always",
     "dist:dir": "electron-builder --win --dir --x64",
-    "test": "node test/engine.test.cjs && node test/sync.test.cjs && node test/secrets.test.cjs"
+    "test": "node test/engine.test.cjs && node test/sync.test.cjs && node test/secrets.test.cjs",
+    "version:patch": "npm version patch --no-git-tag-version"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
@@ -28,5 +29,68 @@
   "devDependencies": {
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.kasirpro.pos",
+    "productName": "KasirPro POS",
+    "copyright": "Copyright © 2026 KasirPro Indonesia",
+    "artifactName": "KasirPro-POS-Setup-v${version}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "asar": true,
+    "compression": "maximum",
+    "forceCodeSigning": false,
+    "files": [
+      "src/**/*",
+      "pages/**/*",
+      "preload.js",
+      "secrets.cjs",
+      "localServer.cjs",
+      "app/**/*",
+      "!**/*.map",
+      "!**/node_modules/.cache"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "legalTrademarks": "KasirPro",
+      "publisherName": "KasirPro Indonesia",
+      "fileDescription": "Aplikasi Kasir UMKM - KasirPro POS"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": false,
+      "requestedExecutionLevel": "requireAdministrator",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "KasirPro POS",
+      "uninstallDisplayName": "KasirPro POS",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "KasirPro-POS-Setup-v${version}.${ext}",
+      "include": "build/installer.nsh"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "crizt0495",
+        "repo": "pos_amd_desktop",
+        "releaseType": "release"
+      }
+    ]
   }
 }

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 import { productsApi, satuanApi, settingsApi } from '@/lib/api';
+import { APP_VERSION } from '@/lib/version';
 import { Select } from '@/components/Select';
 import { useButtonGuard } from '@/lib/useButtonGuard';
 import {
@@ -1066,6 +1067,9 @@ export function SettingsModal({
               placeholder="Kasir"
             />
           </div>
+          <p className="mt-3 text-[10.5px] text-[#9fb0c4]">
+            KasirPro POS v{APP_VERSION} — © 2026 KasirPro Indonesia
+          </p>
         </form>
       )}
     </Modal>
