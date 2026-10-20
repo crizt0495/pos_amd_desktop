@@ -22,15 +22,13 @@ win:
         - x64
   icon: build/icon.ico
   legalTrademarks: KasirPro
-  publisherName: KasirPro Indonesia
-  fileDescription: Aplikasi Kasir UMKM - KasirPro POS
+  requestedExecutionLevel: requireAdministrator
 
 nsis:
   oneClick: true
   perMachine: true
   allowElevation: true
   allowToChangeInstallationDirectory: false
-  requestedExecutionLevel: requireAdministrator
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: KasirPro POS

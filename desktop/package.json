@@ -1,7 +1,7 @@
 {
   "name": "kasirpro-pos-desktop",
   "productName": "KasirPro POS",
-  "version": "2.3.4",
+  "version": "2.3.5",
   "description": "Aplikasi Kasir UMKM - KasirPro POS",
   "author": {
     "name": "KasirPro Indonesia",
@@ -63,15 +63,13 @@
       ],
       "icon": "build/icon.ico",
       "legalTrademarks": "KasirPro",
-      "publisherName": "KasirPro Indonesia",
-      "fileDescription": "Aplikasi Kasir UMKM - KasirPro POS"
+      "requestedExecutionLevel": "requireAdministrator"
     },
     "nsis": {
       "oneClick": true,
       "perMachine": true,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": false,
-      "requestedExecutionLevel": "requireAdministrator",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "KasirPro POS",
