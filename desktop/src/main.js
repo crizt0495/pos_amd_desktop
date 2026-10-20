@@ -26,7 +26,19 @@ const { createEngine } = require('./db/engine.cjs');
 const { startLocalServer } = require('./localServer.cjs');
 const { createSecrets } = require('./secrets.cjs');
 
-const DEFAULT_SERVER = process.env.KASIRPRO_SERVER_URL || 'https://pos-amd-desktop.vercel.app';
+// URL server TIDAK disimpan di config.json (agar tidak terlihat di Notepad++).
+// Disimpan ter-obfuscate (base64) di kode yang ter-compile (app.asar).
+function getServerUrl() {
+  if (process.env.KASIRPRO_SERVER_URL) {
+    return String(process.env.KASIRPRO_SERVER_URL).replace(/\/+$/, '');
+  }
+  const b64 = 'aHR0cHM6Ly9wb3MtYW1kLWRlc2t0b3AudmVyY2VsLmFwcA==';
+  try {
+    return Buffer.from(b64, 'base64').toString('utf8').replace(/\/+$/, '');
+  } catch {
+    return 'https://pos-amd-desktop.vercel.app';
+  }
+}
 // Sesi Chromium IN-MEMORY (tanpa awalan `persist:`). Login memakai cookie
 // Supabase; partisi lama `persist:kasirpro` menuliskannya sebagai plaintext ke
 // `%APPDATA%\KasirPro POS\Partitions\kasirpro\Cookies` — satu kelas dengan
@@ -47,11 +59,9 @@ const store = new Store({
   name: 'config',
   defaults: {
     storeName: 'Toko',
-    serverUrl: DEFAULT_SERVER,
     printerName: '',
     pageSize: '80mm',
     deviceName: '',
-    deviceId: '',
     localDb: true,
     // True hanya bila pemilik sengaja mengubah mode lokal lewat menu tray.
     // Dipakai supaya mode lokal (SQLite) tetap menyala secara default.
@@ -75,7 +85,7 @@ const secretStore = new Store({ name: 'secrets' });
 if (wantReset) {
   store.clear();
   try { secretStore.clear(); } catch { /* abaikan */ }
-  store.set('deviceId', randomUUID());
+  setSecret('deviceId', randomUUID());
 }
 
 // Mode offline-first (SQLite) menyala otomatis begitu bundel aplikasi lokal
@@ -96,17 +106,35 @@ try {
   }
 } catch { /* abaikan */ }
 
-/** HWID stabil per instalasi (dipakai lisensi: 1 key = 1 perangkat). */
+/**
+ * Migrasi config lama: buang serverUrl/deviceId/localId/localDeviceId dari
+ * config.json. URL server sekarang ada di kode ter-compile; HWID di secrets.
+ */
+function migrateConfigClean() {
+  try {
+    const oldDeviceId = String(store.get('deviceId') || '').trim();
+    if (oldDeviceId) setSecret('deviceId', oldDeviceId);
+    for (const k of ['serverUrl', 'deviceId', 'localId', 'localDeviceId']) {
+      if (store.has(k)) store.delete(k);
+    }
+  } catch (err) {
+    console.warn('[config] migrasi gagal:', err && err.message);
+  }
+}
+
+/** HWID stabil per instalasi (dipakai lisensi: 1 key = 1 perangkat). Disimpan
+ *  di secrets.json (terenkripsi), BUKAN config.json. */
 function deviceId() {
-  let id = String(store.get('deviceId') || '').trim();
+  let id = String(getSecret('deviceId') || '').trim();
   if (!id) {
     id = randomUUID();
-    store.set('deviceId', id);
+    setSecret('deviceId', id);
   }
   return id;
 }
 
-const serverUrl = () => String(store.get('serverUrl') || DEFAULT_SERVER).replace(/\/+$/, '');
+// (serverUrl lama diganti getServerUrl() — lihat atas). Alias untuk kompatibilitas.
+const serverUrl = getServerUrl;
 
 // ---------------------------------------------------------------------------
 // Penyimpanan rahasia (token sesi, serial key, password owner)
@@ -123,7 +151,7 @@ const serverUrl = () => String(store.get('serverUrl') || DEFAULT_SERVER).replace
 //   2 -> + hapus sesi Chromium lama yang tersimpan plaintext di disk.
 const SECURITY_VERSION = 2;
 
-const secrets = createSecrets({ store: secretStore, safeStorage });
+const secrets = createSecrets({ store: secretStore, safeStorage, keys: ['authSession', 'serialKey', 'ownerPassword', 'deviceId'] });
 const getSecret = (key) => secrets.get(key);
 const setSecret = (key, value) => secrets.set(key, value);
 
@@ -1463,6 +1491,7 @@ if (gotLock) {
     // keberadaan `kasir.db` di log aplikasi.
     ensureUserDataDir();
     ensureLicenseFile();
+    migrateConfigClean();
     logDatabasePath();
     logAppPaths();
     initDb();
