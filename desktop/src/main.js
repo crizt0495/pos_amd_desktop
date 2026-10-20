@@ -253,6 +253,48 @@ function logDatabasePath() {
   );
 }
 
+/**
+ * Pastikan folder data di AppData (userData) ada — supaya database & file
+ * kunci (license.hwid) tidak pernah ditulis ke folder install Program Files
+ * (Windows memproteksi tulis di sana). Dipanggil saat start.
+ */
+function ensureUserDataDir() {
+  try {
+    const dir = app.getPath('userData');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    console.warn('[paths] gagal membuat folder data:', err && err.message);
+  }
+}
+
+/** Lokasi file hardware ID (lisensi) — di AppData, BUKAN Program Files. */
+function getLicensePath() {
+  return path.join(app.getPath('userData'), 'license.hwid');
+}
+
+/** Buat file license.hwid bila belum ada (isi = device id / HWID). */
+function ensureLicenseFile() {
+  try {
+    const p = getLicensePath();
+    if (!fs.existsSync(p)) {
+      const id = (os.hostname() || 'KASIRPRO') + '-' + (os.userInfo().username || 'user');
+      fs.writeFileSync(p, String(id).trim() + '\\n', 'utf8');
+      console.log('[license] membuat file HWID:', p);
+    }
+  } catch (err) {
+    console.warn('[license] gagal membuat license.hwid:', err && err.message);
+  }
+}
+
+/** Catat semua path penting ke log (untuk debug/About). */
+function logAppPaths() {
+  const ud = app.getPath('userData');
+  console.log('[paths] userData (AppData):', ud);
+  console.log('[paths] database :', getDatabasePath());
+  console.log('[paths] license  :', getLicensePath());
+  console.log('[paths] config   :', path.join(ud, 'config.json'));
+}
+
 /** Buka database lokal bila mode lokal aktif. Aman dipanggil berkali-kali. */
 function initDb() {
   if (db || !dbEnabled()) return;
@@ -1094,6 +1136,13 @@ function createTray() {
 // ---------------------------------------------------------------------------
 function registerIpc() {
   ipcMain.handle('desktop:version', () => app.getVersion());
+  // Path file penting (DB & lisensi) — ditampilkan di About / debug.
+  ipcMain.handle('desktop:paths', () => ({
+    userData: app.getPath('userData'),
+    database: getDatabasePath(),
+    license: getLicensePath(),
+    config: path.join(app.getPath('userData'), 'config.json'),
+  }));
 
   // ---------------------- database lokal (offline-first) ---------------------
   // Renderer memakai shim `src/lib/supabase/local.ts` → diteruskan ke sini.
@@ -1412,7 +1461,10 @@ if (gotLock) {
     migrateSecrets();
     // Catat lokasi file database lebih dulu supaya pemilik bisa memverifikasi
     // keberadaan `kasir.db` di log aplikasi.
+    ensureUserDataDir();
+    ensureLicenseFile();
     logDatabasePath();
+    logAppPaths();
     initDb();
     try { if (db && store.get('localUserId')) db.setUserId(String(store.get('localUserId'))); } catch (e) {}
     createWindow();

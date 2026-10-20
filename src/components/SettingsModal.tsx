@@ -84,6 +84,7 @@ export function SettingsModal({
     storePhone: '',
     cashierName: '',
   });
+  const [appPaths, setAppPaths] = React.useState<{ userData: string; database: string; license: string; config: string } | null>(null);
   const simpanGuard = useButtonGuard();
   const saving = simpanGuard.busy;
 
@@ -100,6 +101,16 @@ export function SettingsModal({
       // Nilai lama bisa berisi tanda hubung/spasi (mis. "0812-3456-7890"). Bersihkan
       // saat dibaca supaya yang tampil di input — lalu ikut tersimpan — angka murni.
       setForm({ storeName, storeAddress, storePhone: bersihkanTelepon(storePhone), cashierName });
+      // Ambil path file penting (DB & lisensi) saat desktop mode.
+      try {
+        const d = (window as any)?.kasirproDesktop;
+        if (d && typeof d.paths === 'function') {
+          const p = await d.paths();
+          setAppPaths(p);
+        }
+      } catch {
+        /* abaikan */
+      }
     })();
   }, [open]);
 
@@ -1070,6 +1081,13 @@ export function SettingsModal({
           <p className="mt-3 text-[10.5px] text-[#9fb0c4]">
             KasirPro POS v{APP_VERSION} — © 2026 KasirPro Indonesia
           </p>
+          {appPaths ? (
+            <div className="mt-2 rounded-md bg-[#f6f9fd] p-2 text-[10px] font-mono text-[#4a5b70]">
+              <p>DB: {appPaths.database}</p>
+              <p>Lisensi: {appPaths.license}</p>
+              <p>Config: {appPaths.config}</p>
+            </div>
+          ) : null}
         </form>
       )}
     </Modal>

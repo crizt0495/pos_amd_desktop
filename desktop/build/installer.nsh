@@ -2,6 +2,8 @@
 ; Tujuan: sebelum install, coba hapus otomatis instalasi lama (KasirPro POS
 ; versi per-user / "Bagas POS") agar tidak menumpuk.
 !macro customInit
+  ; Buat folder data di AppData otomatis (supaya DB & lisensi tidak di Program Files).
+  CreateDirectory "$APPDATA\\KasirPro POS"
   ; Hapus instalasi lama KasirPro POS (per-user, versi lama perMachine=false)
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\app.kasirpro.pos" "UninstallString"
   ${If} $0 != ""

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('kasirproDesktop', {
     }
   })(),
   version: () => ipcRenderer.invoke('desktop:version'),
+  paths: () => ipcRenderer.invoke('desktop:paths'),
   submitSerial: (serial) => ipcRenderer.invoke('desktop:submit-serial', String(serial || '')),
   owner: (payload) => ipcRenderer.invoke('desktop:owner', payload || {}),
   retry: () => ipcRenderer.invoke('desktop:retry'),
