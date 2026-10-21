@@ -21,6 +21,13 @@
 
     <p class="hint">Serial Key dibuat oleh toko Anda di KasirPro Portal → Aktivasi.
       Setelah aktif, aplikasi akan masuk otomatis tanpa mengetik ulang.</p>
+
+    <div style="margin-top:14px; text-align:center;">
+      <button id="restoreBtn" type="button" style="background:#eef3f9; color:#1b5fa8; border:1px solid #cdd8e6; padding:8px 16px; border-radius:8px; font-weight:700; cursor:pointer;">
+        &#x2601; RESTORE DATA (pindah perangkat)
+      </button>
+      <p style="font-size:11px; color:#9fb0c4; margin-top:6px;">Pilih file .zip hasil backup untuk mengembalikan data.</p>
+    </div>
   </div>
   <script>
     var params = new URLSearchParams(location.search);
@@ -61,6 +68,18 @@
     });
 
     inputEl.addEventListener('input', function () { errorEl.style.display = 'none'; });
+
+    document.getElementById('restoreBtn').addEventListener('click', async function () {
+      try {
+        var d = window.kasirproDesktop;
+        if (!d || typeof d.restorePick !== 'function') { alert('Restore hanya tersedia di aplikasi desktop.'); return; }
+        var pick = await d.restorePick();
+        if (!pick || !pick.ok || !pick.path) { if (pick && !pick.cancelled) alert('Gagal memilih file.'); return; }
+        var res = await d.restore(pick.path);
+        if (res && res.ok) { alert('Restore berhasil. Aplikasi akan restart.'); }
+        else if (res && !res.cancelled) { alert('Restore gagal: ' + ((res && res.error) || 'unknown')); }
+      } catch (e) { alert('Tidak bisa menghubungi aplikasi desktop.'); }
+    });
   </script>
 </body>
 </html>

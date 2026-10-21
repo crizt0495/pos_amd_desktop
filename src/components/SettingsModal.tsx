@@ -3,6 +3,8 @@
 import * as React from 'react';
 import {
   BadgePercent,
+  CloudDownload,
+  CloudUpload,
   Eye,
   Loader2,
   Monitor,
@@ -64,7 +66,7 @@ type Form = {
   cashierName: string;
 };
 
-type Tab = 'toko' | 'diskon' | 'tampilan' | 'printer' | 'satuan';
+type Tab = 'toko' | 'diskon' | 'tampilan' | 'printer' | 'satuan' | 'backup';
 
 /** Pengaturan toko (tersimpan per akun) + preferensi tampilan layar kasir. */
 export function SettingsModal({
@@ -445,6 +447,7 @@ export function SettingsModal({
             { id: 'tampilan' as const, label: 'Tampilan', Icon: Monitor },
             { id: 'printer' as const, label: 'Printer', Icon: PrinterIcon },
             { id: 'satuan' as const, label: 'Satuan', Icon: Ruler },
+            { id: 'backup' as const, label: 'Backup', Icon: CloudUpload },
           ] satisfies { id: Tab; label: string; Icon: typeof Store }[]
         ).map((t) => (
           <button
@@ -1090,6 +1093,73 @@ export function SettingsModal({
           ) : null}
         </form>
       )}
+      {tab === 'backup' ? (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
+            <CloudUpload className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Backup menyimpan database & lisensi ke file .zip. Restore dipakai saat pindah perangkat.
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn-primary w-full"
+            onClick={async () => {
+              try {
+                const d = (window as any)?.kasirproDesktop;
+                if (!d || typeof d.backup !== 'function') {
+                  toast.error('Backup', 'Fitur backup hanya tersedia di aplikasi desktop.');
+                  return;
+                }
+                const res = await d.backup();
+                if (res && res.ok) {
+                  toast.ok('Backup Berhasil', `Simpan file ini baik-baik: ${res.fileName}`);
+                } else {
+                  toast.error('Backup Gagal', (res && res.error) || 'Gagal membuat backup.');
+                }
+              } catch (e) {
+                toast.error('Backup Gagal', 'Tidak bisa menghubungi aplikasi desktop.');
+              }
+            }}
+          >
+            <CloudUpload className="h-4 w-4" /> BACKUP DATA
+          </button>
+          <button
+            type="button"
+            className="btn-outline w-full"
+            onClick={async () => {
+              try {
+                const d = (window as any)?.kasirproDesktop;
+                if (!d || typeof d.restorePick !== 'function') {
+                  toast.error('Restore', 'Fitur restore hanya tersedia di aplikasi desktop.');
+                  return;
+                }
+                const pick = await d.restorePick();
+                if (!pick || !pick.ok || !pick.path) {
+                  if (pick && !pick.cancelled) toast.error('Restore', 'Gagal memilih file.');
+                  return;
+                }
+                const res = await d.restore(pick.path);
+                if (res && res.ok) {
+                  toast.ok('Restore Berhasil', 'Aplikasi akan restart.');
+                } else if (res && !res.cancelled) {
+                  toast.error('Restore Gagal', (res && res.error) || 'Gagal restore data.');
+                }
+              } catch (e) {
+                toast.error('Restore Gagal', 'Tidak bisa menghubungi aplikasi desktop.');
+              }
+            }}
+          >
+            <CloudDownload className="h-4 w-4" /> RESTORE DATA
+          </button>
+          {appPaths ? (
+            <div className="rounded-md bg-[#f6f9fd] p-2 text-[10px] font-mono text-[#4a5b70]">
+              <p>DB: {appPaths.database}</p>
+              <p>Lisensi: {appPaths.license}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </Modal>
 
     {/* ------------------- modal tambah/ubah master satuan ------------------- */}

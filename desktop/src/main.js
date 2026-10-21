@@ -1431,6 +1431,134 @@ function registerIpc() {
   });
   ipcMain.on('desktop:open-owner', () => openOwner());
   ipcMain.handle('desktop:quit', () => { app.isQuiting = true; app.quit(); });
+
+  // ---------------------- BACKUP & RESTORE -------------------------------
+  ipcMain.handle('desktop:backup', async () => {
+    try {
+      const archiver = require('archiver');
+      const storeName = String(store.get('storeName') || 'Toko').trim() || 'Toko';
+      const safeName = storeName.replace(/[^a-zA-Z0-9_-]/g, '');
+      const d = new Date();
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const fileName = `KasirPro-Backup-${safeName}-${dd}-${mm}-${yyyy}.zip`;
+      const outPath = path.join(app.getPath('downloads'), fileName);
+
+      const dbPath = getDatabasePath();
+      const licensePath = getLicensePath();
+      const configPath = path.join(app.getPath('userData'), 'config.json');
+
+      // checksum sederhana (sha256) untuk integritas
+      const crypto = require('crypto');
+      const dbBuf = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : Buffer.alloc(0);
+      const checksum = crypto.createHash('sha256').update(dbBuf).digest('hex');
+
+      const output = fs.createWriteStream(outPath);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      const done = new Promise((resolve, reject) => {
+        output.on('close', resolve);
+        archive.on('error', reject);
+      });
+      archive.pipe(output);
+
+      if (fs.existsSync(dbPath)) archive.file(dbPath, { name: 'kasir.db' });
+      if (fs.existsSync(licensePath)) archive.file(licensePath, { name: 'license.hwid' });
+      if (fs.existsSync(configPath)) archive.file(configPath, { name: 'config.json' });
+      archive.append(JSON.stringify({ checksum, storeName, date: d.toISOString(), appVersion: app.getVersion() }, null, 2), { name: 'manifest.json' });
+      await archive.finalize();
+      await done;
+
+      return { ok: true, path: outPath, fileName };
+    } catch (err) {
+      console.error('[backup] gagal:', err && err.message);
+      return { ok: false, error: String(err && err.message) };
+    }
+  });
+
+  ipcMain.handle('desktop:restore', async (_e, zipPath) => {
+    try {
+      const extract = require('extract-zip');
+      const crypto = require('crypto');
+      const tmpDir = path.join(app.getPath('temp'), 'kp-restore-' + Date.now());
+      fs.mkdirSync(tmpDir, { recursive: true });
+      await extract(zipPath, { dir: tmpDir });
+
+      const dbFile = path.join(tmpDir, 'kasir.db');
+      if (!fs.existsSync(dbFile)) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        return { ok: false, error: 'File backup tidak valid: kasir.db tidak ditemukan.' };
+      }
+
+      // validasi checksum (jika ada manifest)
+      const manifestPath = path.join(tmpDir, 'manifest.json');
+      if (fs.existsSync(manifestPath)) {
+        try {
+          const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (m.checksum) {
+            const buf = fs.readFileSync(dbFile);
+            const actual = crypto.createHash('sha256').update(buf).digest('hex');
+            if (actual !== m.checksum) {
+              try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+              return { ok: false, error: 'Checksum tidak cocok — file backup mungkin rusak/diedit.' };
+            }
+          }
+        } catch { /* abaikan validasi manifest */ }
+      }
+
+      // konfirmasi user
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Batal', 'Ya, Restore'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Restore Data',
+        message: 'Yakin restore? Data sekarang akan tertimpa. Lanjutkan?',
+        detail: 'Database lokal akan diganti dengan data dari backup. Aplikasi akan restart setelah restore.',
+      });
+      if (response !== 1) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        return { ok: false, cancelled: true };
+      }
+
+      // tutup DB dulu
+      try { closeDb(); } catch {}
+      const dbPath = getDatabasePath();
+      const backupDb = dbPath + '.bak';
+      if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, backupDb);
+      fs.copyFileSync(dbFile, dbPath);
+
+      const licSrc = path.join(tmpDir, 'license.hwid');
+      const licDst = getLicensePath();
+      if (fs.existsSync(licSrc)) fs.copyFileSync(licSrc, licDst);
+
+      const cfgSrc = path.join(tmpDir, 'config.json');
+      const cfgDst = path.join(app.getPath('userData'), 'config.json');
+      if (fs.existsSync(cfgSrc)) fs.copyFileSync(cfgSrc, cfgDst);
+
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+      // restart
+      app.isQuiting = true;
+      app.relaunch();
+      app.quit();
+
+      return { ok: true, needRestart: true };
+    } catch (err) {
+      console.error('[restore] gagal:', err && err.message);
+      return { ok: false, error: String(err && err.message) };
+    }
+  });
+
+  ipcMain.handle('desktop:restore-pick', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Pilih file backup KasirPro',
+      filters: [{ name: 'Backup KasirPro', extensions: ['zip'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths || !filePaths[0]) return { ok: false, cancelled: true };
+    return { ok: true, path: filePaths[0] };
+  });
 }
 
 // ---------------------------------------------------------------------------
