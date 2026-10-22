@@ -1014,7 +1014,7 @@ export function SettingsModal({
             </div>
           ) : null}
         </div>
-      ) : (
+      ) : tab === 'toko' ? (
         <form
           className="space-y-3"
           onSubmit={(e) => {
@@ -1092,7 +1092,7 @@ export function SettingsModal({
             </div>
           ) : null}
         </form>
-      )}
+      ) : null}
       {tab === 'backup' ? (
         <div className="space-y-3">
           <div className="flex items-start gap-2 rounded-lg bg-[#f6f9fd] p-2.5 text-[11.5px] text-[#5b6b80]">
