@@ -90,7 +90,7 @@ export function LoginForm({ next, demoKey }: { next: string; demoKey: string }) 
             device_name: (
               typeof navigator !== 'undefined' ? navigator.userAgent : 'Web Browser'
             ).slice(0, 120),
-            app_version: '2.3.8',
+            app_version: '2.3.9',
             next,
           }),
         });
