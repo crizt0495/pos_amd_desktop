@@ -122,14 +122,107 @@ function migrateConfigClean() {
   }
 }
 
-/** HWID stabil per instalasi (dipakai lisensi: 1 key = 1 perangkat). Disimpan
- *  di secrets.json (terenkripsi), BUKAN config.json. */
+/** ID dari SKEMA LAMA (<= 2.3.11): UUID acak di secrets.json. Dipasang sebagai
+ *  `legacy_device_id` di body login supaya server bisa memindahkan kunci
+ *  lisensi lama ke HWID baru tanpa campur tangan admin. */
+function legacyDeviceId() {
+  return String(getSecret('deviceId') || '').trim();
+}
+
+/** Baca HWID yang dicadangkan di registry Windows (HKCU). HKCU tidak ikut
+ *  terhapus saat pemilik membersihkan folder AppData, jadi biasanya masih ada. */
+function regGetHwid() {
+  if (process.platform !== 'win32') return '';
+  try {
+    const out = require('child_process')
+      .execFileSync(
+        'reg',
+        ['query', 'HKCU\\Software\\KasirPro POS', '/v', 'hwid'],
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 },
+      )
+      .toString('utf8');
+    const m = out.match(/hwid\s+REG_SZ\s+(\S+)/i);
+    return m ? m[1] : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Cadangkan HWID ke registry Windows (HKCU\Software\KasirPro POS).
+ *  Berlapis: machine-id (MachineGuid HKLM) + registry + file — salah satu
+ *  sumber tetap hidup meski folder Roaming dibersihkan. */
+function regSetHwid(id) {
+  if (process.platform !== 'win32' || !id) return;
+  try {
+    require('child_process').execFileSync(
+      'reg',
+      ['add', 'HKCU\\Software\\KasirPro POS', '/v', 'hwid', '/t', 'REG_SZ', '/d', String(id), '/f'],
+      { stdio: 'ignore', timeout: 8000 },
+    );
+    console.log('[license] HWID dicadangkan ke registry Windows (HKCU).');
+  } catch (err) {
+    console.warn('[license] gagal cadangkan HWID ke registry:', err && err.message);
+  }
+}
+
+/** HWID stabil dari motherboard/OS: MachineGuid via node-machine-id. */
+function stableHwidFromMachine() {
+  try {
+    const { machineIdSync } = require('node-machine-id');
+    const mid = machineIdSync({ original: true });
+    if (mid && /^\S{8,128}$/.test(mid)) {
+      return { id: String(mid).toUpperCase(), source: 'machine-id (MachineGuid)' };
+    }
+  } catch (err) {
+    console.warn('[license] machine-id tidak tersedia:', err && err.message);
+  }
+  const reg = regGetHwid();
+  if (reg && /^\S{8,128}$/.test(reg)) {
+    return { id: reg.toUpperCase(), source: 'registry backup' };
+  }
+  return null;
+}
+
+/** HWID untuk lisensi — SAMA di setiap install ulang pada perangkat yang
+ *  sama, meski folder AppData dihapus. Rantainya:
+ *   1. secrets: hwid yang sudah tersimpan (paling sinkron dengan server)
+ *   2. machine-id (MachineGuid HKLM) → tahan hapus AppData
+ *   3. cadangan registry HKCU
+ *   4. skema lama deviceId (v<=2.3.11, UUID acak) — diterima lagi
+ *      lewat `legacy_device_id` di proses aktivasi/server
+ *   5. UUID acak (terakhir) — dipersist segera supaya tetap stabil.
+ *  Nilai final selalu ditulis: secrets (enkripsi), file license.hwid, dan
+ *  registry HKCU sebagai cadangan. */
 function deviceId() {
-  let id = String(getSecret('deviceId') || '').trim();
+  const cached = String(getSecret('hwid') || '').trim();
+  if (cached) {
+    regSetHwid(cached);
+    return cached;
+  }
+
+  let id = '';
+  const stable = stableHwidFromMachine();
+  if (stable) {
+    id = stable.id;
+    console.log('[license] HWID stabil:', id, '(' + stable.source + ')');
+  }
+  if (!id) {
+    const legacy = legacyDeviceId();
+    if (legacy) {
+      id = legacy;
+      console.log('[license] HWID dari skema lama (deviceId):', id);
+    }
+  }
   if (!id) {
     id = randomUUID();
-    setSecret('deviceId', id);
+    console.warn('[license] HWID dihasilkan acak (semua sumber gagal) — dipersist agar konsisten.');
   }
+
+  setSecret('hwid', id);
+  try {
+    fs.writeFileSync(getLicensePath(), id + '\n', 'utf8');
+  } catch { /* gagal tulis file tak menghalangi */ }
+  regSetHwid(id);
   return id;
 }
 
@@ -151,7 +244,7 @@ const serverUrl = getServerUrl;
 //   2 -> + hapus sesi Chromium lama yang tersimpan plaintext di disk.
 const SECURITY_VERSION = 2;
 
-const secrets = createSecrets({ store: secretStore, safeStorage, keys: ['authSession', 'serialKey', 'ownerPassword', 'deviceId'] });
+const secrets = createSecrets({ store: secretStore, safeStorage, keys: ['authSession', 'serialKey', 'ownerPassword', 'deviceId', 'hwid'] });
 const getSecret = (key) => secrets.get(key);
 const setSecret = (key, value) => secrets.set(key, value);
 
@@ -300,17 +393,17 @@ function getLicensePath() {
   return path.join(app.getPath('userData'), 'license.hwid');
 }
 
-/** Buat file license.hwid bila belum ada (isi = device id / HWID). */
+/** Buat file license.hwid bila belum ada — isi = HWID stabil (deviceId()). */
 function ensureLicenseFile() {
   try {
     const p = getLicensePath();
-    if (!fs.existsSync(p)) {
-      const id = (os.hostname() || 'KASIRPRO') + '-' + (os.userInfo().username || 'user');
-      fs.writeFileSync(p, String(id).trim() + '\\n', 'utf8');
-      console.log('[license] membuat file HWID:', p);
+    const id = deviceId();
+    if (!fs.existsSync(p) || fs.readFileSync(p, 'utf8').trim() !== id) {
+      fs.writeFileSync(p, String(id).trim() + '\n', 'utf8');
+      console.log('[license] file HWID siap:', p);
     }
   } catch (err) {
-    console.warn('[license] gagal membuat license.hwid:', err && err.message);
+    console.warn('[license] gagal menyiapkan license.hwid:', err && err.message);
   }
 }
 
@@ -590,6 +683,9 @@ async function login(serial, opts = {}) {
   const body = JSON.stringify({
     serial_key: serial,
     device_id: deviceId(),
+    // skema lama (<= 2.3.11) — server pakai ini untuk memindahkan kunci lisensi
+    // yang masih terikat UUID lama ke HWID stabil baru (upgrade tanpa ribet).
+    legacy_device_id: legacyDeviceId(),
     device_name: (os.hostname() || 'Perangkat Kasir').slice(0, 120),
     app_version: app.getVersion(),
     next: '/kasir',
@@ -1564,6 +1660,113 @@ function registerIpc() {
 // ---------------------------------------------------------------------------
 // Auto-update (sederhana, dari GitHub release)
 // ---------------------------------------------------------------------------
+/**
+ * Lepaskan lisensi dari perangkat ini sendiri (Nonaktifkan Lisensi).
+ *
+ * Dipakai sebelum uninstall/pindah perangkat: app memanggil endpoint
+ * /api/auth/deactivate (server aplikasi) dengan serial + HWID — server hanya
+ * menerima PERMINTAAN dari perangkat yang memang TERIKAT (hwid
+ * sama dgn yang dikunci), lalu melepas kunci (status -> unused). Setelah
+ * sukses, token/serial lokal dibersihkan dan app dimulai ulang ke halaman
+ * aktivasi. Serial yang sama tetap dipakai di komputer mana pun.
+ */
+async function nonaktifkanLisensiPerangkat() {
+  const serial = String(getSecret('serialKey') || '').trim();
+  if (!serial) {
+    await dialog.showMessageBox(win || undefined, {
+      type: 'info',
+      title: 'Nonaktifkan Lisensi',
+      message: 'Belum ada lisensi aktif di perangkat ini.',
+      detail: 'Masukkan Serial Key di halaman aktivasi untuk memakai aplikasi. Tidak ada yang perlu dilepas.',
+    }).catch(() => {});
+    return;
+  }
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Batal', 'Ya, Nonaktifkan di Perangkat Ini'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Nonaktifkan Lisensi di Perangkat Ini',
+    message: 'Lepas lisensi dari perangkat ini?',
+    detail:
+      'Serial Key ' + serial + ' akan DILEPAS dari komputer ini (kunci perangkat di server dihapus). ' +
+      'Setelah itu Serial yang sama bisa diaktifkan lagi di komputer ini setelah install ulang maupun di desktop lain. ' +
+      'Pakai ini SEBELUM uninstall / sebelum memindah perangkat.',
+  });
+  if (response !== 1) return;
+
+  try {
+    const resp = await net.fetch(getServerUrl() + '/api/auth/deactivate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-KasirPro-Desktop': '1',
+      },
+      body: JSON.stringify({
+        serial_key: serial,
+        hwid: deviceId(),
+        device_name: (os.hostname() || 'Perangkat Kasir').slice(0, 120),
+        app_version: app.getVersion(),
+      }),
+    });
+    let j = {};
+    try { j = await resp.json(); } catch { /* respons non-JSON */ }
+    if (resp.ok && j.ok) {
+      // bersihkan sesi & serial — aktifasi ulang akan sepenuhnya baru
+      setSecret('authSession', null);
+      setSecret('serialKey', '');
+      console.log('[license] lisensi dilepas dari perangkat ini (sukses).');
+      await dialog.showMessageBox(win, {
+        type: 'info',
+        title: 'Lisensi Dilepas',
+        message: 'Lisensi berhasil dilepas dari perangkat ini.',
+        detail: 'Serial Key ' + serial + ' sekarang bisa diaktifkan lagi di komputer ini maupun di komputer lain.',
+      }).catch(() => {});
+      app.isQuiting = true;
+      app.relaunch();
+      app.quit();
+      return;
+    }
+    await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Gagal Menonaktifkan',
+      message: (j && j.message) || 'Server menolak permintaan nonaktif.',
+      detail: 'Jika masalah berlanjut, minta bantuan toko (admin) untuk reset perangkat melalui portal admin.',
+    }).catch(() => {});
+  } catch (err) {
+    console.warn('[license] gagal nonaktif:', err && err.message);
+    await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Nonaktifkan Lisensi',
+      message: 'Tidak bisa menghubungi server. Periksa koneksi internet lalu coba lagi.',
+    }).catch(() => {});
+  }
+}
+
+/** Menu aplikasi: Bantuan > Nonaktifkan Lisensi di Perangkat Ini. */
+function setupAppMenu() {
+  const template = [
+    {
+      label: 'Bantuan',
+      submenu: [
+        {
+          label: 'Nonaktifkan Lisensi di Perangkat Ini',
+          click: () => { void nonaktifkanLisensiPerangkat(); },
+        },
+        { type: 'separator' },
+        { label: 'KasirPro POS v' + app.getVersion(), enabled: false },
+      ],
+    },
+  ];
+  try {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    console.log('[menu] menu Bantuan terpasang (Nonaktifkan Lisensi tersedia).');
+  } catch (err) {
+    console.warn('[menu] gagal memasang menu:', err && err.message);
+  }
+}
+
 function setupAutoUpdate() {
   if (isDev || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
@@ -1607,7 +1810,6 @@ if (gotLock) {
   app.whenReady().then(() => {
     ses = session.fromPartition(PARTITION);
     Menu.setApplicationMenu(null);
-    deviceId();
     // Panaskan jaringan lebih awal supaya login pertama tidak menunggu
     // inisialisasi jaringan (lihat warmUpNetwork).
     warmUpNetwork();
@@ -1615,6 +1817,7 @@ if (gotLock) {
     // enkripsi at-rest via safeStorage. Harus setelah app ready karena
     // safeStorage bergantung pada keyring/DPAPI OS.
     migrateSecrets();
+    deviceId();
     // Catat lokasi file database lebih dulu supaya pemilik bisa memverifikasi
     // keberadaan `kasir.db` di log aplikasi.
     ensureUserDataDir();
@@ -1623,6 +1826,7 @@ if (gotLock) {
     logDatabasePath();
     logAppPaths();
     initDb();
+    setupAppMenu();
     try { if (db && store.get('localUserId')) db.setUserId(String(store.get('localUserId'))); } catch (e) {}
     createWindow();
     createTray();

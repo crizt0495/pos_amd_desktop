@@ -18,16 +18,23 @@ export const dynamic = 'force-dynamic';
  * POST /api/auth/login — login POS dengan SERIAL KEY (lisensi dari Portal).
  *
  * Body (form-urlencoded di halaman login, atau JSON untuk API):
- *   serial_key   : "KPRO-XXXX-XXXX-XXXX" (atau key demo KPRO-DEMO-*)
- *   device_id    : HWID browser (mis. UUID) — mengunci 1 key = 1 perangkat
- *   device_name? : label perangkat
- *   app_version? : versi aplikasi
- *   next?        : redirect tujuan
+ *   serial_key       : "KPRO-XXXX-XXXX-XXXX" (atau key demo KPRO-DEMO-*)
+ *   device_id        : HWID stabil perangkat (machine-id/registry) — 1 key = 1 device
+ *   legacy_device_id?: HWID skema lama (<= v2.3.11, UUID acak di secrets.json).
+ *                      Bila lisensi masih terikat nilai lama ini (upgrade dari
+ *                      versi lama di perangkat yang SAMA), kunci dipindahkan
+ *                      ke HWID baru tanpa campur tangan admin. Nilai ini hanya
+ *                      ada di secrets.json terenkripsi perangkat pemilik.
+ *   device_name?     : label perangkat
+ *   app_version?     : versi aplikasi
+ *   next?            : redirect tujuan
  *
  * Alur:
  *   1. normalisasi + validasi format serial key
  *   2. key non-demo -> RPC activate_license (portal) → ACTIVATED / ALREADY_ACTIVE
- *      (blocked/expired/hwid-mismatch => login ditolak dengan pesan sesuai)
+ *      (blocked/expired/hwid-mismatch => login ditolak dengan pesan sesuai;
+ *      HWID_MISMATCH + legacy_device_id cocok -> re-bind ke HWID baru,
+ *      kasus upgrade app di perangkat yang sama)
  *      key demo (KPRO-DEMO-*) -> langsung boleh, tanpa kunci perangkat
  *   3. siapkan akun GoTrue khusus lisensi (lihat src/lib/license.ts)
  *   4. signInWithPassword (sesi cookie) -> redirect ke next (/kasir)
@@ -68,6 +75,7 @@ export async function POST(req: Request) {
     raw = {
       serial_key: fd.get('serial_key'),
       device_id: fd.get('device_id'),
+      legacy_device_id: fd.get('legacy_device_id'),
       device_name: fd.get('device_name'),
       app_version: fd.get('app_version'),
       next: fd.get('next'),
@@ -83,6 +91,7 @@ export async function POST(req: Request) {
   const body = (raw ?? {}) as {
     serial_key?: unknown;
     device_id?: unknown;
+    legacy_device_id?: unknown;
     device_name?: unknown;
     app_version?: unknown;
     next?: unknown;
@@ -90,6 +99,7 @@ export async function POST(req: Request) {
 
   const serial = normalizeSerialKey(String(body.serial_key ?? ''));
   const deviceId = String(body.device_id ?? '').trim();
+  const legacyHwid = String(body.legacy_device_id ?? '').trim().toUpperCase();
   const deviceName = String(body.device_name ?? '').trim().slice(0, 120);
   const appVersion = String(body.app_version ?? '').trim().slice(0, 32);
   const next = safeNext(String(body.next ?? '/kasir'));
@@ -115,7 +125,30 @@ export async function POST(req: Request) {
   if (!demo) {
     const admin = createAdminClient();
     const hwid = deviceId.toUpperCase();
-    const result = await activateLicense(admin, serial, hwid, deviceName || 'Web Browser', appVersion || APP_VERSION);
+    let result = await activateLicense(admin, serial, hwid, deviceName || 'Web Browser', appVersion || APP_VERSION);
+
+    // Perangkat lama yang upgrade app: kunci server masih UUID acak skema lama.
+    // Bila permintaan datang membawa nilai legacy yang COCOK dengan HWID yang
+    // terkunci (hanya diketahui perangkat pemilik, dari secrets terenkripsi),
+    // pindahkan kunci ke HWID stabil baru lalu aktivasi ulang.
+    if (!result.ok && result.code === 'HWID_MISMATCH' && legacyHwid && legacyHwid !== hwid) {
+      const locked = String(
+        (result.data as Record<string, unknown> | null)?.hwid_locked ?? '',
+      ).trim().toUpperCase();
+      if (legacyHwid === locked) {
+        const { data: rebind, error: rebindErr } = await admin
+          .from('licenses')
+          .update({ hwid_locked: hwid, hwid_locked_at: new Date().toISOString() })
+          .eq('serial_key', serial)
+          .eq('hwid_locked', locked)
+          .eq('status', 'active')
+          .select('serial_key,status');
+        if (!rebindErr && rebind && rebind.length === 1) {
+          console.log(`[login] rebind skema lama -> HWID baru untuk ${serial}.`);
+          result = await activateLicense(admin, serial, hwid, deviceName || 'Web Browser', appVersion || APP_VERSION);
+        }
+      }
+    }
 
     if (!result.ok) {
       return fail(activationMessage(result.code, result.message), result.code === 'NETWORK' ? 500 : 403);
