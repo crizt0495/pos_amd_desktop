@@ -7,7 +7,7 @@
     "name": "KasirPro Indonesia",
     "email": "support@kasirpro.id"
   },
-  "license": "UNLICENSED",
+  "homepage": "https://github.com/crizt0495/pos_amd_desktop",
   "private": true,
   "main": "src/main.js",
   "scripts": {
@@ -36,7 +36,7 @@
   "build": {
     "appId": "app.kasirpro.pos",
     "productName": "KasirPro POS",
-    "copyright": "Copyright \u00a9 2026 KasirPro Indonesia",
+    "copyright": "Copyright © 2026 KasirPro Indonesia",
     "artifactName": "KasirPro-POS-Setup-v${version}.${ext}",
     "directories": {
       "output": "release",
