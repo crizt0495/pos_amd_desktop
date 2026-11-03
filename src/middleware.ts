@@ -15,30 +15,28 @@ export async function middleware(req: NextRequest) {
 
   let response = NextResponse.next({ request: { headers: req.headers } });
 
-  const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey || 'public-anon-key', {
-    cookies: {
-      getAll() {
-        return req.cookies.getAll();
-      },
-      setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-        cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
-        response = NextResponse.next({ request: { headers: req.headers } });
-        cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options as never),
-        );
-      },
-    },
-  });
+  const isProtected = PROTECTED.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const needAuth = isProtected || pathname === '/login';
 
   let user: { id: string } | null = null;
-  try {
-    const { data } = await supabase.auth.getUser();
-    user = data.user ?? null;
-  } catch {
-    user = null;
+  if (needAuth) {
+    const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey || 'public-anon-key', {
+      cookies: {
+        getAll() { return req.cookies.getAll(); },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
+          response = NextResponse.next({ request: { headers: req.headers } });
+          cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options as never));
+        },
+      },
+    });
+    try {
+      const { data } = await supabase.auth.getUser();
+      user = data.user ?? null;
+    } catch {
+      user = null;
+    }
   }
-
-  const isProtected = PROTECTED.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (isProtected && !user) {
     const url = req.nextUrl.clone();
