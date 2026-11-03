@@ -1,5 +1,7 @@
 # Konfigurasi build installer KasirPro POS (Electron + electron-builder).
-# Output: release/KasirPro-POS-Setup-v${version}.exe  (1 file installer, Windows x64)
+# Output:
+#   - Windows: release/KasirPro-POS-Setup-v${version}.exe (NSIS, x64)
+#   - Linux:  release/KasirPro_POS_${version}_amd64.deb (dpkg, x64)
 appId: app.kasirpro.pos
 productName: KasirPro POS
 copyright: Copyright © 2026 KasirPro Indonesia
@@ -23,6 +25,14 @@ win:
   icon: build/icon.ico
   legalTrademarks: KasirPro
   requestedExecutionLevel: requireAdministrator
+
+linux:
+  target:
+    - target: deb
+      arch:
+        - x64
+  icon: build/icon
+  category: Utility
 
 nsis:
   oneClick: true
