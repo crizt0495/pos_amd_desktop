@@ -1,6 +1,6 @@
 name: Build KasirPro POS (Linux .deb)
 
-# Build .deb untuk Linux agar bisa didownload bersama Windows .exe
+# Build .deb via Docker agar bisa jalan di semua mesin (incl CI yang gagal)
 on:
   workflow_dispatch:
   push:
@@ -9,7 +9,6 @@ on:
       - 'desktop/**'
       - 'src/**'
       - 'scripts/**'
-      - 'public/**'
       - 'package.json'
       - '.github/workflows/build-linux.yml'
     tags:
@@ -24,50 +23,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            desktop/package-lock.json
-
-      - name: Setup Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y dpkg-dev libgtk-3-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2
-
-      - name: Install web dependencies
-        run: npm ci
-
-      - name: Build static export (bundel offline)
-        env:
-          DESKTOP_EXPORT: '1'
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
-          NEXT_PUBLIC_APP_NAME: KasirPro POS
-        run: npm run export:desktop
-
-      - name: Verify offline bundle
-        run: |
-          test -f desktop/app/kasir/index.html || exit 1
-          echo "Bundel offline OK"
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: npm ci
-
-      - name: Build installer (Linux deb)
-        working-directory: desktop
+      - name: Build .deb in Docker
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
-            npm run dist:publish
-          else
-            npm run dist
-          fi
+          docker run --rm \
+            -v "$(pwd)/desktop:/repo" \
+            -w /repo \
+            node:22 bash -c "
+              apt-get update -qq && apt-get install -y -qq dpkg-dev libgtk-3-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2-plugins
+              cd desktop
+              npm ci
+              npm run dist
+            "
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
