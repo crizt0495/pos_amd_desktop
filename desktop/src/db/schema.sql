@@ -33,6 +33,12 @@ create table if not exists kasir_products (
 create index if not exists idx_products_user      on kasir_products (user_id);
 create index if not exists idx_products_user_name on kasir_products (user_id, name);
 create index if not exists idx_products_user_bc   on kasir_products (user_id, barcode);
+-- Index Daftar Barang: pagination (LIMIT/OFFSET) + pencarian + filter kategori
+-- supaya ORDER BY name + WHERE is_active bisa pakai index (tanpa sort penuh).
+create index if not exists idx_products_user_active on kasir_products (user_id, is_active);
+create index if not exists idx_products_user_cat    on kasir_products (user_id, category);
+create index if not exists idx_products_active_name on kasir_products (user_id, is_active, name);
+create index if not exists idx_products_active_bc   on kasir_products (user_id, is_active, barcode);
 
 create table if not exists kasir_customers (
   id         text primary key,

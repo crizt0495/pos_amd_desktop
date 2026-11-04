@@ -122,7 +122,70 @@ async function currentUserId(): Promise<string> {
 
 /* ------------------------------- produk ------------------------------- */
 
+/** Hasil query terpaginasi seragam: { data, total, page, total_pages }. */
+export interface Paged<T> {
+  data: T[];
+  total: number;
+  page: number;
+  total_pages: number;
+}
+
+/** Kolom ringkas untuk tabel Daftar Barang — TANPA `*` (tanpa kolom `variants`,
+ *  `satuan_list`, dsb) supaya payload tiap halaman kecil dan cepat. */
+const KOLOM_TABEL_BARANG =
+  'id, barcode, name, category, price, cost, stock, min_stock, is_active';
+
 export const productsApi = {
+  /**
+   * Daftar barang TERPAGINASI untuk menu Master Data > Daftar Barang.
+   *
+   * Server-side pagination: LIMIT/OFFSET dihitung di database (bukan mengambil
+   * seluruh tabel), hanya kolom tabel yang dikirim, dan `count: 'exact'`
+   * mengembalikan jumlah baris total untuk info "N barang" + total halaman.
+   * Menu Kasir/Pembelian tetap memakai `list()` (tidak berubah).
+   */
+  async listPaged(opts: {
+    search?: string;
+    page?: number;
+    limit?: number;
+    includeInactive?: boolean;
+    kategori?: string;
+  } = {}): Promise<Result<Paged<Product>>> {
+    try {
+      const limit = Math.min(Math.max(Math.floor(num(opts.limit) || 50), 1), 500);
+      const page = Math.max(Math.floor(num(opts.page) || 1), 1);
+      let q = createClient()
+        .from('kasir_products')
+        .select(KOLOM_TABEL_BARANG, { count: 'exact' });
+      if (!opts.includeInactive) q = q.eq('is_active', true);
+      if (opts.kategori && opts.kategori.trim()) q = q.eq('category', opts.kategori.trim());
+      const search = (opts.search ?? '').trim();
+      if (search) {
+        const s = search.replace(/\*/g, '\\*');
+        q = q.or(`name.ilike.*${s}*,barcode.ilike.*${s}*,category.ilike.*${s}*`);
+      }
+      const from = (page - 1) * limit;
+      const { data, error, count } = await q
+        .order('name', { ascending: true })
+        .range(from, from + limit - 1);
+      if (error) return { ok: false, error: error.message };
+      // Bila `count` tidak tersedia (engine lokal lama), pakai perkiraan
+      // (posisi halaman + jumlah baris halaman ini) agar paginasi tetap jalan.
+      const total = count ?? from + (data?.length ?? 0);
+      return {
+        ok: true,
+        data: {
+          data: (data ?? []).map(mapProduct),
+          total,
+          page,
+          total_pages: Math.max(1, Math.ceil(total / limit)),
+        },
+      };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
   async list(search = '', includeInactive = false): Promise<Result<Product[]>> {
     try {
       let q = createClient().from('kasir_products').select('*');

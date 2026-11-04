@@ -66,6 +66,10 @@ const varianKeBaris = (v: ReturnType<typeof normalisasiVarian>): VarianBaris[] =
   }));
 };
 
+/** Server-side pagination Daftar Barang: ukuran 1 halaman & debounce search. */
+const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 300;
+
 export default function ProdukScreen() {
   const toast = useToast();
   const simpan = useButtonGuard();
@@ -78,6 +82,12 @@ export default function ProdukScreen() {
   const [search, setSearch] = React.useState('');
   const [showInactive, setShowInactive] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
+  const [appending, setAppending] = React.useState(false);
+  const [total, setTotal] = React.useState(0);
+  const [page, setPage] = React.useState(1);
+  const [hasMore, setHasMore] = React.useState(false);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const reqRef = React.useRef(0);
 
   const [editing, setEditing] = React.useState<Product | null>(null);
   const [form, setForm] = React.useState<FormState>(EMPTY);
@@ -108,23 +118,58 @@ export default function ProdukScreen() {
   const [satuanBaru, setSatuanBaru] = React.useState({ nama: '', kode: '' });
   const satuanGuard = useButtonGuard();
 
-  const load = React.useCallback(
-    async (q = '', includeInactive = false) => {
-      const res = await productsApi.list(q, includeInactive);
-      if (res.ok) setProducts(res.data);
-      else toast.error('Gagal memuat produk', res.error);
-      return res;
+  /* ------------------------- muat data (paged) ------------------------ */
+  const loadHalaman = React.useCallback(
+    async (q: string, hal: number, includeInactive: boolean, mode: 'ganti' | 'tambah') => {
+      // Race guard: jawaban request lama yang datang belakangan dibuang.
+      const seq = ++reqRef.current;
+      if (mode === 'ganti') setLoading(true);
+      else setAppending(true);
+      try {
+        const res = await productsApi.listPaged({
+          search: q,
+          page: hal,
+          limit: PAGE_SIZE,
+          includeInactive,
+        });
+        if (seq !== reqRef.current) return;
+        if (res.ok) {
+          const d = res.data;
+          setTotal(d.total);
+          setPage(d.page);
+          setHasMore(d.page < d.total_pages);
+          setProducts((prev) => {
+            if (mode === 'tambah') {
+              const ada = new Set(prev.map((p) => p.id));
+              return [...prev, ...d.data.filter((p) => !ada.has(p.id))];
+            }
+            return d.data;
+          });
+        } else {
+          toast.error('Gagal memuat produk', res.error);
+        }
+      } finally {
+        if (seq === reqRef.current) {
+          setLoading(false);
+          setAppending(false);
+        }
+      }
     },
     [toast],
   );
 
+  /** Reset ke halaman 1: tombol Muat Ulang, simpan/hapus, impor CSV, dsb. */
+  const refresh = React.useCallback(
+    (q: string, includeInactive: boolean) => void loadHalaman(q, 1, includeInactive, 'ganti'),
+    [loadHalaman],
+  );
+
+  // Ketik di kotak cari → debounce 300ms sebelum kirim query ke database
+  // (sama seperti perilaku search di Menu Kasir), bukan fetch per huruf.
   React.useEffect(() => {
-    void (async () => {
-      setLoading(true);
-      await load('', showInactive);
-      setLoading(false);
-    })();
-  }, [load, showInactive]);
+    const t = window.setTimeout(() => void refresh(search, showInactive), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [refresh, search, showInactive]);
 
   // Ambil daftar kategori dari produk yang sudah ada (dropdown + modal baru).
   React.useEffect(() => {
@@ -152,6 +197,8 @@ export default function ProdukScreen() {
   }
 
   function openEdit(p: Product) {
+    // Baris tabel hanya memuat kolom ringkas (payload kecil); varian/satuan
+    // diambil lengkap dari database (1 baris, super cepat) sebelum form dibuka.
     setEditing(p);
     setForm({
       barcode: p.barcode ?? '',
@@ -159,9 +206,32 @@ export default function ProdukScreen() {
       category: p.category,
       stock: String(p.stock),
       min_stock: String(p.min_stock),
-      varian: varianKeBaris(p.variants ?? []),
+      varian: Array.isArray(p.variants) && p.variants.length ? varianKeBaris(p.variants) : [{ ...BARIS_BARU }],
     });
     setOpen(true);
+    void (async () => {
+      const res = await productsApi.get(p.id);
+      if (res.ok && res.data) {
+        setEditing(res.data);
+        setForm({
+          barcode: res.data.barcode ?? '',
+          name: res.data.name,
+          category: res.data.category,
+          stock: String(res.data.stock),
+          min_stock: String(res.data.min_stock),
+          varian: varianKeBaris(res.data.variants ?? []),
+        });
+      }
+    })();
+  }
+
+  /* --------------------------- infinite scroll -------------------------- */
+  /** Dekat dasar daftar → muat 50 berikutnya (append, tanpa reset tabel). */
+  function saatScroll() {
+    const el = scrollRef.current;
+    if (!el || loading || appending || !hasMore) return;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - 250) return;
+    void loadHalaman(search, page + 1, showInactive, 'tambah');
   }
 
   /* ------------------------------ CSV (Fitur #4) ---------------------- */
@@ -213,7 +283,7 @@ export default function ProdukScreen() {
         });
       }
     }
-    await load('', showInactive);
+    await refresh(search, showInactive);
     return hasil;
   }
 
@@ -349,7 +419,7 @@ export default function ProdukScreen() {
 
     toast.ok(editing ? 'Produk diperbarui' : 'Produk ditambahkan', res.data.name);
     setOpen(false);
-    await load(search, showInactive);
+    refresh(search, showInactive);
   }
 
   function simpanProduk() {
@@ -381,7 +451,7 @@ export default function ProdukScreen() {
         }
         toast.ok('Produk dihapus', removing.name);
         setRemoving(null);
-        await load(search, showInactive);
+        refresh(search, showInactive);
       } finally {
         setHapusBusy(false);
       }
@@ -509,7 +579,7 @@ export default function ProdukScreen() {
         <button
           type="button"
           className="rb-btn"
-          onClick={() => ui.run(() => void load(search, showInactive), 'produk-muat')}
+          onClick={() => ui.run(() => refresh(search, showInactive), 'produk-muat')}
           disabled={ui.locked('produk-muat')}
         >
           <RefreshCw className="h-3.5 w-3.5" /> Muat Ulang
@@ -520,7 +590,7 @@ export default function ProdukScreen() {
           onClick={() =>
             ui.run(() => {
               setSearch('');
-              void load('', showInactive);
+              refresh('', showInactive);
             }, 'produk-bersihkan')
           }
           disabled={ui.locked('produk-bersihkan')}
@@ -545,7 +615,7 @@ export default function ProdukScreen() {
           <Upload className="h-3.5 w-3.5" /> Import CSV
         </button>
         <span className="ml-auto hidden shrink-0 pr-1 text-[11.5px] text-[#7a8ba0] sm:block">
-          <b className="tnum text-[#35485c]">{products.length}</b> barang
+          <b className="tnum text-[#35485c]">{total}</b> barang
         </span>
       </div>
 
@@ -556,14 +626,12 @@ export default function ProdukScreen() {
 
         <div className="relative min-w-[180px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9fb0c4]" />
+          {/* Fetch dihandle debounce 300ms (efek [search]) — bukan per huruf. */}
           <input
             className="input h-10 pl-8 text-[13px]"
             placeholder="Cari nama / barcode / kategori..."
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              void load(e.target.value, showInactive);
-            }}
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
@@ -587,13 +655,15 @@ export default function ProdukScreen() {
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div ref={scrollRef} onScroll={saatScroll} className="min-h-0 flex-1 overflow-auto p-3">
         <div className="card overflow-hidden">
           <div className="panel-head">
             <span className="panel-title">
               <Boxes className="h-4 w-4 text-[#1b5fa8]" /> Daftar Produk
             </span>
-            <span className="text-[11.5px] text-[#7a8ba0]">{products.length} produk</span>
+            <span className="text-[11.5px] text-[#7a8ba0]">
+              {products.length} dari {total} produk
+            </span>
           </div>
 
           <table className="w-full min-w-[820px] border-collapse">
@@ -610,11 +680,22 @@ export default function ProdukScreen() {
             </thead>
             <tbody className="divide-y divide-[#eef2f7]">
               {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-10 text-center text-[13px] text-[#9fb0c4]">
-                    Memuat produk...
-                  </td>
-                </tr>
+                // Loading SKELETON — bukan layar kosong/putih: baris bar kerangka
+                // seukuran tabel supaya layout tetap stabil saat fetch berjalan.
+                Array.from({ length: 10 }).map((_, i) => (
+                  <tr key={`skeleton-${i}`} className="bg-white">
+                    <td className="td">
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-[#eef2f7]" />
+                      <div className="mt-1 h-3 w-1/3 animate-pulse rounded bg-[#f4f7fb]" />
+                    </td>
+                    <td className="td"><div className="h-3.5 w-24 animate-pulse rounded bg-[#eef2f7]" /></td>
+                    <td className="td"><div className="h-4 w-16 animate-pulse rounded-full bg-[#eef2f7]" /></td>
+                    <td className="td"><div className="ml-auto h-3.5 w-20 animate-pulse rounded bg-[#eef2f7]" /></td>
+                    <td className="td"><div className="ml-auto h-3.5 w-16 animate-pulse rounded bg-[#eef2f7]" /></td>
+                    <td className="td"><div className="ml-auto h-3.5 w-14 animate-pulse rounded bg-[#eef2f7]" /></td>
+                    <td className="td"><div className="ml-auto h-6 w-24 animate-pulse rounded bg-[#eef2f7]" /></td>
+                  </tr>
+                ))
               ) : products.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-16 text-center">
@@ -724,6 +805,30 @@ export default function ProdukScreen() {
               )}
             </tbody>
           </table>
+
+          {/* Footer muat lebih banyak: otomatis saat scroll ke dasar
+              (infinite scroll) + tombol cadangan bila scroll tidak memicu. */}
+          {hasMore && !loading ? (
+            <div className="border-t border-[#eef2f7] bg-[#f6f9fd] py-2.5 text-center">
+              <button
+                type="button"
+                className="btn-ghost text-[12px] text-[#1b5fa8]"
+                onClick={() => void loadHalaman(search, page + 1, showInactive, 'tambah')}
+                disabled={appending}
+              >
+                {appending ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Memuat…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" /> Muat lebih banyak
+                    ({products.length} dari {total})
+                  </>
+                )}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 

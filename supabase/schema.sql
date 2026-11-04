@@ -38,6 +38,16 @@ create index if not exists kasir_products_user      on public.kasir_products (us
 create index if not exists kasir_products_user_name on public.kasir_products (user_id, lower(name));
 create index if not exists kasir_products_user_bc   on public.kasir_products (user_id, barcode);
 
+-- Index Daftar Barang (Master Data) supaya pagination + pencarian cepat:
+--  - (user_id, is_active) filter aktif/non-aktif
+--  - (user_id, category)  filter kategori
+--  - komposit (user_id, is_active, lower/barcode): urutan ORDER BY name
+--    + LIMIT/OFFSET bisa memakai index tanpa sort tambahan.
+create index if not exists kasir_products_user_active     on public.kasir_products (user_id, is_active);
+create index if not exists kasir_products_user_category   on public.kasir_products (user_id, category);
+create index if not exists kasir_products_active_name     on public.kasir_products (user_id, is_active, lower(name));
+create index if not exists kasir_products_active_bc       on public.kasir_products (user_id, is_active, barcode);
+
 create table if not exists public.kasir_transactions (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid not null references auth.users (id) on delete cascade,
