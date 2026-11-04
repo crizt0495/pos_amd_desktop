@@ -48,6 +48,14 @@ create index if not exists kasir_products_user_category   on public.kasir_produc
 create index if not exists kasir_products_active_name     on public.kasir_products (user_id, is_active, lower(name));
 create index if not exists kasir_products_active_bc       on public.kasir_products (user_id, is_active, barcode);
 
+-- Pencarian substring (ILIKE '%kw%') butuh pg_trgm + index GIN (b-tree tidak
+-- bisa melayani wildcard di awal).
+create extension if not exists pg_trgm;
+create index if not exists kasir_products_trgm_name       on public.kasir_products using gin (name gin_trgm_ops);
+create index if not exists kasir_products_trgm_barcode     on public.kasir_products using gin (barcode gin_trgm_ops);
+create index if not exists kasir_products_trgm_category   on public.kasir_products using gin (category gin_trgm_ops);
+create index if not exists kasir_products_active_trgm_name on public.kasir_products using gin (name gin_trgm_ops) where is_active = true;
+
 create table if not exists public.kasir_transactions (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid not null references auth.users (id) on delete cascade,
