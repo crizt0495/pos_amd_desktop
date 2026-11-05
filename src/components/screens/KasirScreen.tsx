@@ -195,6 +195,9 @@ export default function KasirScreen() {
   const [method, setMethod] = React.useState<PaymentMethod>('cash');
   /** Nominal yang diketik user di field Bayar (string mentah; diformat ribuan). */
   const [bayarTeks, setBayarTeks] = React.useState('');
+  const [dbReady, setDbReady] = React.useState(false);
+  const [dbError, setDbError] = React.useState('');
+  const [dbPath, setDbPath] = React.useState('');
   /** Catatan tambahan dari modal bayar (digabung ke keterangan saat simpan). */
   const [catatanModal, setCatatanModal] = React.useState('');
 
@@ -273,6 +276,15 @@ export default function KasirScreen() {
 
   /* ------------------------------ memuat data ------------------------- */
   React.useEffect(() => {
+    if (!dbReady) {
+      setTanggal(new Date().toISOString().slice(0, 10));
+      setProducts([]);
+      setCustomers([]);
+      setOpsiSatuan([]);
+      setShift(null);
+      setProdukDimuat(true);
+      return;
+    }
     setTanggal(new Date().toISOString().slice(0, 10));
     void (async () => {
       const [storeRes, pRes, cRes, invRes, sRes] = await Promise.all([

@@ -78,6 +78,9 @@ export default function ProdukScreen() {
   // Kunci tombol UI ringan (buka modal, muat ulang) agar tak terpicu dua kali.
   const ui = useClickCooldown(1500);
 
+  const [dbReady, setDbReady] = React.useState(false);
+  const [dbError, setDbError] = React.useState('');
+  const [dbPath, setDbPath] = React.useState('');
   const [products, setProducts] = React.useState<Product[]>([]);
   const [search, setSearch] = React.useState('');
   const [showInactive, setShowInactive] = React.useState(false);
@@ -121,6 +124,12 @@ export default function ProdukScreen() {
   /* ------------------------- muat data (paged) ------------------------ */
   const loadHalaman = React.useCallback(
     async (q: string, hal: number, includeInactive: boolean, mode: 'ganti' | 'tambah') => {
+      // Jika database lokal belum ready, tampilkan error dan jangan lakukan API call.
+      if (!dbReady) {
+        setDbError('Database lokal tidak aktif. Klik "Coba Lagi" atau "Pulihkan Backup".');
+        setLoading(false);
+        return;
+      }
       // Race guard: jawaban request lama yang datang belakangan dibuang.
       const seq = ++reqRef.current;
       if (mode === 'ganti') setLoading(true);

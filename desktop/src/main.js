@@ -1275,6 +1275,9 @@ function registerIpc() {
   });
   ipcMain.handle('desktop:auth-session', () => ({ ok: true, session: getSecret('authSession') || null }));
 
+  // Statistik ketersediaan database (path, file, tabel, row counts).
+  ipcMain.handle('desktop:db-stats', () => dbStats());
+
   ipcMain.handle('desktop:db', (_e, op) => {
     initDb();
     if (!db) return { ok: false, error: 'Database lokal tidak aktif.' };
