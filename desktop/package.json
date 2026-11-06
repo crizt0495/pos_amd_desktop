@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/crizt0495/pos_amd_desktop",
   "private": true,
-  "main": "src/main.js",
+  "main": "src/main.cjs",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
