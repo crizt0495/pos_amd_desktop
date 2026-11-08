@@ -83,9 +83,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if ("${{ startsWith(github.ref, 'refs/tags/v') }}" -eq "true") {
-            npm run dist:publish
+            npm run dist:win:publish
           } else {
-            npm run dist
+            npm run dist:win
           }
 
       - name: Upload installer
@@ -93,7 +93,7 @@ jobs:
         with:
           name: KasirPro-Setup-Windows
           path: |
-            desktop/release/KasirPro-Setup-Windows.exe
+            desktop/release/KasirPro-POS-Setup-v*.exe
             desktop/release/*.blockmap
             desktop/release/latest.yml
           if-no-files-found: error

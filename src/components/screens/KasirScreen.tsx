@@ -21,6 +21,7 @@ import { useCart } from '@/lib/cart-store';
 import { Select } from '@/components/Select';
 import { draftDel, draftGet, draftSet } from '@/lib/localStore';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
+import { bukaFolderDatabase, cekKesiapanDatabase, muatUlangAplikasi } from '@/lib/desktop';
 import {
   angka,
   cariProdukByBarcodeVarian,
@@ -275,8 +276,24 @@ export default function KasirScreen() {
   const rugiLines = lines.filter((l) => l.price < l.cost);
 
   /* ------------------------------ memuat data ------------------------- */
+  // Cek status database lokal sekali saat layar dibuka. Di browser biasa
+  // (Supabase) hasilnya selalu siap sehingga perilaku web tidak berubah.
+  React.useEffect(() => {
+    let hidup = true;
+    void cekKesiapanDatabase().then((r) => {
+      if (!hidup) return;
+      setDbReady(r.ok);
+      setDbError(r.ok ? '' : r.error || 'Database lokal tidak aktif.');
+      setDbPath(r.path || '');
+    });
+    return () => {
+      hidup = false;
+    };
+  }, []);
+
   React.useEffect(() => {
     if (!dbReady) {
+      // Jangan tampilkan "shift belum dibuka / 0 produk" seolah toko kosong.
       setTanggal(new Date().toISOString().slice(0, 10));
       setProducts([]);
       setCustomers([]);
@@ -310,7 +327,7 @@ export default function KasirScreen() {
     void shiftsApi.active().then((res) => {
       if (res.ok) setShift(res.data);
     });
-  }, []);
+  }, [dbReady]);
 
   React.useEffect(() => {
     let batal = false;
@@ -1282,6 +1299,29 @@ export default function KasirScreen() {
           </span>
         </span>
       </div>
+
+      {!dbReady ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#f3c2c2] bg-[#fff1f1] px-3 py-2 text-[12px] text-[#a12828] sm:px-4">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-[200px] flex-1">
+            Database gagal dibuka{dbPath ? ` di ${dbPath}` : ''}. {dbError} Data lama TIDAK dihapus.
+          </span>
+          <button
+            type="button"
+            className="btn-outline h-7 px-2 text-[11px]"
+            onClick={() => void muatUlangAplikasi()}
+          >
+            Coba Lagi
+          </button>
+          <button
+            type="button"
+            className="btn-outline h-7 px-2 text-[11px]"
+            onClick={() => void bukaFolderDatabase()}
+          >
+            Buka Lokasi Database
+          </button>
+        </div>
+      ) : null}
 
       {/* ==================== HEADER INFO SHIFT AKTIF ================= */}
       {shift ? (

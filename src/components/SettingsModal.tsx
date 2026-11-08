@@ -42,7 +42,7 @@ import {
   type DiskonPaten,
 } from '@/lib/diskonPaten';
 import { bacaPrinterSettings, setPrinterSettings, type PreferensiPrinter, type UkuranPrinter } from '@/lib/printerSettings';
-import { daftarPrinterTerdeteksi, desktopAktif, type PrinterInfo } from '@/lib/desktop';
+import { bukaFolderDatabase, daftarPrinterTerdeteksi, desktopAktif, muatUlangAplikasi, type PrinterInfo } from '@/lib/desktop';
 import {
   autoSambungBluetooth,
   didukungBluetooth,
@@ -87,6 +87,14 @@ export function SettingsModal({
     cashierName: '',
   });
   const [appPaths, setAppPaths] = React.useState<{ userData: string; database: string; license: string; config: string } | null>(null);
+  const [dbInfo, setDbInfo] = React.useState<{
+    ok: boolean;
+    enabled?: boolean;
+    path?: string;
+    hasFile?: boolean;
+    sizeBytes?: number;
+    rowCounts?: Record<string, unknown> | null;
+  } | null>(null);
   const simpanGuard = useButtonGuard();
   const saving = simpanGuard.busy;
 
@@ -109,6 +117,12 @@ export function SettingsModal({
         if (d && typeof d.paths === 'function') {
           const p = await d.paths();
           setAppPaths(p);
+        }
+        if (d && typeof d.dbStats === 'function') {
+          const s = await d.dbStats();
+          setDbInfo(s || null);
+        } else {
+          setDbInfo({ ok: true, path: 'Mode web — data disimpan di Supabase' });
         }
       } catch {
         /* abaikan */
@@ -1101,9 +1115,62 @@ export function SettingsModal({
               Backup menyimpan database & lisensi ke file .zip. Restore dipakai saat pindah perangkat.
             </span>
           </div>
+
+          <div
+            className={`rounded-lg border p-2.5 text-[11.5px] ${
+              dbInfo && dbInfo.ok === false
+                ? 'border-[#f3c2c2] bg-[#fff1f1] text-[#a12828]'
+                : 'border-[#cfe0f2] bg-[#f6fbff] text-[#33506e]'
+            }`}
+          >
+            <p className="font-semibold">
+              Status database:{' '}
+              {dbInfo
+                ? dbInfo.ok
+                  ? 'Aktif & terhubung'
+                  : 'GAGAL DIBUKA (data lama tidak dihapus)'
+                : 'Memeriksa…'}
+            </p>
+            {dbInfo?.path ? <p className="mt-1 break-all font-mono text-[10.5px]">{dbInfo.path}</p> : null}
+            {dbInfo?.rowCounts ? (
+              <p className="mt-1">
+                Produk: <b>{String(dbInfo.rowCounts.kasir_products ?? 0)}</b> · Transaksi:{' '}
+                <b>{String(dbInfo.rowCounts.kasir_transactions ?? 0)}</b> · Shift:{' '}
+                <b>{String(dbInfo.rowCounts.kasir_shifts ?? 0)}</b> ·{' '}
+                {dbInfo.hasFile ? 'file ada' : 'file belum dibuat'}
+                {typeof dbInfo.sizeBytes === 'number' && dbInfo.sizeBytes > 0
+                  ? ` · ${(dbInfo.sizeBytes / 1024 / 1024).toFixed(1)} MB`
+                  : ''}
+              </p>
+            ) : null}
+            {dbInfo && dbInfo.ok === false ? (
+              <p className="mt-1">
+                Aplikasi tidak akan menampilkan angka 0 seolah toko kosong. Coba Lagi, atau pulihkan
+                backup di bawah.
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-outline h-7 px-2 text-[11px]"
+                onClick={() => void bukaFolderDatabase()}
+              >
+                Buka Lokasi Database
+              </button>
+              <button
+                type="button"
+                className="btn-outline h-7 px-2 text-[11px]"
+                onClick={() => void muatUlangAplikasi()}
+              >
+                <RefreshCw className="h-3 w-3" /> Coba Lagi
+              </button>
+            </div>
+          </div>
+
           <button
             type="button"
             className="btn-primary w-full"
+            disabled={dbInfo?.ok === false}
             onClick={async () => {
               try {
                 const d = (window as any)?.kasirproDesktop;

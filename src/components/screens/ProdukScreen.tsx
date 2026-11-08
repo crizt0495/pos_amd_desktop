@@ -30,6 +30,7 @@ import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { SatuanVarianTable } from '@/components/SatuanVarianTable';
 import { useButtonGuard, useClickCooldown } from '@/lib/useButtonGuard';
+import { bukaFolderDatabase, cekKesiapanDatabase, muatUlangAplikasi } from '@/lib/desktop';
 import { angka, rupiah } from '@/lib/format';
 import type { Product, ProductInput, StockLog } from '@/lib/types';
 
@@ -122,12 +123,28 @@ export default function ProdukScreen() {
   const satuanGuard = useButtonGuard();
 
   /* ------------------------- muat data (paged) ------------------------ */
+  // Cek status database lokal sekali saat layar dibuka. Di browser biasa
+  // (Supabase) hasilnya selalu siap, jadi perilaku web tidak berubah.
+  React.useEffect(() => {
+    let hidup = true;
+    void cekKesiapanDatabase().then((r) => {
+      if (!hidup) return;
+      setDbReady(r.ok);
+      setDbError(r.ok ? '' : r.error || 'Database lokal tidak aktif.');
+      setDbPath(r.path || '');
+    });
+    return () => {
+      hidup = false;
+    };
+  }, []);
+
   const loadHalaman = React.useCallback(
     async (q: string, hal: number, includeInactive: boolean, mode: 'ganti' | 'tambah') => {
-      // Jika database lokal belum ready, tampilkan error dan jangan lakukan API call.
+      // Jika database lokal belum siap, jangan panggil API: tampilkan pesan
+      // jujur (bukan "0 produk") dan biarkan tombol Coba Lagi memicu ulang.
       if (!dbReady) {
-        setDbError('Database lokal tidak aktif. Klik "Coba Lagi" atau "Pulihkan Backup".');
         setLoading(false);
+        setAppending(false);
         return;
       }
       // Race guard: jawaban request lama yang datang belakangan dibuang.
@@ -164,7 +181,7 @@ export default function ProdukScreen() {
         }
       }
     },
-    [toast],
+    [toast, dbReady],
   );
 
   /** Reset ke halaman 1: tombol Muat Ulang, simpan/hapus, impor CSV, dsb. */
@@ -627,6 +644,29 @@ export default function ProdukScreen() {
           <b className="tnum text-[#35485c]">{total}</b> barang
         </span>
       </div>
+
+      {!dbReady ? (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[#f3c2c2] bg-[#fff1f1] px-4 py-2 text-[12px] text-[#a12828]">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-[200px] flex-1">
+            Database gagal dibuka{dbPath ? ` di ${dbPath}` : ''}. {dbError} Data lama TIDAK dihapus.
+          </span>
+          <button
+            type="button"
+            className="btn-outline h-7 px-2 text-[11px]"
+            onClick={() => void muatUlangAplikasi()}
+          >
+            <RefreshCw className="h-3 w-3" /> Coba Lagi
+          </button>
+          <button
+            type="button"
+            className="btn-outline h-7 px-2 text-[11px]"
+            onClick={() => void bukaFolderDatabase()}
+          >
+            Buka Lokasi Database
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-b border-[#d8e0ec] bg-white p-3">
         <h2 className="mr-1 flex items-center gap-1.5 text-[13px] font-bold text-[#1b3a5c]">

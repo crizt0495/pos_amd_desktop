@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  AlertTriangle,
   BarChart3,
   Boxes,
   LogOut,
@@ -11,6 +12,7 @@ import {
   Minus,
   Monitor,
   Receipt,
+  RefreshCw,
   Settings,
   Store,
   Truck,
@@ -18,7 +20,7 @@ import {
 } from 'lucide-react';
 
 import { ensureSeeded, settingsApi } from '@/lib/api';
-import { kontrolJendela } from '@/lib/desktop';
+import { bukaFolderDatabase, cekKesiapanDatabase, kontrolJendela, muatUlangAplikasi } from '@/lib/desktop';
 import {
   autoSambungBluetooth,
   dengarStatusBluetooth,
@@ -52,6 +54,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [clock, setClock] = React.useState('');
   const [btStatus, setBtStatus] = React.useState<StatusBluetooth>('nonaktif');
   const [btName, setBtName] = React.useState<string | null>(null);
+  const [dbProblem, setDbProblem] = React.useState<{ error: string; path?: string } | null>(null);
+
+  // Cek sekali apakah database lokal benar-benar bisa dibuka. Bila gagal,
+  // seluruh layar menampilkan peringatan jujur (bukan angka 0 palsu).
+  React.useEffect(() => {
+    let hidup = true;
+    void cekKesiapanDatabase().then((r) => {
+      if (!hidup) return;
+      setDbProblem(r.ok ? null : { error: r.error || 'Database lokal tidak aktif.', path: r.path });
+    });
+    return () => {
+      hidup = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     void ensureSeeded();
@@ -211,6 +227,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* ==================== KONTEN (bisa render sub-ribbon) ============ */}
+        {dbProblem ? (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#f3c2c2] bg-[#fff1f1] px-3 py-2 text-[12px] text-[#a12828] sm:px-4">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="min-w-[220px] flex-1">
+              Database gagal dibuka{dbProblem.path ? ` di ${dbProblem.path}` : ''}. {dbProblem.error} Data
+              lama TIDAK dihapus — jangan mengisi data baru sebelum database tersambung.
+            </span>
+            <button
+              type="button"
+              className="btn-outline h-7 px-2 text-[11px]"
+              onClick={() => void muatUlangAplikasi()}
+            >
+              <RefreshCw className="h-3 w-3" /> Coba Lagi
+            </button>
+            <button
+              type="button"
+              className="btn-outline h-7 px-2 text-[11px]"
+              onClick={() => void bukaFolderDatabase()}
+            >
+              Buka Lokasi Database
+            </button>
+          </div>
+        ) : null}
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</main>
 
         {/* =========================== STATUS BAR =========================== */}

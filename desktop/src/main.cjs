@@ -417,15 +417,29 @@ function logAppPaths() {
 }
 
 /** Buka database lokal bila mode lokal aktif. Aman dipanggil berkali-kali. */
+let dbInitAttempts = 0;
+let dbRetryTimer = null;
+
 function initDb() {
   if (db || !dbEnabled()) return;
+  const jalur = getDatabasePath();
   try {
     migrateLegacyDatabase();
-    db = createEngine(getDatabasePath());
-    console.log('[db] database lokal siap:', getDatabasePath());
+    db = createEngine(jalur);
+    dbInitAttempts = 0;
+    console.log('[db] database lokal siap:', jalur);
   } catch (err) {
     db = null;
-    console.error('[db] gagal membuka database lokal:', err.message);
+    dbInitAttempts += 1;
+    console.error(
+      `[db] GAGAL membuka database (percobaan ${dbInitAttempts}/3): ${jalur} :: ${err && err.message}`,
+    );
+    if (dbInitAttempts < 3 && !dbRetryTimer) {
+      dbRetryTimer = setTimeout(() => {
+        dbRetryTimer = null;
+        initDb();
+      }, 800);
+    }
   }
 }
 
@@ -433,6 +447,64 @@ function closeDb() {
   if (db) {
     try { db.close(); } catch { /* abaikan */ }
     db = null;
+  }
+}
+
+/**
+ * Statistik database lokal — dipakai halaman Pengaturan & tombol "Coba Lagi".
+ * Semua field aman dipanggil walau database gagal dibuka (ok:false).
+ */
+function dbStats() {
+  const p = getDatabasePath();
+  let hasFile = false;
+  let sizeBytes = 0;
+  try {
+    hasFile = fs.existsSync(p);
+    if (hasFile) sizeBytes = fs.statSync(p).size;
+  } catch { /* abaikan */ }
+  let rowCounts = null;
+  if (db) {
+    try { rowCounts = db.stats(); } catch { rowCounts = null; }
+  }
+  return {
+    ok: !!db,
+    enabled: dbEnabled(),
+    path: p,
+    hasFile,
+    sizeBytes,
+    rowCounts,
+  };
+}
+
+/**
+ * Backup otomatis saat aplikasi ditutup (file .db mentah, bukan zip palsu).
+ * Checkpoint WAL dulu supaya seluruh transaksi terbaru ikut tersalin.
+ * Menyimpan maksimal 10 backup terakhir agar disk tidak penuh.
+ */
+function autoBackupDb() {
+  if (!db || !dbEnabled()) return;
+  try {
+    const src = getDatabasePath();
+    if (!fs.existsSync(src)) return;
+    try { if (db._db && db._db.pragma) db._db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* abaikan */ }
+    const dir = path.join(app.getPath('userData'), 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const d = new Date();
+    const stamp =
+      `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}` +
+      `-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+    const dest = path.join(dir, `kasir-${stamp}.db`);
+    fs.copyFileSync(src, dest);
+    const lama = fs
+      .readdirSync(dir)
+      .filter((f) => /^kasir-.*\.db$/.test(f))
+      .sort();
+    while (lama.length > 10) {
+      try { fs.unlinkSync(path.join(dir, lama.shift())); } catch { /* abaikan */ }
+    }
+    console.log('[backup] otomatis tersimpan:', dest);
+  } catch (err) {
+    console.warn('[backup] otomatis gagal:', err && err.message);
   }
 }
 
@@ -1276,7 +1348,39 @@ function registerIpc() {
   ipcMain.handle('desktop:auth-session', () => ({ ok: true, session: getSecret('authSession') || null }));
 
   // Statistik ketersediaan database (path, file, tabel, row counts).
-  ipcMain.handle('desktop:db-stats', () => dbStats());
+  ipcMain.handle('desktop:db-stats', () => {
+    initDb();
+    return dbStats();
+  });
+
+  // Status siap pakai untuk guard UI ("Database lokal tidak aktif").
+  ipcMain.handle('desktop:db-ready', () => {
+    initDb();
+    return {
+      ok: !!db,
+      enabled: dbEnabled(),
+      path: getDatabasePath(),
+      error: db ? null : 'Database lokal tidak aktif.',
+    };
+  });
+
+  // Muat ulang jendela setelah "Coba Lagi" / restore.
+  ipcMain.handle('desktop:reload', () => {
+    void loadAppSafe();
+    return { ok: true };
+  });
+
+  // Buka folder tempat kasir.db berada (tombol "Buka Lokasi Database").
+  ipcMain.handle('desktop:open-db-folder', async () => {
+    try {
+      const p = path.dirname(getDatabasePath());
+      fs.mkdirSync(p, { recursive: true });
+      const err = await shell.openPath(p);
+      return err ? { ok: false, error: err } : { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || 'Gagal membuka folder database.' };
+    }
+  });
 
   ipcMain.handle('desktop:db', (_e, op) => {
     initDb();
@@ -1295,8 +1399,6 @@ function registerIpc() {
     if (id != null && String(id)) db.setUserId(String(id));
     return { ok: true, userId: db.getUserId() };
   });
-
-  ipcMain.handle('desktop:db-stats', () => (db ? { ok: true, data: db.stats() } : { ok: false }));
 
   ipcMain.handle('desktop:db-outbox', () => (db ? { ok: true, data: db.outbox.pending() } : { ok: false, data: [] }));
 
@@ -1548,6 +1650,13 @@ function registerIpc() {
       const licensePath = getLicensePath();
       const configPath = path.join(app.getPath('userData'), 'config.json');
 
+      // Tutup transaksi WAL yang masih menggantung dulu supaya file .db yang
+      // diarsipkan memuat SELURUH data terbaru (bukan hanya halaman lama).
+      try {
+        initDb();
+        if (db && db._db && db._db.pragma) db._db.pragma('wal_checkpoint(TRUNCATE)');
+      } catch { /* abaikan */ }
+
       // checksum sederhana (sha256) untuk integritas
       const crypto = require('crypto');
       const dbBuf = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : Buffer.alloc(0);
@@ -1575,18 +1684,44 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('desktop:restore', async (_e, zipPath) => {
+  ipcMain.handle('desktop:restore', async (_e, srcPath) => {
     try {
       const extract = require('extract-zip');
       const crypto = require('crypto');
+      const src = String(srcPath || '');
+      if (!src || !fs.existsSync(src)) {
+        return { ok: false, error: 'File backup tidak ditemukan.' };
+      }
+      const isRawDb = /\.db$/i.test(src);
       const tmpDir = path.join(app.getPath('temp'), 'kp-restore-' + Date.now());
       fs.mkdirSync(tmpDir, { recursive: true });
-      await extract(zipPath, { dir: tmpDir });
+
+      if (isRawDb) {
+        // Backup otomatis (kasir-*.db) disalin langsung, tanpa ekstraksi zip.
+        fs.copyFileSync(src, path.join(tmpDir, 'kasir.db'));
+      } else {
+        await extract(src, { dir: tmpDir });
+      }
 
       const dbFile = path.join(tmpDir, 'kasir.db');
       if (!fs.existsSync(dbFile)) {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
         return { ok: false, error: 'File backup tidak valid: kasir.db tidak ditemukan.' };
+      }
+
+      // Verifikasi file benar-benar database KasirPro sebelum menimpa apa pun.
+      try {
+        const Database = require('better-sqlite3');
+        const uji = new Database(dbFile, { readonly: true });
+        try {
+          const r = uji.prepare('select count(*) as c from kasir_products').get();
+          console.log('[restore] verifikasi backup: ' + r.c + ' produk');
+        } finally {
+          uji.close();
+        }
+      } catch (e) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        return { ok: false, error: 'File backup bukan database KasirPro yang valid: ' + (e && e.message) };
       }
 
       // validasi checksum (jika ada manifest)
@@ -1620,11 +1755,16 @@ function registerIpc() {
         return { ok: false, cancelled: true };
       }
 
-      // tutup DB dulu
+      // tutup DB dulu, lalu simpan cadangan file yang sekarang (bukan menghapus).
       try { closeDb(); } catch {}
       const dbPath = getDatabasePath();
       const backupDb = dbPath + '.bak';
       if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, backupDb);
+      // WAL/SHM lama HARUS dibuang: bila tertinggal, SQLite bisa mencampurnya
+      // dengan file database hasil restore dan merusak data.
+      for (const f of [dbPath + '-wal', dbPath + '-shm']) {
+        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* abaikan */ }
+      }
       fs.copyFileSync(dbFile, dbPath);
 
       const licSrc = path.join(tmpDir, 'license.hwid');
@@ -1652,7 +1792,7 @@ function registerIpc() {
   ipcMain.handle('desktop:restore-pick', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       title: 'Pilih file backup KasirPro',
-      filters: [{ name: 'Backup KasirPro', extensions: ['zip'] }],
+      filters: [{ name: 'Backup KasirPro', extensions: ['zip', 'db'] }],
       properties: ['openFile'],
     });
     if (canceled || !filePaths || !filePaths[0]) return { ok: false, cancelled: true };
@@ -1841,7 +1981,11 @@ if (gotLock) {
     });
   });
 
-  app.on('before-quit', () => { closeDb(); closeLocalServer(); });
+  app.on('before-quit', () => {
+    autoBackupDb();
+    closeDb();
+    closeLocalServer();
+  });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

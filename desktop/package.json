@@ -1,7 +1,7 @@
 {
   "name": "kasirpro-pos-desktop",
   "productName": "KasirPro POS",
-  "version": "2.3.17",
+  "version": "2.3.18",
   "description": "Aplikasi Kasir UMKM - KasirPro POS",
   "author": {
     "name": "KasirPro Indonesia",
@@ -10,13 +10,17 @@
   "homepage": "https://github.com/crizt0495/pos_amd_desktop",
   "private": true,
   "main": "src/main.cjs",
+  "type": "commonjs",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "reset": "electron . --reset",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis --linux deb --x64 --publish never",
-    "dist:publish": "electron-builder --win nsis --linux deb --x64 --publish always",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "dist:publish": "electron-builder --win nsis --x64 --publish always",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "dist:win:publish": "electron-builder --win nsis --x64 --publish always",
+    "dist:linux": "electron-builder --linux deb --x64 --publish never",
     "dist:dir": "electron-builder --win --dir --x64",
     "test": "node test/engine.test.cjs && node test/sync.test.cjs && node test/secrets.test.cjs",
     "version:patch": "npm version patch --no-git-tag-version"

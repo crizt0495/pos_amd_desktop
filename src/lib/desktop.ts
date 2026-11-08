@@ -27,7 +27,13 @@ interface ListPrinterResponse {
 
 interface DesktopBridge {
   platform?: string;
+  /** Apakah mode database lokal (SQLite) aktif di shell desktop. */
+  localDb?: boolean;
   listPrinters?: () => Promise<ListPrinterResponse>;
+  /** Status database lokal siap dipakai (dipanggil sebelum memuat data). */
+  dbReady?: () => Promise<{ ok?: boolean; enabled?: boolean; path?: string; error?: string | null }>;
+  reload?: () => Promise<{ ok?: boolean }>;
+  openDbFolder?: () => Promise<{ ok?: boolean; error?: string }>;
   /** Kontrol jendela dari title bar kustom (Electron). */
   minimize?: () => void;
   maximize?: () => void;
@@ -44,6 +50,59 @@ export function desktopBridge(): DesktopBridge | null {
 /** True bila dijalankan sebagai aplikasi desktop (Electron). */
 export function desktopAktif(): boolean {
   return desktopBridge() !== null;
+}
+
+export interface StatusDatabase {
+  /** true = aman memuat data (web, DB lokal nonaktif, atau DB lokal siap). */
+  ok: boolean;
+  path?: string;
+  error?: string;
+}
+
+/**
+ * Cek apakah database lokal siap dipakai SEBELUM layar memuat data.
+ *
+ * Penting agar UI tidak menampilkan "0 produk / Rp 0" ketika database gagal
+ * dibuka. Di browser biasa (atau saat mode lokal dimatikan) hasilnya selalu
+ * `ok:true` supaya perilaku Supabase tidak berubah.
+ */
+export async function cekKesiapanDatabase(): Promise<StatusDatabase> {
+  if (typeof window === 'undefined') return { ok: true };
+  const b = (window as unknown as { kasirproDesktop?: DesktopBridge }).kasirproDesktop;
+  if (!b || b.platform !== 'desktop') return { ok: true };
+  if (b.localDb !== true) return { ok: true };
+  if (typeof b.dbReady !== 'function') return { ok: true };
+  try {
+    const r = await b.dbReady();
+    if (r && r.ok) return { ok: true, path: r.path };
+    return { ok: false, path: r?.path, error: (r && r.error) || 'Database lokal tidak aktif.' };
+  } catch (e) {
+    const pesan = e instanceof Error ? e.message : String(e);
+    // Build lama mungkin belum punya handler ini — jangan blokir aplikasi.
+    if (/No handler registered/i.test(pesan)) return { ok: true };
+    return { ok: false, error: 'Tidak bisa menghubungi proses utama: ' + pesan };
+  }
+}
+
+/** Buka folder tempat file kasir.db berada (khusus desktop). */
+export async function bukaFolderDatabase(): Promise<{ ok: boolean; error?: string }> {
+  const b = (window as unknown as { kasirproDesktop?: DesktopBridge }).kasirproDesktop;
+  if (!b?.openDbFolder) return { ok: false, error: 'Hanya tersedia di aplikasi desktop.' };
+  try {
+    const r = await b.openDbFolder();
+    return { ok: r?.ok !== false, error: r?.error };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Muat ulang aplikasi desktop setelah database diperbaiki. */
+export async function muatUlangAplikasi(): Promise<void> {
+  const b = (window as unknown as { kasirproDesktop?: DesktopBridge }).kasirproDesktop;
+  if (b?.reload) {
+    try { await b.reload(); return; } catch { /* fallback */ }
+  }
+  if (typeof window !== 'undefined') window.location.reload();
 }
 
 /**
