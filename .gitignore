@@ -43,5 +43,7 @@ secrets.json
 
 # installer / artefak build (binary besar, jangan di-commit). Installer resmi
 # ada di GitHub Releases; di sini hanya untuk kemudahan unduh/uji lokal.
+installer/
 *.exe
+*.deb
 *.blockmap
