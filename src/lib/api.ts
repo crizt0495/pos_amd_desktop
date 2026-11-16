@@ -23,6 +23,8 @@ import type {
   ShiftPreview,
   StockLog,
   StockMovement,
+  StockMovementDaily,
+  StockMovementReport,
   TopProduct,
   Transaction,
   TransactionItem,
@@ -371,6 +373,59 @@ export const productsApi = {
   },
 };
 
+/** Normalisasi satu baris pergerakan stok dari RPC (numeric bisa string). */
+function mapStockMovement(x: unknown): StockMovement {
+  const r = x as Record<string, unknown>;
+  return {
+    ...(r as unknown as StockMovement),
+    masuk: num(r.masuk),
+    keluar: num(r.keluar),
+    stok_sebelum: r.stok_sebelum == null ? null : num(r.stok_sebelum),
+    stok_sesudah: r.stok_sesudah == null ? null : num(r.stok_sesudah),
+  };
+}
+
+/** Susun laporan (total + daily + pagination) dari daftar baris — fallback
+ *  untuk database lama yang belum punya RPC `kasir_stock_movement_report`. */
+function laporanFallback(
+  list: StockMovement[],
+  pageReq: number,
+  pageSizeReq: number,
+): StockMovementReport {
+  const pageSize = Math.min(Math.max(Math.floor(pageSizeReq) || 100, 1), 500);
+  const rows = list.slice().sort((a, b) =>
+    a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+  );
+  const totalRows = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const page = Math.min(Math.max(Math.floor(pageReq) || 1, 1), totalPages);
+
+  let totalMasuk = 0;
+  let totalKeluar = 0;
+  const perHari = new Map<string, StockMovementDaily>();
+  for (const r of rows) {
+    totalMasuk += num(r.masuk);
+    totalKeluar += num(r.keluar);
+    const tanggal = String(r.created_at || '').slice(0, 10);
+    if (!tanggal) continue;
+    const cur = perHari.get(tanggal) || { tanggal, masuk: 0, keluar: 0 };
+    cur.masuk += num(r.masuk);
+    cur.keluar += num(r.keluar);
+    perHari.set(tanggal, cur);
+  }
+
+  return {
+    rows: rows.slice((page - 1) * pageSize, page * pageSize),
+    total_rows: totalRows,
+    total_masuk: totalMasuk,
+    total_keluar: totalKeluar,
+    daily: [...perHari.values()].sort((a, b) => (a.tanggal < b.tanggal ? -1 : 1)),
+    page,
+    page_size: pageSize,
+    total_pages: totalPages,
+  };
+}
+
 /** Kartu stok (Fitur #5): riwayat mutasi stok per produk. */
 export const stockApi = {
   async logs(productId: string): Promise<Result<StockLog[]>> {
@@ -418,17 +473,69 @@ export const stockApi = {
       const list = Array.isArray(data) ? data : [];
       return {
         ok: true,
-        data: list.map((x) => {
-          const r = x as Record<string, unknown>;
-          return {
-            ...(r as unknown as StockMovement),
-            masuk: num(r.masuk),
-            keluar: num(r.keluar),
-            stok_sebelum: r.stok_sebelum == null ? null : num(r.stok_sebelum),
-            stok_sesudah: r.stok_sesudah == null ? null : num(r.stok_sesudah),
-          };
-        }),
+        data: list.map(mapStockMovement),
       };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  },
+
+  /**
+   * Laporan Pergerakan Stok versi cepat: satu RPC mengembalikan satu halaman
+   * baris + total agregat + deret harian untuk grafik. Bila database belum
+   * punya RPC baru (migrasi belum dijalankan), otomatis jatuh ke RPC lama lalu
+   * dihitung di klien — hasil tetap sama, hanya belum secepat versi baru.
+   */
+  async movementReport(filter: {
+    from?: string;
+    to?: string;
+    productId?: string;
+    jenis?: string;
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<Result<StockMovementReport>> {
+    const page = Math.max(1, Math.floor(num(filter.page) || 1));
+    const pageSize = Math.min(Math.max(Math.floor(num(filter.pageSize) || 100), 1), 500);
+    try {
+      const { data, error } = await createClient().rpc('kasir_stock_movement_report', {
+        p_from: filter.from ?? null,
+        p_to: filter.to ?? null,
+        p_product_id: filter.productId || null,
+        p_jenis: filter.jenis || null,
+        p_q: filter.q?.trim() || null,
+        p_page: page,
+        p_page_size: pageSize,
+      });
+      if (!error && data && typeof data === 'object') {
+        const raw = data as Record<string, unknown>;
+        const dailyRaw = Array.isArray(raw.daily) ? raw.daily : [];
+        return {
+          ok: true,
+          data: {
+            rows: (Array.isArray(raw.rows) ? raw.rows : []).map(mapStockMovement),
+            total_rows: num(raw.total_rows),
+            total_masuk: num(raw.total_masuk),
+            total_keluar: num(raw.total_keluar),
+            daily: dailyRaw.map((d) => {
+              const r = d as Record<string, unknown>;
+              return {
+                tanggal: String(r.tanggal ?? ''),
+                masuk: num(r.masuk),
+                keluar: num(r.keluar),
+              };
+            }),
+            page: Math.max(1, Math.floor(num(raw.page) || page)),
+            page_size: Math.max(1, Math.floor(num(raw.page_size) || pageSize)),
+            total_pages: Math.max(1, Math.floor(num(raw.total_pages) || 1)),
+          },
+        };
+      }
+
+      // Fallback: RPC baru belum ada di database (atau gagal) → pakai lama.
+      const lama = await stockApi.movements(filter);
+      if (!lama.ok) return lama;
+      return { ok: true, data: laporanFallback(lama.data, page, pageSize) };
     } catch (e) {
       return { ok: false, error: msg(e) };
     }

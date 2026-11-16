@@ -78,6 +78,20 @@ function utcDate(iso) {
   return String(iso || '').slice(0, 10);
 }
 
+/**
+ * Tanggal berikutnya (YYYY-MM-DD) untuk filter rentang eksklusif.
+ * Dipakai agar query bisa memakai index `created_at`:
+ *   created_at >= '2026-11-15' AND created_at < '2026-11-16'
+ * (bukan substr(created_at,1,10) <= ... yang tidak memakai index).
+ */
+function nextDateYmd(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || ''));
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 function likePattern(v) {
   return String(v == null ? '' : v).replace(/\*/g, '%');
 }
@@ -544,64 +558,171 @@ function createEngine(dbPath) {
     );
   }
 
-  function kasirStockMovements(uid, a) {
+  // ------------------- laporan pergerakan stok (optimized) -----------------
+  /**
+   * Bangun CTE dasar untuk laporan pergerakan stok.
+   *
+   * PENTING (perbaikan performa):
+   *  - Filter tanggal memakai rentang `created_at >= ? AND created_at < ?`
+   *    supaya index (user_id, created_at) terpakai. Versi lama menarik SELURUH
+   *    tabel `kasir_stock_logs` lalu memfilternya satu per satu di JavaScript
+   *    (O(N) + payload besar), sehingga "Hari Ini" bisa tertahan puluhan detik
+   *    saat ada tarikan/sinkronisasi data di latar belakang.
+   *  - Pencarian nama/kode dilakukan di SQL (LIKE), bukan di loop JS.
+   *  - Jenis mutasi dihitung di SQL dan bisa difilter lewat CTE `filtered`.
+   */
+  function stockMovementQuery(a, uid) {
     const from = isEmpty(a.p_from) ? null : String(a.p_from);
     const to = isEmpty(a.p_to) ? null : String(a.p_to);
-    const pid = isEmpty(a.p_product_id) ? null : a.p_product_id;
+    const pid = isEmpty(a.p_product_id) ? null : String(a.p_product_id);
     const jenis = isEmpty(a.p_jenis) ? null : String(a.p_jenis);
     const q = isEmpty(a.p_q) ? null : String(a.p_q).trim().toLowerCase();
 
-    const prod = new Map();
-    for (const p of qa('select id, barcode, name, unit from kasir_products where user_id = ?', uid)) prod.set(p.id, p);
-    const txNo = new Map();
-    for (const t of qa('select id, invoice_no from kasir_transactions where user_id = ?', uid)) txNo.set(t.id, t.invoice_no);
-    const puNo = new Map();
-    for (const t of qa('select id, invoice_no from kasir_purchases where user_id = ?', uid)) puNo.set(t.id, t.invoice_no);
-    const rtNo = new Map();
-    for (const t of qa('select id, retur_no from kasir_returns where user_id = ?', uid)) rtNo.set(t.id, t.retur_no);
-
-    let logs = qa('select * from kasir_stock_logs where user_id = ?', uid);
-    const out = [];
-    for (const s of logs) {
-      if (from && String(s.created_at) < from) continue;
-      if (to && !(String(s.created_at).slice(0, 10) <= to)) continue;
-      if (pid && s.product_id !== pid) continue;
-      const p = prod.get(s.product_id) || {};
-      if (q) {
-        const hay = `${p.name || ''} ${p.barcode || ''}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
-      let jenisRow;
-      if (s.tipe === 'terjual') jenisRow = 'PENJUALAN';
-      else if (s.tipe === 'retur') jenisRow = 'RETUR';
-      else if (s.tipe === 'void') jenisRow = 'PEMBATALAN';
-      else if (s.ref_tipe === 'pembelian' && s.tipe === 'stok_masuk') jenisRow = 'PEMBELIAN';
-      else if (s.ref_tipe === 'pembelian' && s.tipe === 'stok_keluar') jenisRow = 'PEMBATALAN';
-      else if (s.ref_tipe == null && (s.tipe === 'stok_masuk' || s.tipe === 'stok_keluar')) jenisRow = 'ADJUSTMENT';
-      else jenisRow = 'LAINNYA';
-      if (jenis && jenisRow !== jenis) continue;
-      let noRef = null;
-      if (s.ref_tipe === 'transaksi') noRef = txNo.get(s.ref_id) || null;
-      else if (s.ref_tipe === 'pembelian') noRef = puNo.get(s.ref_id) || null;
-      else if (s.ref_tipe === 'retur') noRef = rtNo.get(s.ref_id) || null;
-      out.push({
-        id: s.id,
-        created_at: s.created_at,
-        product_id: s.product_id,
-        barcode: p.barcode || null,
-        product_name: p.name || '',
-        unit: p.unit || null,
-        jenis: jenisRow,
-        no_referensi: noRef,
-        masuk: num(s.qty) > 0 ? round2(num(s.qty)) : 0,
-        keluar: num(s.qty) < 0 ? round2(-num(s.qty)) : 0,
-        stok_sebelum: s.stok_sebelum == null ? null : num(s.stok_sebelum),
-        stok_sesudah: s.stok_sesudah == null ? null : num(s.stok_sesudah),
-        keterangan: s.keterangan,
-      });
+    const where = ['s.user_id = ?'];
+    const params = [uid];
+    if (from) {
+      where.push('s.created_at >= ?');
+      params.push(from);
     }
-    out.sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : String(x.product_name).localeCompare(String(y.product_name))));
-    return out;
+    if (to) {
+      const next = nextDateYmd(to);
+      if (next) {
+        where.push('s.created_at < ?');
+        params.push(next);
+      } else {
+        // Fallback untuk input non-standar (mis. timestamp lengkap).
+        where.push('substr(s.created_at, 1, 10) <= ?');
+        params.push(to);
+      }
+    }
+    if (pid) {
+      where.push('s.product_id = ?');
+      params.push(pid);
+    }
+    if (q) {
+      where.push("(lower(coalesce(p.name, '')) like ? or lower(coalesce(p.barcode, '')) like ?)");
+      params.push(`%${q}%`, `%${q}%`);
+    }
+
+    const jenisExpr = `case
+        when s.tipe = 'terjual' then 'PENJUALAN'
+        when s.tipe = 'retur' then 'RETUR'
+        when s.tipe = 'void' then 'PEMBATALAN'
+        when s.ref_tipe = 'pembelian' and s.tipe = 'stok_masuk' then 'PEMBELIAN'
+        when s.ref_tipe = 'pembelian' and s.tipe = 'stok_keluar' then 'PEMBATALAN'
+        when s.ref_tipe is null and s.tipe in ('stok_masuk', 'stok_keluar') then 'ADJUSTMENT'
+        else 'LAINNYA'
+      end`;
+
+    const cte = `
+      with dasar as (
+        select s.id, s.created_at, s.product_id,
+               p.barcode, p.name as product_name, p.unit,
+               s.tipe, s.ref_tipe, s.ref_id, s.qty, s.stok_sebelum, s.stok_sesudah, s.keterangan,
+               ${jenisExpr} as jenis
+          from kasir_stock_logs s
+          left join kasir_products p on p.id = s.product_id
+         where ${where.join(' and ')}
+      ),
+      filtered as (
+        select * from dasar${jenis ? ' where jenis = ?' : ''}
+      )`;
+
+    const args = jenis ? [...params, jenis] : params;
+    return { cte, args };
+  }
+
+  function mapStockMovementRow(s) {
+    return {
+      id: s.id,
+      created_at: s.created_at,
+      product_id: s.product_id,
+      barcode: s.barcode || null,
+      product_name: s.product_name || '',
+      unit: s.unit || null,
+      jenis: s.jenis,
+      no_referensi: s.no_referensi || null,
+      masuk: num(s.qty) > 0 ? round2(num(s.qty)) : 0,
+      keluar: num(s.qty) < 0 ? round2(-num(s.qty)) : 0,
+      stok_sebelum: s.stok_sebelum == null ? null : num(s.stok_sebelum),
+      stok_sesudah: s.stok_sesudah == null ? null : num(s.stok_sesudah),
+      keterangan: s.keterangan,
+    };
+  }
+
+  /** Baris lengkap dengan nomor referensi, diurutkan seperti versi lama. */
+  function stockMovementRows(cte, args, limit, offset) {
+    const sql = `${cte}
+      select f.id, f.created_at, f.product_id, f.barcode, f.product_name, f.unit,
+             f.tipe, f.ref_tipe, f.qty, f.stok_sebelum, f.stok_sesudah, f.keterangan, f.jenis,
+             coalesce(t.invoice_no, pu.invoice_no, r.retur_no) as no_referensi
+        from filtered f
+        left join kasir_transactions t on f.ref_tipe = 'transaksi' and t.id = f.ref_id
+        left join kasir_purchases pu on f.ref_tipe = 'pembelian' and pu.id = f.ref_id
+        left join kasir_returns r on f.ref_tipe = 'retur' and r.id = f.ref_id
+       order by f.created_at desc, f.product_name, f.id
+       ${limit == null ? '' : 'limit ? offset ?'}`;
+    const rows = limit == null ? qa(sql, ...args) : qa(sql, ...args, limit, offset);
+    return rows.map(mapStockMovementRow);
+  }
+
+  /**
+   * RPC baru: satu panggilan mengembalikan baris halaman + total agregat +
+   * deret harian untuk grafik. Semua dihitung di SQL memakai filter yang sama.
+   */
+  function kasirStockMovementReport(uid, a) {
+    const pageReq = Math.max(1, Math.floor(num(a.p_page) || 1));
+    const pageSize = Math.min(Math.max(Math.floor(num(a.p_page_size) || 100), 1), 500);
+    const { cte, args } = stockMovementQuery(a, uid);
+
+    const agg = q1(
+      `${cte}
+       select count(*) as total_rows,
+              coalesce(sum(case when qty > 0 then round(qty, 2) else 0 end), 0) as total_masuk,
+              coalesce(sum(case when qty < 0 then round(-qty, 2) else 0 end), 0) as total_keluar
+         from filtered`,
+      ...args,
+    );
+    const totalRows = Math.max(0, Math.floor(num(agg && agg.total_rows)));
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    const page = Math.min(pageReq, totalPages);
+    const offset = (page - 1) * pageSize;
+
+    const daily = qa(
+      `${cte}
+       select substr(created_at, 1, 10) as tanggal,
+              coalesce(sum(case when qty > 0 then round(qty, 2) else 0 end), 0) as masuk,
+              coalesce(sum(case when qty < 0 then round(-qty, 2) else 0 end), 0) as keluar
+         from filtered
+        group by substr(created_at, 1, 10)
+        order by tanggal`,
+      ...args,
+    ).map((d) => ({
+      tanggal: d.tanggal,
+      masuk: round2(num(d.masuk)),
+      keluar: round2(num(d.keluar)),
+    }));
+
+    return {
+      rows: stockMovementRows(cte, args, pageSize, offset),
+      total_rows: totalRows,
+      total_masuk: round2(num(agg && agg.total_masuk)),
+      total_keluar: round2(num(agg && agg.total_keluar)),
+      daily,
+      page,
+      page_size: pageSize,
+      total_pages: totalPages,
+    };
+  }
+
+  /**
+   * RPC lama (tetap dipertahankan untuk kompatibilitas): array seluruh baris.
+   * Tidak dipakai lagi oleh layar Pergerakan Stok — layar memakai
+   * `kasir_stock_movement_report` yang terpaginasasi + teragregasi.
+   */
+  function kasirStockMovements(uid, a) {
+    const { cte, args } = stockMovementQuery(a, uid);
+    return stockMovementRows(cte, args, null, 0);
   }
 
   function rangeClause(a) {
@@ -1217,6 +1338,7 @@ function createEngine(dbPath) {
     kasir_opname_stock: kasirOpnameStock,
     kasir_stock_logs_list: kasirStockLogsList,
     kasir_stock_movements: kasirStockMovements,
+    kasir_stock_movement_report: kasirStockMovementReport,
     kasir_report_summary: kasirReportSummary,
     kasir_report_top: kasirReportTop,
     kasir_report_daily: kasirReportDaily,

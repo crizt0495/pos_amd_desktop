@@ -163,6 +163,52 @@ ok('pergerakan stok ada mutasi', () => {
   assert.ok(mv.some((m) => m.jenis === 'PEMBELIAN'));
 });
 
+// ---- laporan pergerakan stok: agregasi + pagination (RPC baru) ----
+ok('pergerakan stok: total agregat sama dengan daftar baris', () => {
+  const semua = rpc('kasir_stock_movements', { p_from: null, p_to: null, p_product_id: null, p_jenis: null, p_q: null });
+  const rep = rpc('kasir_stock_movement_report', {
+    p_from: null, p_to: null, p_product_id: null, p_jenis: null, p_q: null, p_page: 1, p_page_size: 2,
+  });
+  const masuk = semua.reduce((s, r) => s + r.masuk, 0);
+  const keluar = semua.reduce((s, r) => s + r.keluar, 0);
+  assert.equal(rep.total_rows, semua.length);
+  assert.equal(rep.total_masuk, Math.round(masuk * 100) / 100);
+  assert.equal(rep.total_keluar, Math.round(keluar * 100) / 100);
+  assert.equal(rep.rows.length, Math.min(2, semua.length));
+  assert.equal(rep.page_size, 2);
+  assert.equal(rep.total_pages, Math.ceil(semua.length / 2));
+});
+
+ok('pergerakan stok: filter tanggal hari ini + halaman kedua', () => {
+  const hariIni = new Date().toISOString().slice(0, 10);
+  const rep = rpc('kasir_stock_movement_report', {
+    p_from: hariIni, p_to: hariIni, p_product_id: null, p_jenis: null, p_q: null, p_page: 1, p_page_size: 50,
+  });
+  assert.ok(rep.total_rows >= 4);
+  assert.ok(rep.rows.every((r) => String(r.created_at).slice(0, 10) === hariIni));
+  assert.equal(rep.daily.length, 1);
+  assert.equal(rep.daily[0].tanggal, hariIni);
+  assert.equal(rep.daily[0].masuk, rep.total_masuk);
+  assert.equal(rep.daily[0].keluar, rep.total_keluar);
+
+  const rep2 = rpc('kasir_stock_movement_report', {
+    p_from: null, p_to: null, p_product_id: null, p_jenis: null, p_q: null, p_page: 2, p_page_size: 2,
+  });
+  assert.equal(rep2.page, 2);
+  assert.ok(rep2.rows.length >= 1);
+  assert.notEqual(rep2.rows[0].id, rpc('kasir_stock_movement_report', {
+    p_from: null, p_to: null, p_product_id: null, p_jenis: null, p_q: null, p_page: 1, p_page_size: 2,
+  }).rows[0].id);
+});
+
+ok('pergerakan stok: pencarian nama di SQL', () => {
+  const rep = rpc('kasir_stock_movement_report', {
+    p_from: null, p_to: null, p_product_id: null, p_jenis: null, p_q: 'indomie', p_page: 1, p_page_size: 50,
+  });
+  assert.ok(rep.total_rows >= 4);
+  assert.ok(rep.rows.every((r) => /indomie/i.test(r.product_name)));
+});
+
 // ---- shift ----
 ok('shift: tolak buka kedua selagi masih terbuka', () => {
   let err = null;

@@ -180,6 +180,11 @@ create table if not exists kasir_stock_logs (
 );
 create index if not exists idx_logs_product on kasir_stock_logs (product_id, created_at desc);
 create index if not exists idx_logs_user    on kasir_stock_logs (user_id, created_at desc);
+-- Index khusus laporan Pergerakan Stok (filter rentang tanggal + agregasi):
+--   (user_id, created_at, product_id) -> "tanggal, kode barang"
+--   (user_id, product_id, created_at) -> "kode barang, tanggal"
+create index if not exists idx_logs_user_date_prod on kasir_stock_logs (user_id, created_at, product_id);
+create index if not exists idx_logs_user_prod_date on kasir_stock_logs (user_id, product_id, created_at);
 
 -- ----------------------------- pembelian ------------------------------
 create table if not exists kasir_purchases (

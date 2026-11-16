@@ -4,6 +4,8 @@ import * as React from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   FileDown,
   FileSpreadsheet,
   Layers,
@@ -18,7 +20,7 @@ import { angka, isoHariIni, isoHariLalu } from '@/lib/format';
 import { cetakHtml, esc, unduhExcel } from '@/lib/ekspor';
 import { useToast } from '@/components/Toast';
 import { useClickCooldown } from '@/lib/useButtonGuard';
-import type { StockMovement } from '@/lib/types';
+import type { StockMovement, StockMovementDaily, StockMovementReport } from '@/lib/types';
 
 type Preset = 'today' | '7days' | '30days' | 'all' | 'custom';
 
@@ -28,6 +30,9 @@ const PRESETS: { key: Preset; label: string }[] = [
   { key: '30days', label: '30 Hari' },
   { key: 'all', label: 'Semua' },
 ];
+
+/** Jumlah baris per halaman (dibatasi juga di server/RPC). */
+const PAGE_SIZE = 100;
 
 /** Label & warna lencana per jenis mutasi. */
 const JENIS_META: Record<string, { label: string; cls: string }> = {
@@ -44,28 +49,27 @@ const meta = (jenis: string) => JENIS_META[jenis] ?? { label: jenis, cls: 'bg-[#
 /**
  * Laporan > Pergerakan Stok — buku besar seluruh keluar-masuk barang.
  *
- * Sumber data: `kasir_stock_logs` (kartu stok) lewat RPC `kasir_stock_movements`.
- * Setiap transaksi jual/beli/retur/pembatalan dan penyesuaian/opname otomatis
- * tercatat. Ringan: default menampilkan hari ini dan pencarian dilakukan di
- * sisi server (tanpa memuat semua barang). Tidak ada input manual di layar ini.
+ * Sumber data: `kasir_stock_logs` (kartu stok) lewat RPC
+ * `kasir_stock_movement_report`. Satu panggilan mengembalikan:
+ *   - satu halaman baris (LIMIT/OFFSET di database),
+ *   - total masuk/keluar hasil SUM agregasi,
+ *   - deret harian untuk grafik.
+ * Dengan begitu layar tidak perlu menarik seluruh riwayat hanya untuk
+ * menghitung total atau menampilkan beberapa baris "Hari Ini".
  */
 export default function PergerakanStokScreen() {
   const toast = useToast();
   const ui = useClickCooldown(1200);
 
-  const [rows, setRows] = React.useState<StockMovement[]>([]);
+  const [report, setReport] = React.useState<StockMovementReport | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [exporting, setExporting] = React.useState(false);
 
   const [preset, setPreset] = React.useState<Preset>('today');
-  const [from, setFrom] = React.useState('');
-  const [to, setTo] = React.useState('');
+  const [from, setFrom] = React.useState(() => isoHariIni());
+  const [to, setTo] = React.useState(() => isoHariIni());
   const [q, setQ] = React.useState('');
   const [qDeb, setQDeb] = React.useState('');
-
-  React.useEffect(() => {
-    setFrom(isoHariIni());
-    setTo(isoHariIni());
-  }, []);
 
   // Pencarian nama/kode ditunda sedikit agar tidak memanggil server tiap ketik.
   React.useEffect(() => {
@@ -73,25 +77,38 @@ export default function PergerakanStokScreen() {
     return () => window.clearTimeout(t);
   }, [q]);
 
-  const muat = React.useCallback(async () => {
-    setLoading(true);
-    const r = await stockApi.movements({
-      from: preset === 'all' ? undefined : from,
-      to: preset === 'all' ? undefined : to,
-      q: qDeb,
-    });
-    setLoading(false);
-    if (!r.ok) {
-      toast.error('Gagal memuat pergerakan stok', r.error);
-      setRows([]);
-      return;
-    }
-    setRows(r.data);
+  const reqRef = React.useRef(0);
+
+  const muat = React.useCallback(
+    async (halaman: number) => {
+      const seq = ++reqRef.current;
+      setLoading(true);
+      try {
+        const r = await stockApi.movementReport({
+          from: preset === 'all' ? undefined : from,
+          to: preset === 'all' ? undefined : to,
+          q: qDeb,
+          page: halaman,
+          pageSize: PAGE_SIZE,
+        });
+        // Abaikan respons lama bila filter sudah berubah lagi.
+        if (seq !== reqRef.current) return;
+        if (!r.ok) {
+          toast.error('Gagal memuat pergerakan stok', r.error);
+          setReport(null);
+          return;
+        }
+        setReport(r.data);
+      } finally {
+        if (seq === reqRef.current) setLoading(false);
+      }
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from, to, qDeb, preset]);
+    [from, to, qDeb, preset],
+  );
 
   React.useEffect(() => {
-    void muat();
+    void muat(1);
   }, [muat]);
 
   function pilihPreset(p: Preset) {
@@ -110,12 +127,49 @@ export default function PergerakanStokScreen() {
 
   const periode = preset === 'all' ? 'Semua Periode' : `${from || '-'} s/d ${to || '-'}`;
 
-  const totalMasuk = React.useMemo(() => rows.reduce((s, r) => s + r.masuk, 0), [rows]);
-  const totalKeluar = React.useMemo(() => rows.reduce((s, r) => s + r.keluar, 0), [rows]);
+  const rows = report?.rows ?? [];
+  const totalMasuk = report?.total_masuk ?? 0;
+  const totalKeluar = report?.total_keluar ?? 0;
+  const totalRows = report?.total_rows ?? 0;
+  const totalPages = report?.total_pages ?? 1;
+  const page = report?.page ?? 1;
+  const pageSize = report?.page_size ?? PAGE_SIZE;
+  const barisAwal = totalRows ? (page - 1) * pageSize + 1 : 0;
+  const barisAkhir = Math.min(page * pageSize, totalRows);
 
-  const barisHtml = rows
-    .map(
-      (k) => `<tr>
+  /** Isi hari yang kosong di rentang filter agar grafik tidak "bolong". */
+  const dailyChart = React.useMemo<StockMovementDaily[]>(() => {
+    const daily = report?.daily ?? [];
+    if (preset === 'all' || !from || !to) return daily;
+    const start = new Date(`${from}T00:00:00Z`);
+    const end = new Date(`${to}T00:00:00Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return daily;
+    const jumlahHari = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    if (jumlahHari < 1 || jumlahHari > 370) return daily;
+
+    const map = new Map(daily.map((d) => [d.tanggal, d]));
+    const out: StockMovementDaily[] = [];
+    for (let i = 0; i < jumlahHari; i++) {
+      const d = new Date(start.getTime() + i * 86_400_000);
+      const key = d.toISOString().slice(0, 10);
+      out.push(map.get(key) ?? { tanggal: key, masuk: 0, keluar: 0 });
+    }
+    return out;
+  }, [report, preset, from, to]);
+
+  const filterSaatIni = React.useCallback(
+    () => ({
+      from: preset === 'all' ? undefined : from,
+      to: preset === 'all' ? undefined : to,
+      q: qDeb,
+    }),
+    [preset, from, to, qDeb],
+  );
+
+  const buatBarisHtml = (list: StockMovement[]) =>
+    list
+      .map(
+        (k) => `<tr>
         <td>${esc(k.created_at ? new Date(k.created_at).toLocaleString('id-ID') : '-')}</td>
         <td>${esc(k.barcode || '-')}</td>
         <td>${esc(k.product_name)}</td>
@@ -124,10 +178,10 @@ export default function PergerakanStokScreen() {
         <td class="num">${k.masuk ? angka(k.masuk) : '-'}</td>
         <td class="num">${k.keluar ? angka(k.keluar) : '-'}</td>
       </tr>`,
-    )
-    .join('');
+      )
+      .join('');
 
-  const tabelHtml = `
+  const buatTabelHtml = (list: StockMovement[]) => `
     <p class="muted">Periode: <b>${esc(periode)}</b>${qDeb ? ` — Cari: <b>${esc(qDeb)}</b>` : ''}</p>
     <p class="muted">Total Stok Masuk: <b>${angka(totalMasuk)}</b> — Total Stok Keluar: <b>${angka(totalKeluar)}</b></p>
     <table>
@@ -135,22 +189,51 @@ export default function PergerakanStokScreen() {
         <th>Tanggal</th><th>Kode Barang</th><th>Nama Barang</th><th>Jenis</th>
         <th>No Referensi</th><th class="num">Stok Masuk</th><th class="num">Stok Keluar</th>
       </tr></thead>
-      <tbody>${barisHtml || '<tr><td colspan="7">Tidak ada data.</td></tr>'}</tbody>
+      <tbody>${buatBarisHtml(list) || '<tr><td colspan="7">Tidak ada data.</td></tr>'}</tbody>
     </table>`;
 
-  function exportExcel() {
-    unduhExcel(
-      `Pergerakan-Stok_${preset === 'all' ? 'semua' : `${from}_${to}`}`,
-      tabelHtml,
-      `Laporan Pergerakan Stok — ${periode}`,
-    );
+  /** Ambil seluruh baris (semua halaman) untuk Export Excel/PDF. */
+  async function ambilSemuaBaris(): Promise<StockMovement[]> {
+    if (!report || report.total_pages <= 1) return rows;
+    const semua: StockMovement[] = [];
+    // Batas aman 100.000 baris (200 halaman × 500).
+    const maxHalaman = Math.min(report.total_pages, 200);
+    for (let h = 1; h <= maxHalaman; h++) {
+      const r = await stockApi.movementReport({ ...filterSaatIni(), page: h, pageSize: 500 });
+      if (!r.ok) throw new Error(r.error);
+      semua.push(...r.data.rows);
+    }
+    return semua;
   }
 
-  function exportPdf() {
-    cetakHtml(
-      'Pergerakan Stok',
-      `<h1>Laporan Pergerakan Stok</h1>${tabelHtml}`,
-    );
+  async function exportExcel() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const semua = await ambilSemuaBaris();
+      unduhExcel(
+        `Pergerakan-Stok_${preset === 'all' ? 'semua' : `${from}_${to}`}`,
+        buatTabelHtml(semua),
+        `Laporan Pergerakan Stok — ${periode}`,
+      );
+    } catch (e) {
+      toast.error('Gagal menyiapkan Excel', e instanceof Error ? e.message : 'Terjadi kesalahan.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function exportPdf() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const semua = await ambilSemuaBaris();
+      cetakHtml('Pergerakan Stok', `<h1>Laporan Pergerakan Stok</h1>${buatTabelHtml(semua)}`);
+    } catch (e) {
+      toast.error('Gagal menyiapkan PDF', e instanceof Error ? e.message : 'Terjadi kesalahan.');
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -168,7 +251,7 @@ export default function PergerakanStokScreen() {
         <button
           type="button"
           className="rb-btn-primary"
-          onClick={() => ui.run(muat, 'lap-ps-muat')}
+          onClick={() => ui.run(() => void muat(page), 'lap-ps-muat')}
           disabled={ui.locked('lap-ps-muat') || loading}
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
@@ -191,16 +274,21 @@ export default function PergerakanStokScreen() {
         <button
           type="button"
           className="rb-btn"
-          onClick={() => ui.run(exportExcel, 'lap-ps-excel')}
-          disabled={ui.locked('lap-ps-excel') || !rows.length}
+          onClick={() => ui.run(() => void exportExcel(), 'lap-ps-excel')}
+          disabled={ui.locked('lap-ps-excel') || !rows.length || exporting}
         >
-          <FileSpreadsheet className="h-3.5 w-3.5" /> Export Excel
+          {exporting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+          )}{' '}
+          Export Excel
         </button>
         <button
           type="button"
           className="rb-btn"
-          onClick={() => ui.run(exportPdf, 'lap-ps-pdf')}
-          disabled={ui.locked('lap-ps-pdf') || !rows.length}
+          onClick={() => ui.run(() => void exportPdf(), 'lap-ps-pdf')}
+          disabled={ui.locked('lap-ps-pdf') || !rows.length || exporting}
         >
           <FileDown className="h-3.5 w-3.5" /> Export PDF
         </button>
@@ -254,17 +342,41 @@ export default function PergerakanStokScreen() {
             aria-label="Cari nama barang"
           />
         </div>
+        {loading && (
+          <span className="ml-auto flex items-center gap-1.5 text-[11.5px] text-[#7a8ba0]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Memuat…
+          </span>
+        )}
       </div>
 
       {/* ------------------------------ isi ------------------------------- */}
-      <div className="min-h-0 flex-1 overflow-auto p-3">
-        {loading && !rows.length ? (
+      <div className="min-h-0 flex-1 overflow-auto p-3" aria-busy={loading}>
+        {loading && !report ? (
           <div className="grid place-items-center py-16 text-[12px] text-zinc-400">
             <Loader2 className="mb-2 h-6 w-6 animate-spin" /> Memuat pergerakan stok…
           </div>
         ) : (
-          <div className="space-y-3">
-            {/* Ringkasan */}
+          <div className={`space-y-3 ${loading ? 'opacity-70' : ''}`}>
+            {/* Grafik ikut filter tanggal — datanya dari agregasi yang sama. */}
+            <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-3">
+              <div className="card p-3 lg:col-span-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <h3 className="text-[12.5px] font-bold text-[#1b3a5c]">
+                    Tren Harian — Stok Masuk vs Stok Keluar
+                  </h3>
+                  <span className="text-[11px] text-[#7a8ba0]">{periode}</span>
+                </div>
+                <GrafikGaris data={dailyChart} />
+              </div>
+              <div className="card p-3">
+                <h3 className="mb-1 text-[12.5px] font-bold text-[#1b3a5c]">
+                  Perbandingan Total
+                </h3>
+                <GrafikBatang masuk={totalMasuk} keluar={totalKeluar} />
+              </div>
+            </div>
+
+            {/* Ringkasan — dihitung di database, bukan dari baris satu halaman. */}
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <Stat label="Total Stok Masuk" value={angka(totalMasuk)} tone="green" />
               <Stat label="Total Stok Keluar" value={angka(totalKeluar)} tone="red" />
@@ -275,7 +387,7 @@ export default function PergerakanStokScreen() {
                 <h3 className="text-[12.5px] font-bold text-[#1b3a5c]">
                   Buku Besar Pergerakan Stok
                 </h3>
-                <span className="text-[11.5px] text-[#7a8ba0]">{rows.length} baris</span>
+                <span className="text-[11.5px] text-[#7a8ba0]">{angka(totalRows)} baris</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[880px] text-[12.5px]">
@@ -334,6 +446,34 @@ export default function PergerakanStokScreen() {
                   </tbody>
                 </table>
               </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e3eaf3] bg-[#f6f9fd] px-3 py-2 text-[11.5px] text-[#5b6b80]">
+                <span>
+                  Menampilkan <b>{barisAwal}</b>–<b>{barisAkhir}</b> dari{' '}
+                  <b>{angka(totalRows)}</b> baris
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="btn-outline !h-7 !px-2 !text-[11.5px]"
+                    onClick={() => ui.run(() => void muat(page - 1), 'lap-ps-prev')}
+                    disabled={ui.locked('lap-ps-prev') || loading || page <= 1}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> Sebelumnya
+                  </button>
+                  <span className="px-1">
+                    Halaman <b>{page}</b> / <b>{totalPages}</b>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-outline !h-7 !px-2 !text-[11.5px]"
+                    onClick={() => ui.run(() => void muat(page + 1), 'lap-ps-next')}
+                    disabled={ui.locked('lap-ps-next') || loading || page >= totalPages}
+                  >
+                    Berikutnya <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             <p className="flex items-center gap-1.5 text-[11.5px] text-[#7a8ba0]">
@@ -344,6 +484,132 @@ export default function PergerakanStokScreen() {
         )}
       </div>
     </div>
+  );
+}
+
+/* ------------------------------ grafik ------------------------------- */
+
+const WARNA_MASUK = '#2f9e44';
+const WARNA_KELUAR = '#c92a2a';
+
+function nilaiMaks(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return 1;
+  const pangkat = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pangkat;
+  const bulat = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return bulat * pangkat;
+}
+
+function labelTanggal(ymd: string): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(ymd);
+  return m ? `${m[2]}/${m[1]}` : ymd;
+}
+
+/** Grafik garis: tren stok masuk vs stok keluar per hari. */
+function GrafikGaris({ data }: { data: StockMovementDaily[] }) {
+  const W = 720;
+  const H = 240;
+  const PL = 46;
+  const PR = 12;
+  const PT = 16;
+  const PB = 34;
+  const maxV = nilaiMaks(Math.max(1, ...data.map((d) => Math.max(d.masuk, d.keluar))));
+
+  const x = (i: number) =>
+    data.length <= 1 ? PL + (W - PL - PR) / 2 : PL + (i / (data.length - 1)) * (W - PL - PR);
+  const y = (v: number) => PT + (1 - Math.max(0, v) / maxV) * (H - PT - PB);
+  const garis = (k: 'masuk' | 'keluar') =>
+    data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(d[k]).toFixed(1)}`).join(' ');
+
+  const langkahLabel = Math.max(1, Math.ceil(data.length / 6));
+  const yTicks = [0, maxV / 2, maxV];
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-3 text-[11px] text-[#5b6b80]">
+        <span className="flex items-center gap-1">
+          <i className="inline-block h-2 w-2 rounded-full" style={{ background: WARNA_MASUK }} /> Masuk
+        </span>
+        <span className="flex items-center gap-1">
+          <i className="inline-block h-2 w-2 rounded-full" style={{ background: WARNA_KELUAR }} /> Keluar
+        </span>
+      </div>
+      {data.length === 0 ? (
+        <div className="grid h-[200px] place-items-center text-[12px] text-zinc-400">
+          Tidak ada data untuk grafik pada filter ini.
+        </div>
+      ) : (
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-[220px] w-full" role="img" aria-label="Grafik tren stok masuk dan keluar">
+          {yTicks.map((t) => (
+            <g key={t}>
+              <line x1={PL} x2={W - PR} y1={y(t)} y2={y(t)} stroke="#e8eef5" strokeWidth={1} />
+              <text x={PL - 6} y={y(t) + 3.5} textAnchor="end" fontSize={9} fill="#9fb0c4">
+                {angka(t)}
+              </text>
+            </g>
+          ))}
+          <path d={garis('masuk')} fill="none" stroke={WARNA_MASUK} strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
+          <path d={garis('keluar')} fill="none" stroke={WARNA_KELUAR} strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
+          {data.map((d, i) => (
+            <g key={d.tanggal}>
+              <circle cx={x(i)} cy={y(d.masuk)} r={2.6} fill={WARNA_MASUK}>
+                <title>{`${d.tanggal} — masuk ${angka(d.masuk)}`}</title>
+              </circle>
+              <circle cx={x(i)} cy={y(d.keluar)} r={2.6} fill={WARNA_KELUAR}>
+                <title>{`${d.tanggal} — keluar ${angka(d.keluar)}`}</title>
+              </circle>
+              {(i % langkahLabel === 0 || i === data.length - 1) && (
+                <text x={x(i)} y={H - 12} textAnchor="middle" fontSize={9} fill="#9fb0c4">
+                  {labelTanggal(d.tanggal)}
+                </text>
+              )}
+            </g>
+          ))}
+        </svg>
+      )}
+    </div>
+  );
+}
+
+/** Grafik batang: perbandingan total masuk vs total keluar. */
+function GrafikBatang({ masuk, keluar }: { masuk: number; keluar: number }) {
+  const W = 320;
+  const H = 240;
+  const PL = 22;
+  const PR = 22;
+  const PT = 20;
+  const PB = 40;
+  const maxV = nilaiMaks(Math.max(1, masuk, keluar));
+  const areaW = W - PL - PR;
+  const areaH = H - PT - PB;
+  const barW = Math.min(72, areaW / 3);
+  const x1 = PL + areaW * 0.25 - barW / 2;
+  const x2 = PL + areaW * 0.75 - barW / 2;
+  const y = (v: number) => PT + (1 - Math.max(0, v) / maxV) * areaH;
+  const h = (v: number) => Math.max(0, areaH - (y(v) - PT));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-[220px] w-full" role="img" aria-label="Grafik batang total stok masuk dan keluar">
+      <line x1={PL} x2={W - PR} y1={PT + areaH} y2={PT + areaH} stroke="#e8eef5" />
+      <rect x={x1} y={y(masuk)} width={barW} height={h(masuk)} rx={4} fill={WARNA_MASUK} opacity={0.9}>
+        <title>{`Total masuk ${angka(masuk)}`}</title>
+      </rect>
+      <rect x={x2} y={y(keluar)} width={barW} height={h(keluar)} rx={4} fill={WARNA_KELUAR} opacity={0.9}>
+        <title>{`Total keluar ${angka(keluar)}`}</title>
+      </rect>
+      <text x={x1 + barW / 2} y={Math.max(PT + 10, y(masuk) - 6)} textAnchor="middle" fontSize={10} fontWeight={700} fill={WARNA_MASUK}>
+        {angka(masuk)}
+      </text>
+      <text x={x2 + barW / 2} y={Math.max(PT + 10, y(keluar) - 6)} textAnchor="middle" fontSize={10} fontWeight={700} fill={WARNA_KELUAR}>
+        {angka(keluar)}
+      </text>
+      <text x={x1 + barW / 2} y={H - 18} textAnchor="middle" fontSize={10} fill="#5b6b80">
+        Masuk
+      </text>
+      <text x={x2 + barW / 2} y={H - 18} textAnchor="middle" fontSize={10} fill="#5b6b80">
+        Keluar
+      </text>
+    </svg>
   );
 }
 

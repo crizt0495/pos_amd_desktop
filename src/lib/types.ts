@@ -356,6 +356,29 @@ export interface StockMovement {
   keterangan: string | null;
 }
 
+/** Titik deret harian untuk grafik Pergerakan Stok. */
+export interface StockMovementDaily {
+  tanggal: string;
+  masuk: number;
+  keluar: number;
+}
+
+/**
+ * Hasil laporan Pergerakan Stok yang sudah teragregasi di database.
+ * `rows` hanya satu halaman; `total_masuk`/`total_keluar`/`daily` dihitung
+ * dari filter yang sama sehingga angkanya konsisten dengan seluruh data.
+ */
+export interface StockMovementReport {
+  rows: StockMovement[];
+  total_rows: number;
+  total_masuk: number;
+  total_keluar: number;
+  daily: StockMovementDaily[];
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export interface CartTotals {
   subtotal: number;
   total: number;

@@ -182,7 +182,7 @@ export async function pullFromRemote(): Promise<{ tables: number; rows: number; 
       // Urutkan dengan kolom kunci agar paging stabil (tidak ada baris terlewat
       // saat data besar). kasir_settings tidak punya `id` → pakai `key`.
       const orderCol = tbl === 'kasir_settings' ? 'key' : 'id';
-      const all: unknown[] = [];
+      let imported = 0;
       for (let from = 0; from < MAX_ROWS; from += PAGE) {
         const { data, error } = await remote
           .from(tbl)
@@ -191,16 +191,22 @@ export async function pullFromRemote(): Promise<{ tables: number; rows: number; 
           .range(from, from + PAGE - 1);
         if (error) throw new Error(error.message);
         const batch = (data || []) as Record<string, unknown>[];
-        for (const row of batch) {
-          if (skip.has(`${tbl}:${rowKeyFor(tbl, row)}`)) continue;
-          all.push(row);
+        const rows = batch.filter((row) => !skip.has(`${tbl}:${rowKeyFor(tbl, row)}`));
+
+        // Impor per halaman (bukan menumpuk semua baris lalu satu impor besar).
+        // Tujuannya agar proses utama Electron tidak terkunci puluhan detik:
+        // query laporan dari renderer tetap bisa dilayani di sela-sela impor.
+        if (rows.length) {
+          const res = await b.dbImport({ tbl, rows });
+          if (!res?.ok) throw new Error(res?.error || 'impor gagal');
+          imported += rows.length;
         }
         if (batch.length < PAGE) break;
+        // Beri kesempatan event loop memproses IPC lain (mis. query laporan).
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      const res = await b.dbImport({ tbl, rows: all });
-      if (!res?.ok) throw new Error(res?.error || 'impor gagal');
       result.tables++;
-      result.rows += all.length;
+      result.rows += imported;
     } catch {
       result.failed++;
     }
